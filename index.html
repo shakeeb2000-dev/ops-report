@@ -1,0 +1,2220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1e3a5f">
+<title>Daily Ops Report</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+:root {
+  --navy: #1e3a5f;
+  --navy-dark: #162d4a;
+  --ink: #1a202c;
+  --slate: #646e7c;
+  --line: #e2e6eb;
+  --bg: #f4f6f8;
+  --card: #ffffff;
+  --ok: #228b4f;
+  --watch: #c98a04;
+  --fault: #be2c2c;
+  --todo: #6e7681;
+  --radius: 12px;
+  --tap: 44px;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+html, body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 16px;
+  line-height: 1.45;
+}
+
+/* ---------------- top bar ---------------- */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: var(--navy);
+  color: #fff;
+  padding: calc(env(safe-area-inset-top, 0px) + 12px) 16px 0;
+  box-shadow: 0 2px 10px rgba(0,0,0,.14);
+}
+.topbar-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.topbar h1 { margin: 0; font-size: 1.05rem; font-weight: 700; letter-spacing: .01em; }
+.topbar p { margin: 2px 0 0; font-size: .78rem; color: #b6c8dd; }
+
+.icon-btn {
+  background: rgba(255,255,255,.12);
+  border: 0;
+  color: #fff;
+  width: var(--tap);
+  height: var(--tap);
+  min-width: var(--tap);
+  border-radius: 10px;
+  font-size: 1.2rem;
+  cursor: pointer;
+}
+.icon-btn:active { background: rgba(255,255,255,.24); }
+
+.progress { height: 4px; background: rgba(255,255,255,.2); border-radius: 3px; margin-top: 10px; overflow: hidden; }
+.progress-fill { height: 100%; width: 0; background: #6fd39b; transition: width .25s ease; }
+.progress-label { margin: 4px 0 8px; font-size: .7rem; color: #b6c8dd; }
+
+/* ---------------- layout ---------------- */
+main { padding: 14px 12px 0; max-width: 720px; margin: 0 auto; }
+.spacer { height: 96px; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px;
+  margin-bottom: 12px;
+}
+.card > h2 {
+  margin: 0 0 10px;
+  font-size: .8rem;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--navy);
+  font-weight: 700;
+}
+.muted { color: var(--slate); font-weight: 400; }
+.small { font-size: .8rem; }
+
+label { display: block; font-size: .78rem; color: var(--slate); font-weight: 600; margin-bottom: 10px; }
+input[type=text], input[type=date], input[type=number], select, textarea {
+  width: 100%;
+  margin-top: 4px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  font-size: 1rem;
+  font-family: inherit;
+  color: var(--ink);
+  background: #fff;
+  min-height: var(--tap);
+}
+textarea { min-height: 72px; resize: vertical; }
+input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-offset: 1px; border-color: var(--navy); }
+.field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+/* ---------------- section / group ---------------- */
+.section-head {
+  background: var(--navy);
+  color: #fff;
+  border-radius: var(--radius) var(--radius) 0 0;
+  padding: 11px 14px;
+  font-size: .82rem;
+  font-weight: 700;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  margin-top: 4px;
+}
+.section-body {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-top: 0;
+  border-radius: 0 0 var(--radius) var(--radius);
+  margin-bottom: 14px;
+  overflow: hidden;
+}
+.group { border-top: 1px solid var(--line); }
+.group:first-child { border-top: 0; }
+.group-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: #fafbfc;
+  border: 0;
+  padding: 13px 14px;
+  font: inherit;
+  font-weight: 700;
+  font-size: .88rem;
+  color: var(--navy);
+  text-align: left;
+  cursor: pointer;
+  min-height: var(--tap);
+}
+.group-head .chev { color: var(--slate); font-size: .75rem; }
+.group-meta { display: flex; align-items: center; gap: 6px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.dot.ok { background: var(--ok); }
+.dot.watch { background: var(--watch); }
+.dot.fault { background: var(--fault); }
+.dot.todo, .dot.blank { background: #c4cad2; }
+.group-items { padding: 4px 12px 12px; }
+.group[data-collapsed="true"] .group-items { display: none; }
+
+/* ---------------- item row ---------------- */
+.item { padding: 11px 2px; border-top: 1px dashed var(--line); }
+.item:first-child { border-top: 0; }
+.item-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.item-label { font-size: .92rem; font-weight: 600; }
+.item-hint { font-size: .72rem; color: var(--slate); margin-top: 1px; }
+.item-value { font-size: .78rem; color: var(--slate); white-space: nowrap; }
+
+.statusrow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 9px; }
+.sbtn {
+  border: 1.5px solid var(--line);
+  background: #fff;
+  border-radius: 9px;
+  padding: 9px 2px;
+  font-size: .72rem;
+  font-weight: 700;
+  color: var(--slate);
+  cursor: pointer;
+  min-height: var(--tap);
+  font-family: inherit;
+}
+.sbtn[aria-pressed="true"].ok    { background: var(--ok);    border-color: var(--ok);    color: #fff; }
+.sbtn[aria-pressed="true"].watch { background: var(--watch); border-color: var(--watch); color: #fff; }
+.sbtn[aria-pressed="true"].fault { background: var(--fault); border-color: var(--fault); color: #fff; }
+.sbtn[aria-pressed="true"].todo  { background: var(--todo);  border-color: var(--todo);  color: #fff; }
+
+.numrow { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
+.numrow input { margin-top: 0; }
+.numrow .unit { font-size: .8rem; color: var(--slate); min-width: 38px; }
+.pairgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+.pairgrid label { margin-bottom: 0; }
+
+.pill {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 20px;
+  font-size: .66rem;
+  font-weight: 800;
+  letter-spacing: .04em;
+  color: #fff;
+  text-transform: uppercase;
+}
+.pill.ok { background: var(--ok); }
+.pill.watch { background: var(--watch); }
+.pill.fault { background: var(--fault); }
+.pill.todo { background: var(--todo); }
+.pill.blank { background: #b6bcc4; }
+
+/* ---------------- photos ---------------- */
+.item-tools { display: flex; gap: 8px; margin-top: 9px; flex-wrap: wrap; }
+.tool-btn {
+  border: 1.5px solid var(--line);
+  background: #fff;
+  border-radius: 9px;
+  padding: 8px 12px;
+  font-size: .78rem;
+  font-weight: 600;
+  color: var(--navy);
+  cursor: pointer;
+  min-height: 40px;
+  font-family: inherit;
+}
+.tool-btn:active { background: #eef2f6; }
+.thumbs { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 9px; }
+.thumb { position: relative; width: 74px; height: 74px; border-radius: 9px; overflow: hidden; border: 1px solid var(--line); }
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.thumb button {
+  position: absolute; top: 2px; right: 2px;
+  width: 24px; height: 24px; border-radius: 50%;
+  border: 0; background: rgba(0,0,0,.66); color: #fff;
+  font-size: .8rem; line-height: 1; cursor: pointer;
+}
+.note-input { margin-top: 8px; }
+.note-input input { margin-top: 0; }
+
+/* ---------------- summary ---------------- */
+.summary-empty { font-size: .85rem; color: var(--slate); }
+.sum-item { display: flex; gap: 9px; align-items: flex-start; padding: 7px 0; border-top: 1px dashed var(--line); font-size: .86rem; }
+.sum-item:first-child { border-top: 0; }
+.sum-item .bar { width: 4px; align-self: stretch; border-radius: 3px; flex: 0 0 4px; min-height: 20px; }
+.sum-item .bar.fault { background: var(--fault); }
+.sum-item .bar.watch { background: var(--watch); }
+.sum-item .bar.todo { background: var(--todo); }
+.sum-owner { font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; color: var(--slate); font-weight: 800; margin: 10px 0 2px; }
+.sum-reason { color: var(--slate); }
+
+/* ---------------- action bar ---------------- */
+.actionbar {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  z-index: 40;
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px calc(env(safe-area-inset-bottom, 0px) + 10px);
+  background: rgba(255,255,255,.97);
+  border-top: 1px solid var(--line);
+  backdrop-filter: blur(6px);
+}
+.btn {
+  flex: 1;
+  min-height: 50px;
+  border-radius: 11px;
+  border: 1.5px solid var(--navy);
+  font-size: .95rem;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+}
+.btn-primary { background: var(--navy); color: #fff; }
+.btn-primary:active { background: var(--navy-dark); }
+.btn-ghost { background: #fff; color: var(--navy); }
+.btn:disabled { opacity: .55; }
+
+/* ---------------- sheets ---------------- */
+.sheet {
+  position: fixed; inset: 0; z-index: 60;
+  background: rgba(16,24,36,.5);
+  display: flex; align-items: flex-end;
+}
+.sheet-inner {
+  background: #fff;
+  width: 100%;
+  max-height: 92vh;
+  overflow-y: auto;
+  border-radius: 16px 16px 0 0;
+  padding: 16px 16px calc(env(safe-area-inset-bottom, 0px) + 20px);
+  max-width: 720px;
+  margin: 0 auto;
+}
+.sheet-head { display: flex; align-items: center; justify-content: space-between; position: sticky; top: -16px; background: #fff; padding: 6px 0 10px; }
+.sheet-head h2 { margin: 0; font-size: 1rem; }
+.sheet-inner h2 { font-size: .85rem; text-transform: uppercase; letter-spacing: .05em; color: var(--navy); }
+.sheet-head .icon-btn { background: #eef1f5; color: var(--ink); }
+.sheet-foot { display: flex; gap: 10px; margin-top: 14px; }
+.sheet hr { border: 0; border-top: 1px solid var(--line); margin: 20px 0 14px; }
+
+.th-row { border-top: 1px solid var(--line); padding: 11px 0; }
+.th-row:first-child { border-top: 0; }
+.th-name { font-weight: 700; font-size: .87rem; margin-bottom: 7px; }
+.th-inputs { display: grid; grid-template-columns: repeat(auto-fit, minmax(72px, 1fr)); gap: 8px; }
+.th-inputs label { font-size: .68rem; margin-bottom: 0; }
+.th-inputs input { padding: 8px; min-height: 40px; }
+
+.wa-block { border: 1px solid var(--line); border-radius: 11px; padding: 12px; margin-bottom: 12px; }
+.wa-block h3 { margin: 0 0 8px; font-size: .84rem; color: var(--navy); }
+.wa-text {
+  white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: .76rem;
+  background: #f7f9fb;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  max-height: 260px;
+  overflow-y: auto;
+  margin-bottom: 9px;
+}
+.history-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; border-top: 1px solid var(--line); padding: 10px 0; font-size: .85rem; }
+.history-row:first-child { border-top: 0; }
+.history-row .h-actions { display: flex; gap: 6px; }
+
+.toast {
+  position: fixed;
+  left: 50%; bottom: 88px;
+  transform: translateX(-50%);
+  background: var(--ink);
+  color: #fff;
+  padding: 11px 18px;
+  border-radius: 24px;
+  font-size: .85rem;
+  z-index: 80;
+  max-width: 86vw;
+  text-align: center;
+  box-shadow: 0 6px 20px rgba(0,0,0,.24);
+}
+
+@media (min-width: 560px) {
+  .statusrow { grid-template-columns: repeat(4, minmax(0, 120px)); }
+}
+
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-row">
+    <div>
+      <h1>Daily Ops Report</h1>
+      <p id="topbarDate">&nbsp;</p>
+    </div>
+    <button id="btnSettings" class="icon-btn" aria-label="Settings">&#9881;</button>
+  </div>
+  <div class="progress"><div id="progressFill" class="progress-fill"></div></div>
+  <p id="progressLabel" class="progress-label">&nbsp;</p>
+</header>
+
+<main>
+  <!-- ---------- report details ---------- -->
+  <section class="card">
+    <h2>Report details</h2>
+    <div class="field-grid">
+      <label>Date
+        <input type="date" id="fDate">
+      </label>
+      <label>Shift
+        <select id="fShift">
+          <option value="AM">AM</option>
+          <option value="PM">PM</option>
+          <option value="Night">Night</option>
+        </select>
+      </label>
+    </div>
+    <label>Your name
+      <input type="text" id="fReporter" placeholder="e.g. Sam Patel" autocomplete="name">
+    </label>
+  </section>
+
+  <!-- ---------- live action summary ---------- -->
+  <section class="card" id="summaryCard">
+    <h2>Needs attention</h2>
+    <div id="summaryBody" class="summary-empty">Fill in the checklist below.</div>
+  </section>
+
+  <!-- ---------- checklist renders here ---------- -->
+  <div id="checklist"></div>
+
+  <section class="card">
+    <h2>Shift notes <span class="muted">(optional)</span></h2>
+    <textarea id="fGeneralNote" rows="3" placeholder="Anything else your managers should know"></textarea>
+  </section>
+
+  <div class="spacer"></div>
+</main>
+
+<!-- ---------- sticky action bar ---------- -->
+<nav class="actionbar">
+  <button id="btnWhatsApp" class="btn btn-ghost">WhatsApp text</button>
+  <button id="btnPdf" class="btn btn-primary">Save &amp; make PDF</button>
+</nav>
+
+<!-- ---------- settings sheet ---------- -->
+<div id="settingsSheet" class="sheet" hidden>
+  <div class="sheet-inner">
+    <div class="sheet-head">
+      <h2>Trigger levels</h2>
+      <button class="icon-btn" data-close-sheet>&times;</button>
+    </div>
+    <p class="muted small">
+      Set the numbers that decide when an item is flagged. Anything at or past the
+      <strong>Fault</strong> figure is reported as a fault; anything at or past
+      <strong>Monitor</strong> is reported as needing a watch.
+    </p>
+    <div id="thresholdForm"></div>
+    <div class="sheet-foot">
+      <button id="btnResetThresholds" class="btn btn-ghost">Reset to defaults</button>
+      <button class="btn btn-primary" data-close-sheet>Done</button>
+    </div>
+    <hr>
+    <h2>Saved reports</h2>
+    <div id="historyList" class="history"></div>
+    <hr>
+    <h2>Site name</h2>
+    <input type="text" id="fSite" placeholder="Shown in the PDF header">
+  </div>
+</div>
+
+<!-- ---------- whatsapp sheet ---------- -->
+<div id="waSheet" class="sheet" hidden>
+  <div class="sheet-inner">
+    <div class="sheet-head">
+      <h2>WhatsApp messages</h2>
+      <button class="icon-btn" data-close-sheet>&times;</button>
+    </div>
+    <p class="muted small">Send these as two separate messages so neither gets cut off by
+      &ldquo;Read more&rdquo;.</p>
+    <div id="waBody"></div>
+  </div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<script>
+/* ===== config.js ===== */
+/* ------------------------------------------------------------------
+   Daily Operations Report - checklist definition and thresholds
+   ------------------------------------------------------------------
+   Item types:
+     status  - tap one of OK / WATCH / FAULT / NOT DONE
+     number  - numeric reading, auto-graded against thresholds
+     date    - "sampled up to" date, auto-graded on how far behind it is
+     pair    - two numbers on one row (in use / backup)
+
+   Thresholds are plain numbers so the operator can edit them in
+   Settings without touching code. Anything left null is not graded
+   and stays informational.
+   ------------------------------------------------------------------ */
+
+const STATUS = {
+  OK: 'ok',
+  WATCH: 'watch',
+  FAULT: 'fault',
+  TODO: 'todo',
+  BLANK: 'blank'
+};
+
+const STATUS_META = {
+  ok:    { label: 'OK',       short: 'OK',   emoji: '\u2705', colour: [34, 139, 79],  wa: '\u2705' },
+  watch: { label: 'Monitor',  short: 'WATCH',emoji: '\u26A0\uFE0F', colour: [201, 138, 4], wa: '\u26A0\uFE0F' },
+  fault: { label: 'Fault',    short: 'FAULT',emoji: '\u274C', colour: [190, 44, 44],  wa: '\u274C' },
+  todo:  { label: 'Not done', short: 'TODO', emoji: '\u2B1C', colour: [110, 118, 129],wa: '\u2B1C' },
+  blank: { label: 'Not set',  short: '-',    emoji: '\u2B1C', colour: [160, 167, 175],wa: '\u2B1C' }
+};
+
+/* Default trigger levels. Every one of these is editable in Settings.
+   They are deliberately conservative starting points, not gospel -
+   the operator should tune them to the site's licence conditions. */
+const DEFAULT_THRESHOLDS = {
+  ph:                { critLow: 6.0, warnLow: 6.5, warnHigh: 8.5, critHigh: 9.0 },
+  chemInUse:         { crit: 200,  warn: 500 },
+  chemBackup:        { crit: 100,  warn: 400 },
+  boilerChem:        { crit: 50,   warn: 100 },
+  saturator:         { critLow: 350, warnLow: 450, warnHigh: 700, critHigh: 800 },
+  flow:              { critLow: 5,  warnLow: 10,  warnHigh: 30, critHigh: 40 },
+  humidity:          { critLow: 30, warnLow: 40,  warnHigh: 75, critHigh: 85 },
+  sampleLagDays:     { warn: 8, crit: 15 }
+};
+
+/* ------------------------------------------------------------------
+   The checklist itself
+   ------------------------------------------------------------------ */
+const CHECKLIST = [
+  {
+    id: 'leighton',
+    owner: 'Leighton',
+    title: 'Leighton Section',
+    groups: [
+      {
+        id: 'biofilters',
+        title: 'Biofilters',
+        items: [
+          { id: 'bio_running',  label: 'System running',  type: 'status' },
+          { id: 'bio_target',   label: 'Within target',   type: 'status' },
+          { id: 'bio_vacuum',   label: 'Vacuum gauge',    type: 'status' },
+          { id: 'bio1_rh',      label: 'Bio 1 humidity',  type: 'number', unit: '%RH', threshold: 'humidity', decimals: 0 },
+          { id: 'bio2_rh',      label: 'Bio 2 humidity',  type: 'number', unit: '%RH', threshold: 'humidity', decimals: 0 }
+        ]
+      },
+      {
+        id: 'chemicals',
+        title: 'Chemical Levels',
+        note: 'in use / backup',
+        items: [
+          { id: 'caustic',    label: 'Caustic 46%',       type: 'pair', unit: 'L' },
+          { id: 'coagulant',  label: 'Coagulant 720',     type: 'pair', unit: 'L' },
+          { id: 'flocculant', label: 'Flocculant 7686',   type: 'pair', unit: 'L' },
+          { id: 'sulphuric',  label: 'Sulphuric Acid 73%',type: 'pair', unit: 'L' }
+        ]
+      },
+      {
+        id: 'wwtp',
+        title: 'Waste Water Treatment Plant',
+        items: [
+          { id: 'daf_pumps',    label: 'DAF sludge pumps',        type: 'status' },
+          { id: 'daf_paddles',  label: 'DAF paddles',             type: 'status' },
+          { id: 'daf_clarity',  label: 'DAF effluent clarity',    type: 'status', hint: 'OK = water is clear' },
+          { id: 'no_overflow',  label: 'No overflow - process',   type: 'status' },
+          { id: 'waste_tanks',  label: 'No overflow - waste tanks',type: 'status' },
+          { id: 'sat1',         label: 'Saturator DAF 1',         type: 'number', unit: 'kPa', threshold: 'saturator', decimals: 0 },
+          { id: 'sat2',         label: 'Saturator DAF 2',         type: 'number', unit: 'kPa', threshold: 'saturator', decimals: 0 },
+          { id: 'ph1',          label: 'pH reading 1',            type: 'number', unit: '', threshold: 'ph', decimals: 1 },
+          { id: 'ph2',          label: 'pH reading 2',            type: 'number', unit: '', threshold: 'ph', decimals: 1 },
+          { id: 'ph3',          label: 'pH reading 3',            type: 'number', unit: '', threshold: 'ph', decimals: 1 },
+          { id: 'tank1_mixer',  label: 'Tank 1 mixer',            type: 'status' },
+          { id: 'floc_mixer',   label: 'Flocculant mixer adjusted',type: 'status' },
+          { id: 'flow_rate',    label: 'Flow rate',               type: 'number', unit: 'm3/h', threshold: 'flow', decimals: 1 }
+        ]
+      }
+    ]
+  },
+  {
+    id: 'hafiz',
+    owner: 'Hafiz',
+    title: 'Hafiz Section',
+    groups: [
+      {
+        id: 'pits',
+        title: 'Pit Pumps & Cleaning',
+        items: [
+          { id: 'main_pumps',   label: 'Main pit pumps',      type: 'status' },
+          { id: 'lamb_pit',     label: 'Lamb underpit cleaned',type: 'status' },
+          { id: 'beef_pit',     label: 'Beef underpit cleaned',type: 'status' }
+        ]
+      },
+      {
+        id: 'ducting',
+        title: 'Production Fume Ducting',
+        note: 'checking for steaming',
+        items: [
+          { id: 'duct_lamb_cooker', label: 'Lamb cooker', type: 'status', hint: 'OK = no steaming' },
+          { id: 'duct_beef_cooker', label: 'Beef cooker', type: 'status', hint: 'OK = no steaming' },
+          { id: 'duct_beef_press',  label: 'Beef press',  type: 'status', hint: 'OK = no steaming' },
+          { id: 'duct_drier1',      label: 'Drier 1',     type: 'status', hint: 'OK = no steaming' },
+          { id: 'duct_drier2',      label: 'Drier 2',     type: 'status', hint: 'OK = no steaming' },
+          { id: 'duct_drier3',      label: 'Drier 3',     type: 'status', hint: 'OK = no steaming' }
+        ]
+      },
+      {
+        id: 'boilers',
+        title: 'Boilers',
+        items: [
+          { id: 'boiler1_chem', label: 'Boiler 1 chemical', type: 'number', unit: 'L', threshold: 'boilerChem', decimals: 0 },
+          { id: 'boiler2_chem', label: 'Boiler 2 chemical', type: 'number', unit: 'L', threshold: 'boilerChem', decimals: 0 },
+          { id: 'blowdown',     label: 'Blowdown',          type: 'status' },
+          { id: 'water_test',   label: 'Water testing',     type: 'status' }
+        ]
+      },
+      {
+        id: 'samples',
+        title: 'Sample Testing',
+        items: [
+          { id: 'ovine_daily',  label: 'Ovine Daily',            type: 'date' },
+          { id: 'mbm_weekly',   label: 'MBM Weekly',             type: 'date' },
+          { id: 'ovine_weekly', label: 'Ovine Weekly',           type: 'date' },
+          { id: 'ovine_bags',   label: 'Ovine bag paperwork',    type: 'status' },
+          { id: 'separators',   label: 'Separator testing',      type: 'status' }
+        ]
+      }
+    ]
+  }
+];
+
+/* Flat lookup so the rest of the app can resolve an item by id. */
+const ITEM_INDEX = (() => {
+  const map = {};
+  CHECKLIST.forEach(section => {
+    section.groups.forEach(group => {
+      group.items.forEach(item => {
+        map[item.id] = { ...item, sectionId: section.id, owner: section.owner, groupTitle: group.title };
+      });
+    });
+  });
+  return map;
+})();
+
+/* ------------------------------------------------------------------
+   Grading helpers - turn a raw reading into a status
+   ------------------------------------------------------------------ */
+
+function gradeNumber(value, thresholdKey, thresholds) {
+  if (value === null || value === undefined || value === '') return STATUS.BLANK;
+  const t = thresholds[thresholdKey];
+  if (!t) return STATUS.OK;
+  const n = Number(value);
+  if (!isFinite(n)) return STATUS.BLANK;
+
+  // Band-style threshold (has a low and a high side)
+  if (t.critLow !== undefined) {
+    if (n <= t.critLow || n >= t.critHigh) return STATUS.FAULT;
+    if (n <= t.warnLow || n >= t.warnHigh) return STATUS.WATCH;
+    return STATUS.OK;
+  }
+  // Depleting-stock style threshold (lower is worse)
+  if (t.crit !== undefined) {
+    if (n <= t.crit) return STATUS.FAULT;
+    if (n <= t.warn) return STATUS.WATCH;
+    return STATUS.OK;
+  }
+  return STATUS.OK;
+}
+
+function gradePair(inUse, backup, thresholds) {
+  const a = gradeNumber(inUse, 'chemInUse', thresholds);
+  const b = gradeNumber(backup, 'chemBackup', thresholds);
+  return worstOf([a, b]);
+}
+
+function daysBehind(dateStr, reportDate) {
+  if (!dateStr) return null;
+  const then = new Date(dateStr + 'T00:00:00');
+  const now = new Date(reportDate + 'T00:00:00');
+  if (isNaN(then.getTime()) || isNaN(now.getTime())) return null;
+  return Math.round((now - then) / 86400000);
+}
+
+function gradeDate(dateStr, reportDate, thresholds) {
+  const lag = daysBehind(dateStr, reportDate);
+  if (lag === null) return STATUS.BLANK;
+  const t = thresholds.sampleLagDays;
+  if (lag >= t.crit) return STATUS.FAULT;
+  if (lag >= t.warn) return STATUS.WATCH;
+  return STATUS.OK;
+}
+
+const SEVERITY_ORDER = [STATUS.OK, STATUS.BLANK, STATUS.TODO, STATUS.WATCH, STATUS.FAULT];
+
+function worstOf(list) {
+  let worst = STATUS.OK;
+  list.forEach(s => {
+    if (SEVERITY_ORDER.indexOf(s) > SEVERITY_ORDER.indexOf(worst)) worst = s;
+  });
+  return worst;
+}
+
+function needsAction(status) {
+  return status === STATUS.FAULT || status === STATUS.WATCH || status === STATUS.TODO;
+}
+
+/* ===== pdf.js ===== */
+/* ------------------------------------------------------------------
+   Minimal PDF writer - no external libraries.
+
+   Builds a valid PDF 1.4 byte stream by hand: catalog, page tree,
+   Helvetica / Helvetica-Bold (base-14, so no font embedding needed),
+   uncompressed content streams, and JPEG photos as DCTDecode image
+   XObjects.
+
+   Everything the report needs is here: shaded table rows, coloured
+   status pills, word wrapping, automatic page breaks and page numbers.
+   ------------------------------------------------------------------ */
+
+const PT = {
+  pageW: 595.28,   // A4
+  pageH: 841.89,
+  margin: 42
+};
+
+/* Adobe base-14 advance widths (units of 1/1000 em) for codes 32-126.
+   Needed so text can be centred, right-aligned and wrapped properly. */
+const W_REG = [278,278,355,556,556,889,667,191,333,333,389,584,278,333,278,278,
+  556,556,556,556,556,556,556,556,556,556,278,278,584,584,584,556,
+  1015,667,667,722,722,667,611,778,722,278,500,667,556,833,722,778,
+  667,778,722,667,611,722,667,944,667,667,611,278,278,278,469,556,
+  333,556,556,500,556,556,278,556,556,222,222,500,222,833,556,556,
+  556,556,333,500,278,556,500,722,500,500,500,334,260,334,584];
+
+const W_BOLD = [278,333,474,556,556,889,722,238,333,333,389,584,278,333,278,278,
+  556,556,556,556,556,556,556,556,556,556,333,333,584,584,584,611,
+  975,722,722,722,722,667,611,778,722,278,556,722,611,833,722,778,
+  667,778,722,667,611,722,667,944,667,667,611,333,278,333,584,556,
+  333,556,611,556,611,556,333,611,611,278,278,556,278,889,611,611,
+  611,611,389,556,333,611,556,778,556,556,500,389,280,389,584];
+
+/* Unicode -> WinAnsi byte, for the handful of non-ASCII characters
+   that legitimately show up in a plant report. Anything else that is
+   not printable Latin-1 gets dropped rather than corrupting the file. */
+const WINANSI_MAP = {
+  0x00B0: 0xB0, // degree
+  0x00B2: 0xB2, // superscript two
+  0x00B3: 0xB3, // superscript three
+  0x00B1: 0xB1, // plus-minus
+  0x00B7: 0xB7, // middle dot
+  0x00BD: 0xBD, 0x00BC: 0xBC,
+  0x2013: 0x96, // en dash
+  0x2014: 0x97, // em dash
+  0x2018: 0x91, 0x2019: 0x92,
+  0x201C: 0x93, 0x201D: 0x94,
+  0x2022: 0xB7, // bullet -> middle dot
+  0x00E9: 0xE9, 0x00E8: 0xE8, 0x00FC: 0xFC, 0x00F6: 0xF6, 0x00E4: 0xE4
+};
+
+const ASCII_FALLBACK = {
+  0x2265: '>=', 0x2264: '<=', 0x2192: '->', 0x2190: '<-',
+  0x00D7: 'x',  0x2026: '...', 0x00A0: ' '
+};
+
+/* Convert a JS string into an array of WinAnsi byte values. */
+function toWinAnsi(str) {
+  const out = [];
+  for (const ch of String(str == null ? '' : str)) {
+    const cp = ch.codePointAt(0);
+    if (cp === 9) { out.push(32); continue; }
+    if (cp < 32) continue;
+    if (cp < 127) { out.push(cp); continue; }
+    if (WINANSI_MAP[cp] !== undefined) { out.push(WINANSI_MAP[cp]); continue; }
+    if (ASCII_FALLBACK[cp] !== undefined) {
+      for (const c of ASCII_FALLBACK[cp]) out.push(c.charCodeAt(0));
+      continue;
+    }
+    if (cp >= 0xA1 && cp <= 0xFF) { out.push(cp); continue; }
+    // Emoji, CJK, anything else with no Latin-1 home: skip it.
+  }
+  return out;
+}
+
+function charWidth(byte, bold) {
+  if (byte >= 32 && byte <= 126) return (bold ? W_BOLD : W_REG)[byte - 32];
+  if (byte === 0xB3 || byte === 0xB2) return 333;
+  if (byte === 0xB0) return 400;
+  if (byte === 0xB7) return 278;
+  if (byte === 0x96) return 556;
+  if (byte === 0x97) return 1000;
+  return bold ? 611 : 556;
+}
+
+function measure(str, size, bold) {
+  const bytes = toWinAnsi(str);
+  let total = 0;
+  for (const b of bytes) total += charWidth(b, bold);
+  return (total / 1000) * size;
+}
+
+/* Escape a WinAnsi byte array into a PDF literal string body. */
+function pdfStringBody(bytes) {
+  let s = '';
+  for (const b of bytes) {
+    if (b === 0x28) s += '\\(';
+    else if (b === 0x29) s += '\\)';
+    else if (b === 0x5C) s += '\\\\';
+    else if (b < 32 || b > 126) s += '\\' + b.toString(8).padStart(3, '0');
+    else s += String.fromCharCode(b);
+  }
+  return s;
+}
+
+function wrapText(str, size, bold, maxWidth) {
+  const words = String(str == null ? '' : str).split(/\s+/).filter(Boolean);
+  const lines = [];
+  let line = '';
+  for (const word of words) {
+    const test = line ? line + ' ' + word : word;
+    if (measure(test, size, bold) <= maxWidth || !line) {
+      line = test;
+    } else {
+      lines.push(line);
+      line = word;
+    }
+  }
+  if (line) lines.push(line);
+  return lines.length ? lines : [''];
+}
+
+function fmtColour(rgb) {
+  return rgb.map(v => (v / 255).toFixed(3)).join(' ');
+}
+
+/* ------------------------------------------------------------------ */
+
+class PdfDoc {
+  constructor() {
+    this.pages = [];
+    this.images = [];      // { name, bytes, width, height }
+    this.page = null;
+    this.y = 0;
+    this.newPage();
+  }
+
+  newPage() {
+    this.page = { ops: [] };
+    this.pages.push(this.page);
+    this.y = PT.margin;
+    return this.page;
+  }
+
+  get contentWidth() { return PT.pageW - PT.margin * 2; }
+  get bottomLimit() { return PT.pageH - PT.margin - 24; }
+
+  /* y is tracked from the top of the page downwards; PDF wants it from
+     the bottom, so every draw call converts at the last moment. */
+  flip(yTop) { return PT.pageH - yTop; }
+
+  ensure(height) {
+    if (this.y + height > this.bottomLimit) {
+      this.newPage();
+      return true;
+    }
+    return false;
+  }
+
+  op(str) { this.page.ops.push(str); }
+
+  rect(x, yTop, w, h, opts = {}) {
+    const y = this.flip(yTop + h);
+    if (opts.fill) {
+      this.op(`${fmtColour(opts.fill)} rg`);
+      this.op(`${x.toFixed(2)} ${y.toFixed(2)} ${w.toFixed(2)} ${h.toFixed(2)} re f`);
+    }
+    if (opts.stroke) {
+      this.op(`${fmtColour(opts.stroke)} RG`);
+      this.op(`${(opts.lineWidth || 0.6).toFixed(2)} w`);
+      this.op(`${x.toFixed(2)} ${y.toFixed(2)} ${w.toFixed(2)} ${h.toFixed(2)} re S`);
+    }
+  }
+
+  hline(x1, x2, yTop, colour = [222, 226, 230], lineWidth = 0.6) {
+    const y = this.flip(yTop);
+    this.op(`${fmtColour(colour)} RG`);
+    this.op(`${lineWidth.toFixed(2)} w`);
+    this.op(`${x1.toFixed(2)} ${y.toFixed(2)} m ${x2.toFixed(2)} ${y.toFixed(2)} l S`);
+  }
+
+  /* Draw one line of text. yTop is the baseline measured from the top. */
+  text(str, x, yTop, opts = {}) {
+    const size = opts.size || 9.5;
+    const bold = !!opts.bold;
+    const colour = opts.colour || [33, 37, 41];
+    const bytes = toWinAnsi(str);
+    if (!bytes.length) return;
+
+    let drawX = x;
+    if (opts.align === 'right') drawX = x - measure(str, size, bold);
+    else if (opts.align === 'center') drawX = x - measure(str, size, bold) / 2;
+
+    this.op('BT');
+    this.op(`${fmtColour(colour)} rg`);
+    this.op(`/${bold ? 'F2' : 'F1'} ${size} Tf`);
+    this.op(`1 0 0 1 ${drawX.toFixed(2)} ${this.flip(yTop).toFixed(2)} Tm`);
+    this.op(`(${pdfStringBody(bytes)}) Tj`);
+    this.op('ET');
+  }
+
+  /* Multi-line paragraph. Returns the height it consumed. */
+  paragraph(str, x, yTop, maxWidth, opts = {}) {
+    const size = opts.size || 9;
+    const leading = opts.leading || size * 1.35;
+    const lines = wrapText(str, size, !!opts.bold, maxWidth);
+    lines.forEach((line, i) => {
+      this.text(line, x, yTop + size + i * leading, opts);
+    });
+    return lines.length * leading;
+  }
+
+  /* Rounded-ish status pill: filled rect with white uppercase label. */
+  pill(label, xRight, yTop, colour) {
+    const size = 7.2;
+    const padX = 5;
+    const w = measure(label, size, true) + padX * 2;
+    const h = 12;
+    const x = xRight - w;
+    this.rect(x, yTop, w, h, { fill: colour });
+    this.text(label, x + padX, yTop + 8.6, { size, bold: true, colour: [255, 255, 255] });
+    return w;
+  }
+
+  addImage(bytes, width, height) {
+    const name = `Im${this.images.length + 1}`;
+    this.images.push({ name, bytes, width, height });
+    return name;
+  }
+
+  drawImage(name, x, yTop, w, h) {
+    const y = this.flip(yTop + h);
+    this.op('q');
+    this.op(`${w.toFixed(2)} 0 0 ${h.toFixed(2)} ${x.toFixed(2)} ${y.toFixed(2)} cm`);
+    this.op(`/${name} Do`);
+    this.op('Q');
+  }
+
+  /* ---------------- assembly ---------------- */
+
+  build(footerText) {
+    this.stampFooters(footerText);
+
+    const chunks = [];
+    const offsets = [];
+    let length = 0;
+
+    const push = (data) => {
+      const bytes = typeof data === 'string' ? latin1Bytes(data) : data;
+      chunks.push(bytes);
+      length += bytes.length;
+    };
+
+    const startObj = (num) => { offsets[num] = length; push(`${num} 0 obj\n`); };
+    const endObj = () => push('endobj\n');
+
+    const pageCount = this.pages.length;
+    const imgCount = this.images.length;
+
+    // Object numbering:
+    //   1 catalog, 2 pages, 3 F1, 4 F2,
+    //   5 .. 5+img-1            image xobjects
+    //   then per page: page object + content stream
+    const imgFirst = 5;
+    const pageFirst = imgFirst + imgCount;
+
+    push('%PDF-1.4\n');
+    push(new Uint8Array([0x25, 0xE2, 0xE3, 0xCF, 0xD3, 0x0A])); // binary marker
+
+    startObj(1);
+    push('<< /Type /Catalog /Pages 2 0 R >>\n');
+    endObj();
+
+    const kids = [];
+    for (let i = 0; i < pageCount; i++) kids.push(`${pageFirst + i * 2} 0 R`);
+    startObj(2);
+    push(`<< /Type /Pages /Kids [${kids.join(' ')}] /Count ${pageCount} >>\n`);
+    endObj();
+
+    startObj(3);
+    push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>\n');
+    endObj();
+
+    startObj(4);
+    push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>\n');
+    endObj();
+
+    this.images.forEach((img, i) => {
+      startObj(imgFirst + i);
+      push(`<< /Type /XObject /Subtype /Image /Width ${img.width} /Height ${img.height} ` +
+           `/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${img.bytes.length} >>\nstream\n`);
+      push(img.bytes);
+      push('\nendstream\n');
+      endObj();
+    });
+
+    const xobjEntries = this.images.map((img, i) => `/${img.name} ${imgFirst + i} 0 R`).join(' ');
+
+    this.pages.forEach((pg, i) => {
+      const pageObj = pageFirst + i * 2;
+      const contentObj = pageObj + 1;
+      const body = pg.ops.join('\n') + '\n';
+      const bodyBytes = latin1Bytes(body);
+
+      startObj(pageObj);
+      push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PT.pageW} ${PT.pageH}] ` +
+           `/Resources << /Font << /F1 3 0 R /F2 4 0 R >>` +
+           (xobjEntries ? ` /XObject << ${xobjEntries} >>` : '') +
+           ` >> /Contents ${contentObj} 0 R >>\n`);
+      endObj();
+
+      startObj(contentObj);
+      push(`<< /Length ${bodyBytes.length} >>\nstream\n`);
+      push(bodyBytes);
+      push('endstream\n');
+      endObj();
+    });
+
+    const maxObj = pageFirst + pageCount * 2 - 1;
+    const xrefStart = length;
+    push(`xref\n0 ${maxObj + 1}\n`);
+    push('0000000000 65535 f \n');
+    for (let n = 1; n <= maxObj; n++) {
+      push(String(offsets[n] || 0).padStart(10, '0') + ' 00000 n \n');
+    }
+    push(`trailer\n<< /Size ${maxObj + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF\n`);
+
+    const out = new Uint8Array(length);
+    let pos = 0;
+    for (const c of chunks) { out.set(c, pos); pos += c.length; }
+    return out;
+  }
+
+  stampFooters(footerText) {
+    const total = this.pages.length;
+    this.pages.forEach((pg, i) => {
+      const saved = this.page;
+      this.page = pg;
+      const yTop = PT.pageH - PT.margin + 6;
+      this.hline(PT.margin, PT.pageW - PT.margin, yTop - 10, [233, 236, 239]);
+      if (footerText) {
+        this.text(footerText, PT.margin, yTop, { size: 7.5, colour: [130, 137, 145] });
+      }
+      this.text(`Page ${i + 1} of ${total}`, PT.pageW - PT.margin, yTop,
+        { size: 7.5, colour: [130, 137, 145], align: 'right' });
+      this.page = saved;
+    });
+  }
+}
+
+function latin1Bytes(str) {
+  const out = new Uint8Array(str.length);
+  for (let i = 0; i < str.length; i++) out[i] = str.charCodeAt(i) & 0xFF;
+  return out;
+}
+
+/* ===== report.js ===== */
+/* ------------------------------------------------------------------
+   Turns the captured form state into
+     a) a professional PDF, and
+     b) the two WhatsApp messages.
+   ------------------------------------------------------------------ */
+
+const BRAND = {
+  ink:      [26, 32, 44],
+  navy:     [30, 58, 95],
+  slate:    [100, 110, 124],
+  hairline: [226, 230, 235],
+  zebra:    [247, 249, 251],
+  ok:       [34, 139, 79],
+  watch:    [201, 138, 4],
+  fault:    [190, 44, 44],
+  todo:     [110, 118, 129],
+  amberBg:  [255, 248, 230],
+  redBg:    [253, 242, 242]
+};
+
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+function prettyDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso + 'T00:00:00');
+  if (isNaN(d.getTime())) return iso;
+  return `${DAYS[d.getDay()]} ${String(d.getDate()).padStart(2, '0')} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+function shortDate(iso) {
+  if (!iso) return '-';
+  const d = new Date(iso + 'T00:00:00');
+  if (isNaN(d.getTime())) return iso;
+  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+/* ------------------------------------------------------------------
+   Evaluation: walk the checklist and resolve every item to a
+   { status, display, reason } triple.
+   ------------------------------------------------------------------ */
+
+function evaluate(state) {
+  const thresholds = state.thresholds || DEFAULT_THRESHOLDS;
+  const result = { items: {}, counts: { ok: 0, watch: 0, fault: 0, todo: 0, blank: 0 }, actions: {} };
+
+  CHECKLIST.forEach(section => {
+    result.actions[section.id] = [];
+    section.groups.forEach(group => {
+      group.items.forEach(item => {
+        const v = (state.values && state.values[item.id]) || {};
+        let status = STATUS.BLANK;
+        let display = '-';
+        let reason = '';
+
+        // An explicitly tapped status always wins over the automatic grade.
+        // A broken gauge means the operator taps Fault with no reading to
+        // enter, and that must still reach the manager.
+        const manual = v.status && v.status !== STATUS.BLANK ? v.status : null;
+
+        if (item.type === 'status') {
+          status = manual || STATUS.BLANK;
+          display = STATUS_META[status].label;
+        } else if (item.type === 'number') {
+          const raw = v.value;
+          const hasValue = !(raw === undefined || raw === null || raw === '');
+          const n = hasValue ? Number(raw) : NaN;
+          status = manual || (hasValue ? gradeNumber(raw, item.threshold, thresholds) : STATUS.BLANK);
+          if (hasValue) {
+            display = (isFinite(n) ? n.toFixed(item.decimals || 0) : String(raw)) +
+                      (item.unit ? ' ' + item.unit : '');
+          } else {
+            display = manual ? 'No reading' : '-';
+          }
+          if (hasValue && isFinite(n)) reason = numberReason(item, n, thresholds, status);
+        } else if (item.type === 'pair') {
+          const inUse = v.inUse, backup = v.backup;
+          const hasAny = !((inUse === undefined || inUse === '') && (backup === undefined || backup === ''));
+          status = manual || (hasAny ? gradePair(inUse, backup, thresholds) : STATUS.BLANK);
+          if (hasAny) {
+            display = `${fmtNum(inUse)} ${item.unit} in use / ${fmtNum(backup)} ${item.unit} backup`;
+            reason = pairReason(inUse, backup, thresholds);
+          } else {
+            display = manual ? 'Not measured' : '-';
+          }
+        } else if (item.type === 'date') {
+          const iso = v.date;
+          status = manual || (iso ? gradeDate(iso, state.date, thresholds) : STATUS.BLANK);
+          if (iso) {
+            const lag = daysBehind(iso, state.date);
+            display = `sampled to ${shortDate(iso)}`;
+            if (lag !== null && lag > 1) {
+              display += ` (${lag} days behind)`;
+              reason = `${lag} days behind`;
+            }
+          } else {
+            display = manual ? 'No date recorded' : '-';
+          }
+        }
+
+        // Fall back to a plain description of the tapped status.
+        if (!reason && needsAction(status)) {
+          if (status === STATUS.FAULT) reason = 'fault reported';
+          else if (status === STATUS.WATCH) reason = 'needs monitoring';
+          else if (status === STATUS.TODO) reason = 'not completed';
+        }
+
+        result.counts[status] = (result.counts[status] || 0) + 1;
+        const photos = (v.photos || []).filter(id => state.photos && state.photos[id]);
+        result.items[item.id] = { status, display, reason, note: v.note || '', photos };
+
+        if (needsAction(status)) {
+          result.actions[section.id].push({
+            label: item.label,
+            group: group.title,
+            status,
+            display,
+            reason: reason || STATUS_META[status].label.toLowerCase(),
+            note: v.note || ''
+          });
+        }
+      });
+    });
+  });
+
+  // Faults before warnings before not-done, so the urgent stuff reads first.
+  Object.keys(result.actions).forEach(k => {
+    result.actions[k].sort((a, b) =>
+      SEVERITY_ORDER.indexOf(b.status) - SEVERITY_ORDER.indexOf(a.status));
+  });
+  return result;
+}
+
+function fmtNum(v) {
+  if (v === undefined || v === null || v === '') return '-';
+  const n = Number(v);
+  return isFinite(n) ? String(n) : String(v);
+}
+
+function numberReason(item, n, thresholds, status) {
+  if (!needsAction(status)) return '';
+  const t = thresholds[item.threshold];
+  const d = item.decimals || 0;
+  const show = (x) => Number(x).toFixed(d);
+  const unit = item.unit ? ' ' + item.unit : '';
+  if (!t) return 'out of range';
+  if (t.critLow !== undefined) {
+    if (n <= t.critLow) return `${show(n)}${unit} - at or below the ${show(t.critLow)} limit`;
+    if (n >= t.critHigh) return `${show(n)}${unit} - at or above the ${show(t.critHigh)} limit`;
+    if (n <= t.warnLow) return `${show(n)}${unit} - drifting low`;
+    if (n >= t.warnHigh) return `${show(n)}${unit} - drifting high`;
+  } else if (t.crit !== undefined) {
+    if (n <= t.crit) return `only ${show(n)}${unit} left`;
+    if (n <= t.warn) return `running low at ${show(n)}${unit}`;
+  }
+  return 'out of range';
+}
+
+function pairReason(inUse, backup, thresholds) {
+  const bits = [];
+  const b = Number(backup), u = Number(inUse);
+  if (backup !== undefined && backup !== '' && isFinite(b)) {
+    if (b <= thresholds.chemBackup.crit) bits.push(`backup down to ${b} L`);
+    else if (b <= thresholds.chemBackup.warn) bits.push(`backup low (${b} L)`);
+  }
+  if (inUse !== undefined && inUse !== '' && isFinite(u)) {
+    if (u <= thresholds.chemInUse.crit) bits.push(`only ${u} L in use`);
+    else if (u <= thresholds.chemInUse.warn) bits.push(`in-use tank low (${u} L)`);
+  }
+  return bits.join(', ');
+}
+
+/* ------------------------------------------------------------------
+   PDF
+   ------------------------------------------------------------------ */
+
+function buildPdf(state, evaluated, previous) {
+  const doc = new PdfDoc();
+  const L = PT.margin;
+  const R = PT.pageW - PT.margin;
+  const W = doc.contentWidth;
+
+  /* ---- header band ---- */
+  doc.rect(0, 0, PT.pageW, 74, { fill: BRAND.navy });
+  doc.text('DAILY OPERATIONS REPORT', L, 34, { size: 16, bold: true, colour: [255, 255, 255] });
+  doc.text(state.site || 'Rendering Plant Operations', L, 51,
+    { size: 9, colour: [176, 196, 222] });
+  doc.text(prettyDate(state.date), R, 34, { size: 11.5, bold: true, colour: [255, 255, 255], align: 'right' });
+  doc.text(`${state.shift || 'AM'} shift`, R, 50, { size: 9, colour: [176, 196, 222], align: 'right' });
+  doc.y = 92;
+
+  /* ---- meta strip ---- */
+  const metaH = 26;
+  doc.rect(L, doc.y, W, metaH, { fill: [248, 250, 252], stroke: BRAND.hairline });
+  const metas = [
+    ['Reported by', state.reporter || '-'],
+    ['Generated', new Date().toLocaleString('en-AU', { hour12: false })],
+    ['Photos attached', String(Object.keys(state.photos || {}).length)]
+  ];
+  let mx = L + 10;
+  const mw = W / metas.length;
+  metas.forEach(([k, v]) => {
+    doc.text(k.toUpperCase(), mx, doc.y + 11, { size: 6.4, bold: true, colour: BRAND.slate });
+    doc.text(v, mx, doc.y + 21, { size: 8.6, colour: BRAND.ink });
+    mx += mw;
+  });
+  doc.y += metaH + 14;
+
+  /* ---- summary counters ---- */
+  const cards = [
+    ['OK', evaluated.counts.ok || 0, BRAND.ok],
+    ['MONITOR', evaluated.counts.watch || 0, BRAND.watch],
+    ['FAULT', evaluated.counts.fault || 0, BRAND.fault],
+    ['NOT DONE', (evaluated.counts.todo || 0) + (evaluated.counts.blank || 0), BRAND.todo]
+  ];
+  const gap = 8;
+  const cw = (W - gap * (cards.length - 1)) / cards.length;
+  cards.forEach(([label, count, colour], i) => {
+    const x = L + i * (cw + gap);
+    doc.rect(x, doc.y, cw, 42, { fill: [252, 253, 254], stroke: BRAND.hairline });
+    doc.rect(x, doc.y, 3, 42, { fill: colour });
+    doc.text(String(count), x + 11, doc.y + 24, { size: 17, bold: true, colour });
+    doc.text(label, x + 11, doc.y + 35, { size: 6.6, bold: true, colour: BRAND.slate });
+  });
+  doc.y += 42 + 18;
+
+  /* ---- action required, grouped by who owns it ---- */
+  CHECKLIST.forEach(section => {
+    const actions = evaluated.actions[section.id];
+    if (!actions.length) return;
+    const faults = actions.filter(a => a.status === STATUS.FAULT);
+
+    const lines = actions.map(a => {
+      const bits = [a.label];
+      if (a.reason) bits.push(a.reason);
+      let s = bits.join(' - ');
+      if (a.note) s += ` (${a.note})`;
+      return { text: s, status: a.status };
+    });
+
+    let bodyH = 0;
+    lines.forEach(l => {
+      bodyH += wrapText(l.text, 8.8, false, W - 46).length * 12;
+    });
+    const boxH = 26 + bodyH + 8;
+    doc.ensure(boxH + 10);
+
+    const bg = faults.length ? BRAND.redBg : BRAND.amberBg;
+    const edge = faults.length ? BRAND.fault : BRAND.watch;
+    doc.rect(L, doc.y, W, boxH, { fill: bg, stroke: edge, lineWidth: 0.8 });
+    doc.rect(L, doc.y, 3.5, boxH, { fill: edge });
+    doc.text(`ACTION REQUIRED \u00B7 ${section.owner.toUpperCase()}`, L + 14, doc.y + 17,
+      { size: 9, bold: true, colour: edge });
+
+    let ay = doc.y + 30;
+    lines.forEach(l => {
+      const meta = STATUS_META[l.status];
+      doc.rect(L + 16, ay - 5.5, 5, 5, { fill: meta.colour });
+      const wrapped = wrapText(l.text, 8.8, false, W - 46);
+      wrapped.forEach((w, i) => {
+        doc.text(w, L + 27, ay + i * 12, { size: 8.8, colour: BRAND.ink });
+      });
+      ay += wrapped.length * 12;
+    });
+    doc.y += boxH + 12;
+  });
+
+  /* ---- detail sections ---- */
+  const photoOrder = [];
+
+  CHECKLIST.forEach(section => {
+    doc.ensure(64);
+    doc.rect(L, doc.y, W, 22, { fill: BRAND.navy });
+    doc.text(section.title.toUpperCase(), L + 10, doc.y + 15,
+      { size: 9.4, bold: true, colour: [255, 255, 255] });
+    doc.y += 22 + 10;
+
+    section.groups.forEach(group => {
+      doc.ensure(46);
+      const heading = group.note ? `${group.title}  (${group.note})` : group.title;
+      doc.text(heading, L, doc.y + 9, { size: 9.2, bold: true, colour: BRAND.navy });
+      doc.y += 14;
+      doc.hline(L, R, doc.y, BRAND.navy, 0.9);
+      doc.y += 4;
+
+      group.items.forEach((item, idx) => {
+        const ev = evaluated.items[item.id];
+        const rowH = 19;
+        if (doc.ensure(rowH + 4)) {
+          doc.text(`${heading} (continued)`, L, doc.y + 9, { size: 8.4, bold: true, colour: BRAND.slate });
+          doc.y += 16;
+        }
+        if (idx % 2 === 1) doc.rect(L, doc.y, W, rowH, { fill: BRAND.zebra });
+
+        doc.text(item.label, L + 7, doc.y + 13, { size: 8.8, colour: BRAND.ink });
+
+        const meta = STATUS_META[ev.status];
+        doc.pill(meta.short, R - 6, doc.y + 4, meta.colour);
+
+        // Value column. Status-only items say everything in the pill
+        // already, so repeating the word next to it just adds noise.
+        const parts = [];
+        if (item.type !== 'status') parts.push(ev.display);
+        const trend = trendFor(item, state, previous);
+        if (trend) parts.push(trend);
+        if (parts.length) {
+          doc.text(parts.join('   '), R - 74, doc.y + 13,
+            { size: 8.6, colour: BRAND.slate, align: 'right' });
+        }
+
+        doc.y += rowH;
+
+        if (ev.photos.length) {
+          ev.photos.forEach(pid => {
+            photoOrder.push({ photoId: pid, label: item.label, group: group.title, owner: section.owner });
+          });
+          const refs = ev.photos.map((_, i) =>
+            `Photo ${photoOrder.length - ev.photos.length + i + 1}`).join(', ');
+          doc.ensure(13);
+          doc.text(`see ${refs}`, L + 16, doc.y + 9, { size: 7.6, colour: [90, 120, 170] });
+          doc.y += 12;
+        }
+        if (ev.note) {
+          const h = doc.paragraph(`Note: ${ev.note}`, L + 16, doc.y, W - 32,
+            { size: 7.8, colour: BRAND.slate, leading: 10 });
+          doc.y += h + 2;
+        }
+      });
+      doc.hline(L, R, doc.y, BRAND.hairline);
+      doc.y += 14;
+    });
+  });
+
+  /* ---- photo appendix ---- */
+  if (photoOrder.length) {
+    doc.newPage();
+    doc.rect(L, doc.y, W, 22, { fill: BRAND.navy });
+    doc.text('PHOTO APPENDIX', L + 10, doc.y + 15,
+      { size: 9.4, bold: true, colour: [255, 255, 255] });
+    doc.y += 22 + 12;
+
+    const colW = (W - 14) / 2;
+    let col = 0;
+    let rowTop = doc.y;
+
+    photoOrder.forEach((entry, i) => {
+      const photo = state.photos[entry.photoId];
+      if (!photo) return;
+      const maxH = 200;
+      const scale = Math.min(colW / photo.width, maxH / photo.height);
+      const dw = photo.width * scale;
+      const dh = photo.height * scale;
+      const blockH = dh + 34;
+
+      if (col === 0 && rowTop + blockH > doc.bottomLimit) {
+        doc.newPage();
+        rowTop = doc.y;
+      }
+      const x = L + col * (colW + 14);
+      const name = doc.addImage(photo.bytes, photo.width, photo.height);
+      doc.rect(x, rowTop, colW, dh + 2, { fill: [246, 247, 249] });
+      doc.drawImage(name, x + (colW - dw) / 2, rowTop + 1, dw, dh);
+      doc.text(`Photo ${i + 1} \u00B7 ${entry.label}`, x, rowTop + dh + 15,
+        { size: 8, bold: true, colour: BRAND.ink });
+      doc.text(`${entry.owner} \u00B7 ${entry.group}`, x, rowTop + dh + 26,
+        { size: 7.2, colour: BRAND.slate });
+
+      if (col === 1) {
+        rowTop += blockH + 14;
+        doc.y = rowTop;
+        col = 0;
+      } else {
+        col = 1;
+      }
+    });
+  }
+
+  const footer = `Daily Operations Report \u00B7 ${prettyDate(state.date)} \u00B7 ${state.shift || 'AM'} shift` +
+                 (state.reporter ? ` \u00B7 ${state.reporter}` : '');
+  return doc.build(footer);
+}
+
+/* Small up/down marker comparing today with the last saved report. */
+function trendFor(item, state, previous) {
+  if (!previous || !previous.values) return '';
+  const now = state.values[item.id] || {};
+  const before = previous.values[item.id] || {};
+  const pick = (v) => item.type === 'pair' ? v.inUse : v.value;
+  const a = Number(pick(now));
+  const b = Number(pick(before));
+  if (!isFinite(a) || !isFinite(b) || a === b) return '';
+  const delta = a - b;
+  const mag = Math.abs(delta);
+  // Keep a decimal unless the change is a whole number, so a pH drop of
+  // 1.8 never gets rounded up to 2.
+  const shown = Number.isInteger(mag) ? String(mag) : mag.toFixed(1);
+  return `(${delta > 0 ? '+' : '-'}${shown} vs last)`;
+}
+
+/* ------------------------------------------------------------------
+   WhatsApp messages - one per manager
+   ------------------------------------------------------------------ */
+
+function buildWhatsApp(state, evaluated) {
+  return CHECKLIST.map(section => {
+    const lines = [];
+    const actions = evaluated.actions[section.id];
+
+    if (section.id === CHECKLIST[0].id) {
+      lines.push(`*DAILY OPS REPORT* \u2014 ${prettyDate(state.date)}`);
+      lines.push(`_${state.shift || 'AM'} shift${state.reporter ? ' \u00B7 Reported by ' + state.reporter : ''}_`);
+      lines.push('');
+    }
+    lines.push(`*\u2501\u2501\u2501 ${section.owner.toUpperCase()} \u2501\u2501\u2501*`);
+    if (section.id !== CHECKLIST[0].id) {
+      lines.push(`_${prettyDate(state.date)} \u00B7 ${state.shift || 'AM'} shift_`);
+    }
+    lines.push('');
+
+    if (actions.length) {
+      const hasFault = actions.some(a => a.status === STATUS.FAULT);
+      lines.push(`${hasFault ? '\u274C' : '\u26A0\uFE0F'} *ACTION REQUIRED*`);
+      actions.forEach(a => {
+        let s = `\u2022 ${a.label}`;
+        if (a.reason) s += ` \u2014 *${a.reason}*`;
+        if (a.note) s += ` (${a.note})`;
+        lines.push(s);
+      });
+    } else {
+      lines.push('\u2705 *All checks clear*');
+    }
+    lines.push('');
+
+    section.groups.forEach(group => {
+      lines.push(`*${group.title}*${group.note ? ` _(${group.note})_` : ''}`);
+      group.items.forEach(item => {
+        const ev = evaluated.items[item.id];
+        const meta = STATUS_META[ev.status];
+        let line = `\u2022 ${item.label}`;
+        if (item.type !== 'status' && ev.display && ev.display !== '-') {
+          line += ` \u2014 ${ev.display}`;
+        }
+        line += ` ${meta.wa}`;
+        if (ev.photos.length) line += ' \uD83D\uDCF7';
+        lines.push(line);
+        if (ev.note) lines.push(`   _${ev.note}_`);
+      });
+      lines.push('');
+    });
+
+    lines.push('_\u2705 OK \u00B7 \u26A0\uFE0F Monitor \u00B7 \u274C Fault \u00B7 \u2B1C Not done_');
+    return { owner: section.owner, text: lines.join('\n').replace(/\n{3,}/g, '\n\n') };
+  });
+}
+
+/* ===== app.js ===== */
+/* ------------------------------------------------------------------
+   App shell: renders the checklist, captures photos, autosaves to
+   IndexedDB, and hands the finished report to the PDF writer.
+   ------------------------------------------------------------------ */
+
+/* ---------------- storage ---------------- */
+
+const DB_NAME = 'opsreport';
+const DB_VER = 1;
+const STORE = 'reports';
+const DRAFT_ID = 'draft';
+
+function openDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VER);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(STORE)) {
+        db.createObjectStore(STORE, { keyPath: 'id' });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function dbTx(mode, fn) {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, mode);
+    const store = tx.objectStore(STORE);
+    let out;
+    try { out = fn(store); } catch (e) { reject(e); return; }
+    tx.oncomplete = () => resolve(out && out.result !== undefined ? out.result : out);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+const store = {
+  put: (rec) => dbTx('readwrite', s => s.put(rec)),
+  get: (id) => dbTx('readonly', s => s.get(id)),
+  del: (id) => dbTx('readwrite', s => s.delete(id)),
+  all: () => dbTx('readonly', s => s.getAll())
+};
+
+/* ---------------- state ---------------- */
+
+function todayISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+let state = blankState();
+let saveTimer = null;
+
+function blankState() {
+  return {
+    id: DRAFT_ID,
+    date: todayISO(),
+    shift: 'AM',
+    reporter: '',
+    site: '',
+    generalNote: '',
+    values: {},
+    photos: {},
+    thresholds: deepCopy(DEFAULT_THRESHOLDS)
+  };
+}
+
+function deepCopy(o) { return JSON.parse(JSON.stringify(o)); }
+
+function valueOf(itemId) {
+  if (!state.values[itemId]) state.values[itemId] = { photos: [] };
+  if (!state.values[itemId].photos) state.values[itemId].photos = [];
+  return state.values[itemId];
+}
+
+function queueSave() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    store.put({ ...state, id: DRAFT_ID, savedAt: Date.now() }).catch(err => {
+      console.error('autosave failed', err);
+      toast('Could not autosave - storage may be full');
+    });
+  }, 400);
+}
+
+/* ---------------- rendering ---------------- */
+
+const el = (sel) => document.querySelector(sel);
+
+function render() {
+  // Listeners live on the stable #checklist container and are attached once
+  // in boot(), so re-rendering the markup must not re-bind them.
+  el('#checklist').innerHTML = CHECKLIST.map(renderSection).join('');
+  refresh();
+}
+
+function renderSection(section) {
+  return `
+    <div class="section-head">${esc(section.title)}</div>
+    <div class="section-body">
+      ${section.groups.map(g => renderGroup(section, g)).join('')}
+    </div>`;
+}
+
+function renderGroup(section, group) {
+  return `
+    <div class="group" data-group="${group.id}" data-collapsed="false">
+      <button class="group-head" type="button" data-toggle="${group.id}">
+        <span>${esc(group.title)}${group.note ? ` <span class="muted">(${esc(group.note)})</span>` : ''}</span>
+        <span class="group-meta">
+          <span class="dot blank" data-groupdot="${group.id}"></span>
+          <span class="chev">&#9660;</span>
+        </span>
+      </button>
+      <div class="group-items">
+        ${group.items.map(renderItem).join('')}
+      </div>
+    </div>`;
+}
+
+function renderItem(item) {
+  const v = state.values[item.id] || {};
+  let control = '';
+
+  if (item.type === 'number') {
+    control = `
+      <div class="numrow">
+        <input type="number" inputmode="decimal" step="any" data-num="${item.id}"
+               value="${v.value ?? ''}" placeholder="reading">
+        <span class="unit">${esc(item.unit || '')}</span>
+      </div>`;
+  } else if (item.type === 'pair') {
+    control = `
+      <div class="pairgrid">
+        <label>In use (${esc(item.unit)})
+          <input type="number" inputmode="decimal" step="any" data-pair="${item.id}" data-side="inUse"
+                 value="${v.inUse ?? ''}">
+        </label>
+        <label>Backup (${esc(item.unit)})
+          <input type="number" inputmode="decimal" step="any" data-pair="${item.id}" data-side="backup"
+                 value="${v.backup ?? ''}">
+        </label>
+      </div>`;
+  } else if (item.type === 'date') {
+    control = `
+      <div class="numrow">
+        <input type="date" data-date="${item.id}" value="${v.date ?? ''}">
+      </div>`;
+  }
+
+  const statuses = [
+    [STATUS.OK, 'OK'], [STATUS.WATCH, 'Monitor'],
+    [STATUS.FAULT, 'Fault'], [STATUS.TODO, 'Not done']
+  ];
+  const statusRow = `
+    <div class="statusrow">
+      ${statuses.map(([s, label]) => `
+        <button type="button" class="sbtn ${s}" data-status="${item.id}" data-value="${s}"
+                aria-pressed="${v.status === s ? 'true' : 'false'}">${label}</button>`).join('')}
+    </div>`;
+
+  return `
+    <div class="item" data-item="${item.id}">
+      <div class="item-top">
+        <div>
+          <div class="item-label">${esc(item.label)}</div>
+          ${item.hint ? `<div class="item-hint">${esc(item.hint)}</div>` : ''}
+        </div>
+        <span class="pill blank" data-pill="${item.id}">-</span>
+      </div>
+      ${control}
+      ${statusRow}
+      <div class="item-tools">
+        <button type="button" class="tool-btn" data-photo="${item.id}">&#128247; Add photo</button>
+        <button type="button" class="tool-btn" data-note="${item.id}">&#9998; Note</button>
+      </div>
+      <div class="note-input" data-notewrap="${item.id}" ${v.note ? '' : 'hidden'}>
+        <input type="text" data-notefield="${item.id}" value="${esc(v.note || '')}"
+               placeholder="Short note for your manager">
+      </div>
+      <div class="thumbs" data-thumbs="${item.id}"></div>
+      <input type="file" accept="image/*" capture="environment" multiple
+             data-fileinput="${item.id}" hidden>
+    </div>`;
+}
+
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/* ---------------- events ---------------- */
+
+function bindChecklist() {
+  const root = el('#checklist');
+
+  root.addEventListener('click', (e) => {
+    const toggle = e.target.closest('[data-toggle]');
+    if (toggle) {
+      const group = toggle.closest('.group');
+      group.dataset.collapsed = group.dataset.collapsed === 'true' ? 'false' : 'true';
+      return;
+    }
+
+    const sbtn = e.target.closest('[data-status]');
+    if (sbtn) {
+      const id = sbtn.dataset.status;
+      const v = valueOf(id);
+      v.status = v.status === sbtn.dataset.value ? undefined : sbtn.dataset.value;
+      root.querySelectorAll(`[data-status="${id}"]`).forEach(b => {
+        b.setAttribute('aria-pressed', b.dataset.value === v.status ? 'true' : 'false');
+      });
+      queueSave();
+      refresh();
+      return;
+    }
+
+    const photoBtn = e.target.closest('[data-photo]');
+    if (photoBtn) {
+      root.querySelector(`[data-fileinput="${photoBtn.dataset.photo}"]`).click();
+      return;
+    }
+
+    const noteBtn = e.target.closest('[data-note]');
+    if (noteBtn) {
+      const wrap = root.querySelector(`[data-notewrap="${noteBtn.dataset.note}"]`);
+      wrap.hidden = !wrap.hidden;
+      if (!wrap.hidden) wrap.querySelector('input').focus();
+      return;
+    }
+
+    const rm = e.target.closest('[data-rmphoto]');
+    if (rm) {
+      removePhoto(rm.dataset.item, rm.dataset.rmphoto);
+      return;
+    }
+  });
+
+  root.addEventListener('input', (e) => {
+    const t = e.target;
+    if (t.dataset.num !== undefined) {
+      valueOf(t.dataset.num).value = t.value;
+    } else if (t.dataset.pair !== undefined) {
+      valueOf(t.dataset.pair)[t.dataset.side] = t.value;
+    } else if (t.dataset.date !== undefined) {
+      valueOf(t.dataset.date).date = t.value;
+    } else if (t.dataset.notefield !== undefined) {
+      valueOf(t.dataset.notefield).note = t.value;
+    } else {
+      return;
+    }
+    queueSave();
+    refresh();
+  });
+
+  root.addEventListener('change', async (e) => {
+    const input = e.target;
+    if (input.dataset.fileinput === undefined) return;
+    const itemId = input.dataset.fileinput;
+    const files = Array.from(input.files || []);
+    input.value = '';
+    if (!files.length) return;
+    toast(files.length > 1 ? `Adding ${files.length} photos...` : 'Adding photo...');
+    for (const file of files) {
+      try {
+        await attachPhoto(itemId, file);
+      } catch (err) {
+        console.error(err);
+        toast('That photo could not be read');
+      }
+    }
+    queueSave();
+    refresh();
+  });
+}
+
+/* ---------------- photos ---------------- */
+
+const MAX_EDGE = 1400;
+const JPEG_QUALITY = 0.72;
+
+async function attachPhoto(itemId, file) {
+  const processed = await downscaleToJpeg(file);
+  const pid = 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  state.photos[pid] = processed;
+  valueOf(itemId).photos.push(pid);
+}
+
+function removePhoto(itemId, pid) {
+  const v = valueOf(itemId);
+  v.photos = v.photos.filter(p => p !== pid);
+  delete state.photos[pid];
+  queueSave();
+  refresh();
+}
+
+async function downscaleToJpeg(file) {
+  const bitmap = await loadBitmap(file);
+  const scale = Math.min(1, MAX_EDGE / Math.max(bitmap.width, bitmap.height));
+  const w = Math.max(1, Math.round(bitmap.width * scale));
+  const h = Math.max(1, Math.round(bitmap.height * scale));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  // White base so any transparency flattens instead of turning black in JPEG.
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, w, h);
+  ctx.drawImage(bitmap, 0, 0, w, h);
+  if (bitmap.close) bitmap.close();
+
+  return { dataUrl: canvas.toDataURL('image/jpeg', JPEG_QUALITY), width: w, height: h };
+}
+
+function loadBitmap(file) {
+  if (window.createImageBitmap) {
+    // from-image applies the EXIF rotation so photos are not sideways.
+    return createImageBitmap(file, { imageOrientation: 'from-image' })
+      .catch(() => createImageBitmap(file))
+      .catch(() => loadViaImgTag(file));
+  }
+  return loadViaImgTag(file);
+}
+
+function loadViaImgTag(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('decode failed')); };
+    img.src = url;
+  });
+}
+
+function dataUrlToBytes(dataUrl) {
+  const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
+  const bin = atob(base64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+/* ---------------- refresh (pills, dots, summary, progress) ---------------- */
+
+function refresh() {
+  const ev = evaluate(state);
+
+  Object.keys(ev.items).forEach(id => {
+    const pill = document.querySelector(`[data-pill="${id}"]`);
+    if (!pill) return;
+    const s = ev.items[id].status;
+    pill.className = `pill ${s}`;
+    pill.textContent = STATUS_META[s].short;
+
+    const thumbs = document.querySelector(`[data-thumbs="${id}"]`);
+    if (thumbs) {
+      const photos = (state.values[id] && state.values[id].photos) || [];
+      thumbs.innerHTML = photos.map(pid => {
+        const p = state.photos[pid];
+        if (!p) return '';
+        return `<div class="thumb">
+                  <img src="${p.dataUrl}" alt="">
+                  <button type="button" data-rmphoto="${pid}" data-item="${id}" aria-label="Remove photo">&times;</button>
+                </div>`;
+      }).join('');
+    }
+  });
+
+  CHECKLIST.forEach(section => {
+    section.groups.forEach(group => {
+      const worst = worstOf(group.items.map(i => ev.items[i.id].status));
+      const dot = document.querySelector(`[data-groupdot="${group.id}"]`);
+      if (dot) dot.className = `dot ${worst}`;
+    });
+  });
+
+  const total = Object.keys(ITEM_INDEX).length;
+  const done = Object.values(ev.items).filter(i => i.status !== STATUS.BLANK).length;
+  el('#progressFill').style.width = `${Math.round(done / total * 100)}%`;
+  el('#progressLabel').textContent = `${done} of ${total} checks recorded`;
+  el('#topbarDate').textContent =
+    `${prettyDate(state.date)} \u00B7 ${state.shift} shift${state.reporter ? ' \u00B7 ' + state.reporter : ''}`;
+
+  renderSummary(ev);
+  return ev;
+}
+
+function renderSummary(ev) {
+  const body = el('#summaryBody');
+  const blocks = [];
+  CHECKLIST.forEach(section => {
+    const actions = ev.actions[section.id];
+    if (!actions.length) return;
+    blocks.push(`<div class="sum-owner">${esc(section.owner)}</div>`);
+    actions.forEach(a => {
+      blocks.push(`
+        <div class="sum-item">
+          <span class="bar ${a.status}"></span>
+          <span><strong>${esc(a.label)}</strong>${a.reason ? ` <span class="sum-reason">- ${esc(a.reason)}</span>` : ''}</span>
+        </div>`);
+    });
+  });
+  if (!blocks.length) {
+    const anyFilled = Object.values(ev.items).some(i => i.status !== STATUS.BLANK);
+    body.className = 'summary-empty';
+    body.innerHTML = anyFilled
+      ? '\u2705 Everything recorded so far is within limits.'
+      : 'Fill in the checklist below.';
+  } else {
+    body.className = '';
+    body.innerHTML = blocks.join('');
+  }
+}
+
+/* ---------------- PDF + sharing ---------------- */
+
+async function generatePdf() {
+  if (!state.reporter.trim()) {
+    toast('Add your name first');
+    el('#fReporter').focus();
+    return;
+  }
+
+  const ev = refresh();
+  toast('Building PDF...');
+
+  // Decode the stored JPEGs only now, so the draft stays small in storage.
+  const photosWithBytes = {};
+  Object.entries(state.photos).forEach(([pid, p]) => {
+    photosWithBytes[pid] = { ...p, bytes: dataUrlToBytes(p.dataUrl) };
+  });
+
+  const previous = await findPreviousReport();
+  const forPdf = { ...state, photos: photosWithBytes };
+
+  let bytes;
+  try {
+    bytes = buildPdf(forPdf, ev, previous);
+  } catch (err) {
+    console.error(err);
+    toast('PDF failed to build');
+    return;
+  }
+
+  await archiveCurrent();
+
+  const filename = `Ops-Report-${state.date}-${state.shift}.pdf`;
+  await deliverPdf(bytes, filename);
+}
+
+async function deliverPdf(bytes, filename) {
+  // 1. Wrapped in the Android app - hand it to the native share sheet.
+  if (window.AndroidBridge && typeof window.AndroidBridge.sharePdf === 'function') {
+    let binary = '';
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    window.AndroidBridge.sharePdf(btoa(binary), filename);
+    toast('Opening share sheet...');
+    return;
+  }
+
+  const blob = new Blob([bytes], { type: 'application/pdf' });
+  const file = new File([blob], filename, { type: 'application/pdf' });
+
+  // 2. Mobile browser that can share files (sends straight to WhatsApp).
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title: filename });
+      toast('Shared');
+      return;
+    } catch (err) {
+      if (err && err.name === 'AbortError') return;
+    }
+  }
+
+  // 3. Plain download.
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  toast('PDF saved to your downloads');
+}
+
+async function archiveCurrent() {
+  const id = `report-${state.date}-${state.shift}`;
+  await store.put({ ...state, id, savedAt: Date.now() });
+}
+
+async function findPreviousReport() {
+  const all = await store.all();
+  const candidates = all
+    .filter(r => r.id !== DRAFT_ID && r.date && r.date < state.date)
+    .sort((a, b) => (a.date < b.date ? 1 : -1));
+  return candidates[0] || null;
+}
+
+/* ---------------- WhatsApp sheet ---------------- */
+
+function showWhatsApp() {
+  const ev = refresh();
+  const messages = buildWhatsApp(state, ev);
+  el('#waBody').innerHTML = messages.map((m, i) => `
+    <div class="wa-block">
+      <h3>Message ${i + 1} &rarr; ${esc(m.owner)}</h3>
+      <div class="wa-text" id="waText${i}">${esc(m.text)}</div>
+      <button type="button" class="btn btn-ghost" data-copy="${i}">Copy message</button>
+    </div>`).join('');
+
+  el('#waBody').querySelectorAll('[data-copy]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const text = messages[Number(btn.dataset.copy)].text;
+      try {
+        await navigator.clipboard.writeText(text);
+        toast('Copied - paste into WhatsApp');
+      } catch {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        ta.remove();
+        toast('Copied');
+      }
+    });
+  });
+  openSheet('#waSheet');
+}
+
+/* ---------------- settings ---------------- */
+
+const TH_LABELS = {
+  ph: 'pH readings',
+  chemInUse: 'Chemical - in-use tank (L)',
+  chemBackup: 'Chemical - backup drum (L)',
+  boilerChem: 'Boiler chemical (L)',
+  saturator: 'Saturator pressure (kPa)',
+  flow: 'Flow rate (m3/h)',
+  humidity: 'Biofilter humidity (%RH)',
+  sampleLagDays: 'Sample testing lag (days)'
+};
+
+const KEY_LABELS = {
+  critLow: 'Fault at/below',
+  warnLow: 'Monitor at/below',
+  warnHigh: 'Monitor at/above',
+  critHigh: 'Fault at/above',
+  crit: 'Fault at/below',
+  warn: 'Monitor at/below'
+};
+
+function bindThresholds() {
+  el('#thresholdForm').addEventListener('input', (e) => {
+    const t = e.target;
+    if (t.dataset.th === undefined) return;
+    const n = Number(t.value);
+    if (!isFinite(n)) return;
+    state.thresholds[t.dataset.th][t.dataset.thkey] = n;
+    queueSave();
+    refresh();
+  });
+}
+
+function renderThresholds() {
+  el('#thresholdForm').innerHTML = Object.keys(state.thresholds).map(group => {
+    const t = state.thresholds[group];
+    const isLag = group === 'sampleLagDays';
+    return `
+      <div class="th-row">
+        <div class="th-name">${esc(TH_LABELS[group] || group)}</div>
+        <div class="th-inputs">
+          ${Object.keys(t).map(k => `
+            <label>${esc(isLag
+              ? (k === 'warn' ? 'Monitor at/above' : 'Fault at/above')
+              : (KEY_LABELS[k] || k))}
+              <input type="number" step="any" data-th="${group}" data-thkey="${k}" value="${t[k]}">
+            </label>`).join('')}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+async function renderHistory() {
+  const all = await store.all();
+  const saved = all.filter(r => r.id !== DRAFT_ID).sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
+  const list = el('#historyList');
+  if (!saved.length) {
+    list.innerHTML = '<p class="muted small">No saved reports yet.</p>';
+    return;
+  }
+  list.innerHTML = saved.map(r => `
+    <div class="history-row">
+      <span>${esc(prettyDate(r.date))} &middot; ${esc(r.shift || '')}
+        <span class="muted">${Object.keys(r.photos || {}).length} photo(s)</span></span>
+      <span class="h-actions">
+        <button type="button" class="tool-btn" data-load="${esc(r.id)}">Load</button>
+        <button type="button" class="tool-btn" data-delete="${esc(r.id)}">Delete</button>
+      </span>
+    </div>`).join('');
+
+  list.querySelectorAll('[data-load]').forEach(b => b.addEventListener('click', async () => {
+    const rec = await store.get(b.dataset.load);
+    if (!rec) return;
+    state = { ...rec, id: DRAFT_ID };
+    if (!state.thresholds) state.thresholds = deepCopy(DEFAULT_THRESHOLDS);
+    hydrateFields();
+    render();
+    renderThresholds();
+    closeSheets();
+    toast('Report loaded');
+  }));
+
+  list.querySelectorAll('[data-delete]').forEach(b => b.addEventListener('click', async () => {
+    await store.del(b.dataset.delete);
+    renderHistory();
+    toast('Deleted');
+  }));
+}
+
+/* ---------------- sheets + toast ---------------- */
+
+function openSheet(sel) { el(sel).hidden = false; document.body.style.overflow = 'hidden'; }
+function closeSheets() {
+  document.querySelectorAll('.sheet').forEach(s => s.hidden = true);
+  document.body.style.overflow = '';
+}
+
+let toastTimer = null;
+function toast(msg) {
+  const t = el('#toast');
+  t.textContent = msg;
+  t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.hidden = true; }, 2600);
+}
+
+/* ---------------- wiring ---------------- */
+
+function hydrateFields() {
+  el('#fDate').value = state.date;
+  el('#fShift').value = state.shift;
+  el('#fReporter').value = state.reporter || '';
+  el('#fSite').value = state.site || '';
+  el('#fGeneralNote').value = state.generalNote || '';
+}
+
+function bindShell() {
+  el('#fDate').addEventListener('change', e => { state.date = e.target.value || todayISO(); queueSave(); refresh(); });
+  el('#fShift').addEventListener('change', e => { state.shift = e.target.value; queueSave(); refresh(); });
+  el('#fReporter').addEventListener('input', e => { state.reporter = e.target.value; queueSave(); refresh(); });
+  el('#fSite').addEventListener('input', e => { state.site = e.target.value; queueSave(); });
+  el('#fGeneralNote').addEventListener('input', e => { state.generalNote = e.target.value; queueSave(); });
+
+  el('#btnPdf').addEventListener('click', generatePdf);
+  el('#btnWhatsApp').addEventListener('click', showWhatsApp);
+  el('#btnSettings').addEventListener('click', () => { renderHistory(); openSheet('#settingsSheet'); });
+  el('#btnResetThresholds').addEventListener('click', () => {
+    state.thresholds = deepCopy(DEFAULT_THRESHOLDS);
+    renderThresholds();
+    queueSave();
+    refresh();
+    toast('Trigger levels reset');
+  });
+
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('[data-close-sheet]')) closeSheets();
+    else if (e.target.classList.contains('sheet')) closeSheets();
+  });
+}
+
+/* Storage can be unavailable if the page is opened straight off the phone's
+   filesystem rather than served over https. Better to say so loudly than to
+   let someone fill in the whole checklist and lose it. */
+async function checkStorage() {
+  try {
+    if (!window.indexedDB) throw new Error('IndexedDB missing');
+    await store.put({ id: '__probe', savedAt: Date.now() });
+    await store.del('__probe');
+    return true;
+  } catch (err) {
+    console.error('storage unavailable', err);
+    const warn = document.createElement('div');
+    warn.className = 'card';
+    warn.style.cssText = 'border-color:#be2c2c;background:#fdf2f2;color:#8a1f1f';
+    warn.innerHTML =
+      '<h2 style="color:#be2c2c">Autosave is not working</h2>' +
+      '<p class="small" style="margin:0">This page cannot save to your phone, so if you ' +
+      'close it you will lose what you have typed. Finish the report and send the PDF ' +
+      'in one go. To fix it properly, open the app from its web address rather than ' +
+      'from a downloaded file.</p>';
+    document.querySelector('main').prepend(warn);
+    return false;
+  }
+}
+
+async function boot() {
+  await checkStorage();
+
+  try {
+    const draft = await store.get(DRAFT_ID);
+    if (draft) {
+      state = { ...blankState(), ...draft, id: DRAFT_ID };
+      if (!state.thresholds) state.thresholds = deepCopy(DEFAULT_THRESHOLDS);
+      // A draft left over from a previous day starts fresh but keeps
+      // the operator's name, site and trigger levels.
+      if (draft.date !== todayISO() && !location.search.includes('keep')) {
+        const carried = { reporter: state.reporter, site: state.site, thresholds: state.thresholds };
+        state = { ...blankState(), ...carried, id: DRAFT_ID };
+      }
+    }
+  } catch (err) {
+    console.error('could not load draft', err);
+  }
+
+  hydrateFields();
+  bindShell();
+  bindChecklist();   // delegated, attached once
+  bindThresholds();  // delegated, attached once
+  render();
+  renderThresholds();
+
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
+}
+
+// Guarded so the module can be loaded in a test harness without a DOM.
+if (typeof document !== 'undefined') boot();
+
+</script>
+</body>
+</html>
