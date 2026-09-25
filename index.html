@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1e3a5f">
+<meta name="build-id" content="3c313bb8ebe8">
 <title>Daily Ops Report</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -269,20 +270,42 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
 .btn:disabled { opacity: .55; }
 
 /* ---------------- sheets ---------------- */
+/* The [hidden] rule MUST stay more specific than the .sheet display rule,
+   otherwise display:flex overrides the hidden attribute and the popup is
+   stuck open with no way to dismiss it. */
+.sheet[hidden] {
+  display: none;
+}
 .sheet {
-  position: fixed; inset: 0; z-index: 60;
-  background: rgba(16,24,36,.5);
-  display: flex; align-items: flex-end;
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(16, 24, 36, 0);
+  transition: background .22s ease;
+}
+.sheet.is-open {
+  background: rgba(16, 24, 36, .5);
 }
 .sheet-inner {
   background: #fff;
   width: 100%;
   max-height: 92vh;
   overflow-y: auto;
+  overscroll-behavior: contain;   /* scrolling the sheet must not move the page */
+  -webkit-overflow-scrolling: touch;
   border-radius: 16px 16px 0 0;
   padding: 16px 16px calc(env(safe-area-inset-bottom, 0px) + 20px);
   max-width: 720px;
   margin: 0 auto;
+  transform: translateY(14px);
+  opacity: .6;
+  transition: transform .24s cubic-bezier(.22, .68, .35, 1), opacity .2s ease;
+}
+.sheet.is-open .sheet-inner {
+  transform: translateY(0);
+  opacity: 1;
 }
 .sheet-head { display: flex; align-items: center; justify-content: space-between; position: sticky; top: -16px; background: #fff; padding: 6px 0 10px; }
 .sheet-head h2 { margin: 0; font-size: 1rem; }
@@ -329,10 +352,75 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
   max-width: 86vw;
   text-align: center;
   box-shadow: 0 6px 20px rgba(0,0,0,.24);
+  animation: toast-in .18s ease;
 }
+@keyframes toast-in {
+  from { opacity: 0; transform: translate(-50%, 8px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* ---------------- interaction polish ---------------- */
+
+/* Removes the ~300ms delay Android adds before firing a tap. */
+button, .sbtn, .tool-btn, .btn, .icon-btn, .group-head {
+  touch-action: manipulation;
+}
+button:active, .btn:active, .sbtn:active, .tool-btn:active { transform: scale(.985); }
+.sbtn, .tool-btn, .btn, .icon-btn { transition: background .12s ease, border-color .12s ease, transform .08s ease; }
+
+/* Keyboard focus ring, without showing it on every mouse click. */
+:focus-visible { outline: 3px solid #8fb4dd; outline-offset: 2px; }
+button:focus:not(:focus-visible) { outline: none; }
+
+/* Stop iOS zooming in when a field is focused. */
+@supports (-webkit-touch-callout: none) {
+  input, select, textarea { font-size: 16px; }
+}
+
+/* Locked while a sheet is open, so the page behind cannot scroll away. */
+body.no-scroll { overflow: hidden; }
+
+@media (prefers-reduced-motion: reduce) {
+  .sheet, .sheet-inner, .progress-fill, .sbtn, .tool-btn, .btn, .icon-btn { transition: none; }
+  .toast { animation: none; }
+  button:active, .btn:active, .sbtn:active, .tool-btn:active { transform: none; }
+}
+
+/* ---------------- wider screens ---------------- */
 
 @media (min-width: 560px) {
   .statusrow { grid-template-columns: repeat(4, minmax(0, 120px)); }
+}
+
+@media (min-width: 720px) {
+  /* On a desktop the bottom-sheet look is odd, so centre it as a dialog. */
+  .sheet { align-items: center; padding: 24px; }
+  .sheet-inner {
+    border-radius: 16px;
+    max-height: 84vh;
+    padding-bottom: 20px;
+    box-shadow: 0 24px 60px rgba(12, 20, 34, .3);
+    transform: translateY(0) scale(.98);
+  }
+  .sheet.is-open .sheet-inner { transform: translateY(0) scale(1); }
+  .sheet-head { top: -16px; }
+
+  .actionbar {
+    justify-content: center;
+    padding-left: 0;
+    padding-right: 0;
+  }
+  .actionbar .btn { max-width: 260px; flex: 0 1 260px; }
+  main { padding-bottom: 0; }
+}
+
+/* Mouse users get a hover cue; touch devices skip it. */
+@media (hover: hover) and (pointer: fine) {
+  .sbtn:hover, .tool-btn:hover { background: #eef2f6; }
+  .btn-primary:hover { background: var(--navy-dark); }
+  .btn-ghost:hover { background: #eef2f6; }
+  .icon-btn:hover { background: rgba(255,255,255,.24); }
+  .group-head:hover { background: #f2f5f8; }
 }
 
 </style>
@@ -418,6 +506,14 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
     <hr>
     <h2>Site name</h2>
     <input type="text" id="fSite" placeholder="Shown in the PDF header">
+
+    <hr>
+    <h2>About</h2>
+    <p class="muted small">
+      Version <strong id="buildId">dev</strong><br>
+      If you have just uploaded an update and this number has not changed,
+      close the app completely and open it again.
+    </p>
   </div>
 </div>
 
@@ -2107,10 +2203,40 @@ async function renderHistory() {
 
 /* ---------------- sheets + toast ---------------- */
 
-function openSheet(sel) { el(sel).hidden = false; document.body.style.overflow = 'hidden'; }
+const closeTimers = new WeakMap();
+
+function openSheet(sel) {
+  const sheet = el(sel);
+  if (!sheet) return;
+
+  clearTimeout(closeTimers.get(sheet));
+  sheet.hidden = false;
+  sheet.setAttribute('aria-modal', 'true');
+  sheet.setAttribute('role', 'dialog');
+  document.body.classList.add('no-scroll');
+
+  // Unhide first, then animate on the next frame, otherwise the browser
+  // has nothing to transition from.
+  requestAnimationFrame(() => requestAnimationFrame(() => sheet.classList.add('is-open')));
+
+  const inner = sheet.querySelector('.sheet-inner');
+  if (inner) inner.scrollTop = 0;
+}
+
 function closeSheets() {
-  document.querySelectorAll('.sheet').forEach(s => s.hidden = true);
-  document.body.style.overflow = '';
+  document.querySelectorAll('.sheet').forEach(sheet => {
+    if (sheet.hidden) return;
+    sheet.classList.remove('is-open');
+    sheet.removeAttribute('aria-modal');
+    // Wait for the slide-down to finish before hiding it for real.
+    clearTimeout(closeTimers.get(sheet));
+    closeTimers.set(sheet, setTimeout(() => { sheet.hidden = true; }, 240));
+  });
+  document.body.classList.remove('no-scroll');
+}
+
+function anySheetOpen() {
+  return Array.from(document.querySelectorAll('.sheet')).some(s => !s.hidden);
 }
 
 let toastTimer = null;
@@ -2123,6 +2249,15 @@ function toast(msg) {
 }
 
 /* ---------------- wiring ---------------- */
+
+function showBuildId() {
+  const meta = document.querySelector('meta[name="build-id"]');
+  const raw = meta ? meta.getAttribute('content') : '';
+  // Still the literal placeholder when running straight from www/ in development.
+  const label = (!raw || raw.indexOf('BUILD_ID') !== -1) ? 'development build' : raw;
+  const target = el('#buildId');
+  if (target) target.textContent = label;
+}
 
 function hydrateFields() {
   el('#fDate').value = state.date;
@@ -2151,8 +2286,16 @@ function bindShell() {
   });
 
   document.addEventListener('click', (e) => {
+    // Close on the X, on a "Done" button, or on a tap outside the panel.
     if (e.target.closest('[data-close-sheet]')) closeSheets();
     else if (e.target.classList.contains('sheet')) closeSheets();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && anySheetOpen()) {
+      e.preventDefault();
+      closeSheets();
+    }
   });
 }
 
@@ -2201,6 +2344,7 @@ async function boot() {
   }
 
   hydrateFields();
+  showBuildId();
   bindShell();
   bindChecklist();   // delegated, attached once
   bindThresholds();  // delegated, attached once
