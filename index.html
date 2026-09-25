@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1e3a5f">
-<meta name="build-id" content="3c313bb8ebe8">
+<meta name="build-id" content="a55063f344aa">
 <title>Daily Ops Report</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -186,7 +186,50 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
 .numrow input { margin-top: 0; }
 .numrow .unit { font-size: .8rem; color: var(--slate); min-width: 38px; }
 .pairgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+.pairgrid.with-ibc { grid-template-columns: 1fr 1fr .72fr; }
 .pairgrid label { margin-bottom: 0; }
+
+/* several small readings on one line (pH 1/2/3, separator counts) */
+.multirow { display: flex; gap: 8px; margin-top: 8px; align-items: flex-end; flex-wrap: wrap; }
+.multirow label { margin-bottom: 0; flex: 1 1 0; min-width: 62px; }
+.multirow.narrow label { flex: 0 1 84px; }
+.multirow .unit { font-size: .8rem; color: var(--slate); padding-bottom: 12px; }
+
+/* stock movement line under a chemical */
+.usage { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.usage span {
+  background: #f0f6fc;
+  border: 1px solid #d5e3f0;
+  color: #2e5280;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: .74rem;
+  font-weight: 600;
+}
+.usage span.faint { background: #f6f7f9; border-color: var(--line); color: var(--slate); font-weight: 400; }
+
+/* named options, e.g. clarity and cleanliness grades */
+.choicerow { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 9px; }
+.cbtn {
+  border: 1.5px solid var(--line);
+  background: #fff;
+  border-radius: 9px;
+  padding: 9px 6px;
+  font-size: .78rem;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
+  min-height: var(--tap);
+  font-family: inherit;
+  text-align: center;
+}
+.cbtn[aria-pressed="true"] { color: #fff; font-weight: 700; }
+.cbtn[aria-pressed="true"].ok    { background: var(--ok);    border-color: var(--ok); }
+.cbtn[aria-pressed="true"].watch { background: var(--watch); border-color: var(--watch); }
+.cbtn[aria-pressed="true"].fault { background: var(--fault); border-color: var(--fault); }
+.cbtn[aria-pressed="true"].todo  { background: var(--todo);  border-color: var(--todo); }
+
+.btn.full { width: 100%; flex: none; }
 
 .pill {
   display: inline-block;
@@ -362,11 +405,11 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
 /* ---------------- interaction polish ---------------- */
 
 /* Removes the ~300ms delay Android adds before firing a tap. */
-button, .sbtn, .tool-btn, .btn, .icon-btn, .group-head {
+button, .sbtn, .cbtn, .tool-btn, .btn, .icon-btn, .group-head {
   touch-action: manipulation;
 }
-button:active, .btn:active, .sbtn:active, .tool-btn:active { transform: scale(.985); }
-.sbtn, .tool-btn, .btn, .icon-btn { transition: background .12s ease, border-color .12s ease, transform .08s ease; }
+button:active, .btn:active, .sbtn:active, .cbtn:active, .tool-btn:active { transform: scale(.985); }
+.sbtn, .cbtn, .tool-btn, .btn, .icon-btn { transition: background .12s ease, border-color .12s ease, transform .08s ease; }
 
 /* Keyboard focus ring, without showing it on every mouse click. */
 :focus-visible { outline: 3px solid #8fb4dd; outline-offset: 2px; }
@@ -416,7 +459,8 @@ body.no-scroll { overflow: hidden; }
 
 /* Mouse users get a hover cue; touch devices skip it. */
 @media (hover: hover) and (pointer: fine) {
-  .sbtn:hover, .tool-btn:hover { background: #eef2f6; }
+  .sbtn:hover, .cbtn:hover, .tool-btn:hover { background: #eef2f6; }
+  .cbtn[aria-pressed="true"]:hover { filter: brightness(1.06); }
   .btn-primary:hover { background: var(--navy-dark); }
   .btn-ghost:hover { background: #eef2f6; }
   .icon-btn:hover { background: rgba(255,255,255,.24); }
@@ -447,17 +491,10 @@ body.no-scroll { overflow: hidden; }
       <label>Date
         <input type="date" id="fDate">
       </label>
-      <label>Shift
-        <select id="fShift">
-          <option value="AM">AM</option>
-          <option value="PM">PM</option>
-          <option value="Night">Night</option>
-        </select>
+      <label>Reported by
+        <input type="text" id="fReporter" autocomplete="name">
       </label>
     </div>
-    <label>Your name
-      <input type="text" id="fReporter" placeholder="e.g. Sam Patel" autocomplete="name">
-    </label>
   </section>
 
   <!-- ---------- live action summary ---------- -->
@@ -470,7 +507,7 @@ body.no-scroll { overflow: hidden; }
   <div id="checklist"></div>
 
   <section class="card">
-    <h2>Shift notes <span class="muted">(optional)</span></h2>
+    <h2>Notes <span class="muted">(optional)</span></h2>
     <textarea id="fGeneralNote" rows="3" placeholder="Anything else your managers should know"></textarea>
   </section>
 
@@ -487,9 +524,19 @@ body.no-scroll { overflow: hidden; }
 <div id="settingsSheet" class="sheet" hidden>
   <div class="sheet-inner">
     <div class="sheet-head">
-      <h2>Trigger levels</h2>
+      <h2>Settings</h2>
       <button class="icon-btn" data-close-sheet>&times;</button>
     </div>
+
+    <h2>New report</h2>
+    <p class="muted small">
+      Clears everything on screen so you can start again. Your name, site and
+      trigger levels are kept, and reports you have already saved are not touched.
+    </p>
+    <button id="btnNewReport" class="btn btn-ghost full">&#10227; Start a new report</button>
+
+    <hr>
+    <h2>Trigger levels</h2>
     <p class="muted small">
       Set the numbers that decide when an item is flagged. Anything at or past the
       <strong>Fault</strong> figure is reported as a fault; anything at or past
@@ -539,13 +586,11 @@ body.no-scroll { overflow: hidden; }
    ------------------------------------------------------------------
    Item types:
      status  - tap one of OK / WATCH / FAULT / NOT DONE
-     number  - numeric reading, auto-graded against thresholds
-     date    - "sampled up to" date, auto-graded on how far behind it is
-     pair    - two numbers on one row (in use / backup)
-
-   Thresholds are plain numbers so the operator can edit them in
-   Settings without touching code. Anything left null is not graded
-   and stays informational.
+     choice  - tap one named option, each mapped to a status
+     number  - single numeric reading, auto-graded
+     multi   - several small readings on one line, one status for the set
+     pair    - chemical stock: in use / backup, plus IBCs received
+     date    - "sampled up to" date, graded on how far behind it is
    ------------------------------------------------------------------ */
 
 const STATUS = {
@@ -557,20 +602,24 @@ const STATUS = {
 };
 
 const STATUS_META = {
-  ok:    { label: 'OK',       short: 'OK',   emoji: '\u2705', colour: [34, 139, 79],  wa: '\u2705' },
-  watch: { label: 'Monitor',  short: 'WATCH',emoji: '\u26A0\uFE0F', colour: [201, 138, 4], wa: '\u26A0\uFE0F' },
-  fault: { label: 'Fault',    short: 'FAULT',emoji: '\u274C', colour: [190, 44, 44],  wa: '\u274C' },
-  todo:  { label: 'Not done', short: 'TODO', emoji: '\u2B1C', colour: [110, 118, 129],wa: '\u2B1C' },
-  blank: { label: 'Not set',  short: '-',    emoji: '\u2B1C', colour: [160, 167, 175],wa: '\u2B1C' }
+  ok:    { label: 'OK',       short: 'OK',    colour: [34, 139, 79],   wa: '\u2705' },
+  watch: { label: 'Monitor',  short: 'WATCH', colour: [201, 138, 4],   wa: '\u26A0\uFE0F' },
+  fault: { label: 'Fault',    short: 'FAULT', colour: [190, 44, 44],   wa: '\u274C' },
+  todo:  { label: 'Not done', short: 'TODO',  colour: [110, 118, 129], wa: '\u2B1C' },
+  blank: { label: 'Not set',  short: '-',     colour: [160, 167, 175], wa: '\u2B1C' }
 };
 
-/* Default trigger levels. Every one of these is editable in Settings.
-   They are deliberately conservative starting points, not gospel -
-   the operator should tune them to the site's licence conditions. */
+/* One IBC of any of the site chemicals holds this much. */
+const IBC_LITRES = 1000;
+
+const DEFAULT_REPORTER = 'ARSLAN';
+
+/* Default trigger levels. All editable in Settings. */
 const DEFAULT_THRESHOLDS = {
   ph:                { critLow: 6.0, warnLow: 6.5, warnHigh: 8.5, critHigh: 9.0 },
   chemInUse:         { crit: 200,  warn: 500 },
   chemBackup:        { crit: 100,  warn: 400 },
+  daysOfStock:       { crit: 3,    warn: 7 },
   boilerChem:        { crit: 50,   warn: 100 },
   saturator:         { critLow: 350, warnLow: 450, warnHigh: 700, critHigh: 800 },
   flow:              { critLow: 5,  warnLow: 10,  warnHigh: 30, critHigh: 40 },
@@ -578,8 +627,31 @@ const DEFAULT_THRESHOLDS = {
   sampleLagDays:     { warn: 8, crit: 15 }
 };
 
+/* Reusable option sets ------------------------------------------------ */
+
+// Standard wastewater clarity descriptors, worst-to-best mapped onto status.
+const CLARITY_OPTIONS = [
+  { value: 'clear',   label: 'Clear',            status: STATUS.OK },
+  { value: 'slight',  label: 'Slightly turbid',  status: STATUS.WATCH },
+  { value: 'turbid',  label: 'Turbid',           status: STATUS.FAULT },
+  { value: 'offline', label: 'Out of service',   status: STATUS.FAULT }
+];
+
+// Housekeeping grades for the underpits.
+const CLEANLINESS_OPTIONS = [
+  { value: 'clean',   label: 'Clean',          status: STATUS.OK },
+  { value: 'minor',   label: 'Minor residue',  status: STATUS.OK },
+  { value: 'heavy',   label: 'Heavy residue',  status: STATUS.WATCH },
+  { value: 'notdone', label: 'Not cleaned',    status: STATUS.FAULT }
+];
+
+const PAPERWORK_OPTIONS = [
+  { value: 'updated', label: 'Updated',          status: STATUS.OK },
+  { value: 'prints',  label: 'Need new prints',  status: STATUS.WATCH }
+];
+
 /* ------------------------------------------------------------------
-   The checklist itself
+   The checklist
    ------------------------------------------------------------------ */
 const CHECKLIST = [
   {
@@ -601,31 +673,37 @@ const CHECKLIST = [
       {
         id: 'chemicals',
         title: 'Chemical Levels',
-        note: 'in use / backup',
+        note: 'in use / backup / IBCs received',
         items: [
-          { id: 'caustic',    label: 'Caustic 46%',       type: 'pair', unit: 'L' },
-          { id: 'coagulant',  label: 'Coagulant 720',     type: 'pair', unit: 'L' },
-          { id: 'flocculant', label: 'Flocculant 7686',   type: 'pair', unit: 'L' },
-          { id: 'sulphuric',  label: 'Sulphuric Acid 73%',type: 'pair', unit: 'L' }
+          { id: 'caustic',    label: 'Caustic 46%',        type: 'pair', unit: 'L', ibc: true },
+          { id: 'coagulant',  label: 'Coagulant 720',      type: 'pair', unit: 'L', ibc: true },
+          { id: 'flocculant', label: 'Flocculant 7686',    type: 'pair', unit: 'L', ibc: true },
+          { id: 'sulphuric',  label: 'Sulphuric Acid 73%', type: 'pair', unit: 'L', ibc: true }
         ]
       },
       {
         id: 'wwtp',
         title: 'Waste Water Treatment Plant',
         items: [
-          { id: 'daf_pumps',    label: 'DAF sludge pumps',        type: 'status' },
-          { id: 'daf_paddles',  label: 'DAF paddles',             type: 'status' },
-          { id: 'daf_clarity',  label: 'DAF effluent clarity',    type: 'status', hint: 'OK = water is clear' },
-          { id: 'no_overflow',  label: 'No overflow - process',   type: 'status' },
-          { id: 'waste_tanks',  label: 'No overflow - waste tanks',type: 'status' },
-          { id: 'sat1',         label: 'Saturator DAF 1',         type: 'number', unit: 'kPa', threshold: 'saturator', decimals: 0 },
-          { id: 'sat2',         label: 'Saturator DAF 2',         type: 'number', unit: 'kPa', threshold: 'saturator', decimals: 0 },
-          { id: 'ph1',          label: 'pH reading 1',            type: 'number', unit: '', threshold: 'ph', decimals: 1 },
-          { id: 'ph2',          label: 'pH reading 2',            type: 'number', unit: '', threshold: 'ph', decimals: 1 },
-          { id: 'ph3',          label: 'pH reading 3',            type: 'number', unit: '', threshold: 'ph', decimals: 1 },
-          { id: 'tank1_mixer',  label: 'Tank 1 mixer',            type: 'status' },
-          { id: 'floc_mixer',   label: 'Flocculant mixer adjusted',type: 'status' },
-          { id: 'flow_rate',    label: 'Flow rate',               type: 'number', unit: 'm3/h', threshold: 'flow', decimals: 1 }
+          { id: 'daf_pumps',    label: 'DAF sludge pumps',     type: 'status' },
+          { id: 'daf_paddles',  label: 'DAF paddles',          type: 'status' },
+          { id: 'daf_clarity',  label: 'DAF effluent clarity', type: 'choice', options: CLARITY_OPTIONS },
+          { id: 'no_overflow',  label: 'No overflow - process',    type: 'status' },
+          { id: 'waste_tanks',  label: 'No overflow - waste tanks', type: 'status' },
+          { id: 'sat1',         label: 'Saturator DAF 1',      type: 'number', unit: 'kPa', threshold: 'saturator', decimals: 0 },
+          { id: 'sat2',         label: 'Saturator DAF 2',      type: 'number', unit: 'kPa', threshold: 'saturator', decimals: 0 },
+          {
+            id: 'ph', label: 'pH readings', type: 'multi',
+            threshold: 'ph', decimals: 1, display: 'slash', inputWidth: 'narrow',
+            fields: [
+              { key: 'a', label: '1' },
+              { key: 'b', label: '2' },
+              { key: 'c', label: '3' }
+            ]
+          },
+          { id: 'tank1_mixer',  label: 'Tank 1 mixer',              type: 'status' },
+          { id: 'floc_mixer',   label: 'Flocculant mixer adjusted', type: 'status' },
+          { id: 'flow_rate',    label: 'Flow rate', type: 'number', unit: 'm3/h', threshold: 'flow', decimals: 1 }
         ]
       }
     ]
@@ -639,9 +717,9 @@ const CHECKLIST = [
         id: 'pits',
         title: 'Pit Pumps & Cleaning',
         items: [
-          { id: 'main_pumps',   label: 'Main pit pumps',      type: 'status' },
-          { id: 'lamb_pit',     label: 'Lamb underpit cleaned',type: 'status' },
-          { id: 'beef_pit',     label: 'Beef underpit cleaned',type: 'status' }
+          { id: 'beef_pit_pump', label: 'Beef pit pump', type: 'status' },
+          { id: 'lamb_pit', label: 'Lamb underpit', type: 'choice', options: CLEANLINESS_OPTIONS },
+          { id: 'beef_pit', label: 'Beef underpit', type: 'choice', options: CLEANLINESS_OPTIONS }
         ]
       },
       {
@@ -671,11 +749,18 @@ const CHECKLIST = [
         id: 'samples',
         title: 'Sample Testing',
         items: [
-          { id: 'ovine_daily',  label: 'Ovine Daily',            type: 'date' },
-          { id: 'mbm_weekly',   label: 'MBM Weekly',             type: 'date' },
-          { id: 'ovine_weekly', label: 'Ovine Weekly',           type: 'date' },
-          { id: 'ovine_bags',   label: 'Ovine bag paperwork',    type: 'status' },
-          { id: 'separators',   label: 'Separator testing',      type: 'status' }
+          { id: 'ovine_daily',  label: 'Ovine Daily',  type: 'date' },
+          { id: 'mbm_weekly',   label: 'MBM Weekly',   type: 'date' },
+          { id: 'ovine_weekly', label: 'Ovine Weekly', type: 'date' },
+          { id: 'ovine_bags',   label: 'Ovine bag paperwork', type: 'choice', options: PAPERWORK_OPTIONS },
+          {
+            id: 'separators', label: 'Separator testing', type: 'multi',
+            decimals: 0, display: 'labelled', unit: 'samples',
+            fields: [
+              { key: 'tallow', label: 'Tallow' },
+              { key: 'stick',  label: 'Stick water' }
+            ]
+          }
         ]
       }
     ]
@@ -696,23 +781,26 @@ const ITEM_INDEX = (() => {
 })();
 
 /* ------------------------------------------------------------------
-   Grading helpers - turn a raw reading into a status
+   Grading helpers
    ------------------------------------------------------------------ */
 
+function num(v) {
+  if (v === undefined || v === null || v === '') return null;
+  const n = Number(v);
+  return isFinite(n) ? n : null;
+}
+
 function gradeNumber(value, thresholdKey, thresholds) {
-  if (value === null || value === undefined || value === '') return STATUS.BLANK;
+  const n = num(value);
+  if (n === null) return STATUS.BLANK;
   const t = thresholds[thresholdKey];
   if (!t) return STATUS.OK;
-  const n = Number(value);
-  if (!isFinite(n)) return STATUS.BLANK;
 
-  // Band-style threshold (has a low and a high side)
   if (t.critLow !== undefined) {
     if (n <= t.critLow || n >= t.critHigh) return STATUS.FAULT;
     if (n <= t.warnLow || n >= t.warnHigh) return STATUS.WATCH;
     return STATUS.OK;
   }
-  // Depleting-stock style threshold (lower is worse)
   if (t.crit !== undefined) {
     if (n <= t.crit) return STATUS.FAULT;
     if (n <= t.warn) return STATUS.WATCH;
@@ -721,10 +809,74 @@ function gradeNumber(value, thresholdKey, thresholds) {
   return STATUS.OK;
 }
 
+function gradeChoice(item, value) {
+  if (!value) return STATUS.BLANK;
+  const opt = (item.options || []).find(o => o.value === value);
+  return opt ? opt.status : STATUS.BLANK;
+}
+
+function choiceLabel(item, value) {
+  const opt = (item.options || []).find(o => o.value === value);
+  return opt ? opt.label : '';
+}
+
+function gradeMulti(item, values, thresholds) {
+  const readings = (item.fields || []).map(f => num(values && values[f.key]));
+  if (readings.every(r => r === null)) return STATUS.BLANK;
+  if (!item.threshold) return STATUS.OK;
+  const grades = readings
+    .filter(r => r !== null)
+    .map(r => gradeNumber(r, item.threshold, thresholds));
+  return worstOf(grades);
+}
+
+/* Stock movement for a chemical, against the previous report.
+
+   used = (what was on site yesterday + what arrived today) - what is here now
+
+   A negative result means stock went up without a delivery being logged,
+   which is worth pointing out rather than hiding. */
+function chemicalUsage(todayVal, prevVal) {
+  if (!todayVal || !prevVal) return null;
+  const tIn = num(todayVal.inUse), tBack = num(todayVal.backup);
+  const pIn = num(prevVal.inUse), pBack = num(prevVal.backup);
+  if (tIn === null && tBack === null) return null;
+  if (pIn === null && pBack === null) return null;
+
+  const todayTotal = (tIn || 0) + (tBack || 0);
+  const prevTotal = (pIn || 0) + (pBack || 0);
+  const ibcs = num(todayVal.ibc) || 0;
+  const received = ibcs * IBC_LITRES;
+  const used = prevTotal + received - todayTotal;
+
+  return { used, received, ibcs, todayTotal, prevTotal };
+}
+
+/* How many days of stock are left at today's consumption rate. */
+function daysOfStock(usage) {
+  if (!usage || usage.used <= 0) return null;
+  return usage.todayTotal / usage.used;
+}
+
+const SEVERITY_ORDER = [STATUS.OK, STATUS.BLANK, STATUS.TODO, STATUS.WATCH, STATUS.FAULT];
+
+function worstOf(list) {
+  let worst = STATUS.OK;
+  list.forEach(s => {
+    if (SEVERITY_ORDER.indexOf(s) > SEVERITY_ORDER.indexOf(worst)) worst = s;
+  });
+  return worst;
+}
+
+function needsAction(status) {
+  return status === STATUS.FAULT || status === STATUS.WATCH || status === STATUS.TODO;
+}
+
 function gradePair(inUse, backup, thresholds) {
-  const a = gradeNumber(inUse, 'chemInUse', thresholds);
-  const b = gradeNumber(backup, 'chemBackup', thresholds);
-  return worstOf([a, b]);
+  return worstOf([
+    gradeNumber(inUse, 'chemInUse', thresholds),
+    gradeNumber(backup, 'chemBackup', thresholds)
+  ]);
 }
 
 function daysBehind(dateStr, reportDate) {
@@ -742,20 +894,6 @@ function gradeDate(dateStr, reportDate, thresholds) {
   if (lag >= t.crit) return STATUS.FAULT;
   if (lag >= t.warn) return STATUS.WATCH;
   return STATUS.OK;
-}
-
-const SEVERITY_ORDER = [STATUS.OK, STATUS.BLANK, STATUS.TODO, STATUS.WATCH, STATUS.FAULT];
-
-function worstOf(list) {
-  let worst = STATUS.OK;
-  list.forEach(s => {
-    if (SEVERITY_ORDER.indexOf(s) > SEVERITY_ORDER.indexOf(worst)) worst = s;
-  });
-  return worst;
-}
-
-function needsAction(status) {
-  return status === STATUS.FAULT || status === STATUS.WATCH || status === STATUS.TODO;
 }
 
 /* ===== pdf.js ===== */
@@ -1134,7 +1272,8 @@ const BRAND = {
   fault:    [190, 44, 44],
   todo:     [110, 118, 129],
   amberBg:  [255, 248, 230],
-  redBg:    [253, 242, 242]
+  redBg:    [253, 242, 242],
+  infoBg:   [240, 246, 252]
 };
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -1154,54 +1293,128 @@ function shortDate(iso) {
   return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
+function fmtL(n) {
+  if (n === null || n === undefined) return '-';
+  return Number.isInteger(n) ? String(n) : Number(n).toFixed(1);
+}
+
+/* "less than a day" / "1 day" / "2.8 days" / "14 days" */
+function fmtDays(n) {
+  if (n === null || n === undefined) return '';
+  if (n < 1) return 'less than a day';
+  const rounded = n < 10 ? Math.round(n * 10) / 10 : Math.round(n);
+  if (rounded === 1) return '1 day';
+  return `${Number.isInteger(rounded) ? rounded : rounded.toFixed(1)} days`;
+}
+
 /* ------------------------------------------------------------------
-   Evaluation: walk the checklist and resolve every item to a
-   { status, display, reason } triple.
+   Evaluation
    ------------------------------------------------------------------ */
 
-function evaluate(state) {
+function evaluate(state, previous) {
   const thresholds = state.thresholds || DEFAULT_THRESHOLDS;
-  const result = { items: {}, counts: { ok: 0, watch: 0, fault: 0, todo: 0, blank: 0 }, actions: {} };
+  const prevValues = (previous && previous.values) || null;
+  const result = {
+    items: {}, counts: { ok: 0, watch: 0, fault: 0, todo: 0, blank: 0 },
+    actions: {}, previousDate: previous ? previous.date : null
+  };
 
   CHECKLIST.forEach(section => {
     result.actions[section.id] = [];
     section.groups.forEach(group => {
       group.items.forEach(item => {
         const v = (state.values && state.values[item.id]) || {};
+        const prevV = prevValues ? prevValues[item.id] : null;
+
+        // A tapped status always wins over the automatic grade, so a broken
+        // gauge can be reported as a fault with no reading entered.
+        const manual = v.status && v.status !== STATUS.BLANK ? v.status : null;
+
         let status = STATUS.BLANK;
         let display = '-';
         let reason = '';
-
-        // An explicitly tapped status always wins over the automatic grade.
-        // A broken gauge means the operator taps Fault with no reading to
-        // enter, and that must still reach the manager.
-        const manual = v.status && v.status !== STATUS.BLANK ? v.status : null;
+        const extra = [];
 
         if (item.type === 'status') {
           status = manual || STATUS.BLANK;
           display = STATUS_META[status].label;
+
+        } else if (item.type === 'choice') {
+          const auto = gradeChoice(item, v.choice);
+          status = manual || auto;
+          display = v.choice ? choiceLabel(item, v.choice) : (manual ? STATUS_META[status].label : '-');
+          if (v.choice && needsAction(status)) reason = choiceLabel(item, v.choice).toLowerCase();
+
         } else if (item.type === 'number') {
-          const raw = v.value;
-          const hasValue = !(raw === undefined || raw === null || raw === '');
-          const n = hasValue ? Number(raw) : NaN;
-          status = manual || (hasValue ? gradeNumber(raw, item.threshold, thresholds) : STATUS.BLANK);
-          if (hasValue) {
-            display = (isFinite(n) ? n.toFixed(item.decimals || 0) : String(raw)) +
-                      (item.unit ? ' ' + item.unit : '');
-          } else {
+          const n = num(v.value);
+          status = manual || (n === null ? STATUS.BLANK : gradeNumber(n, item.threshold, thresholds));
+          if (n === null) {
             display = manual ? 'No reading' : '-';
-          }
-          if (hasValue && isFinite(n)) reason = numberReason(item, n, thresholds, status);
-        } else if (item.type === 'pair') {
-          const inUse = v.inUse, backup = v.backup;
-          const hasAny = !((inUse === undefined || inUse === '') && (backup === undefined || backup === ''));
-          status = manual || (hasAny ? gradePair(inUse, backup, thresholds) : STATUS.BLANK);
-          if (hasAny) {
-            display = `${fmtNum(inUse)} ${item.unit} in use / ${fmtNum(backup)} ${item.unit} backup`;
-            reason = pairReason(inUse, backup, thresholds);
           } else {
-            display = manual ? 'Not measured' : '-';
+            display = n.toFixed(item.decimals || 0) + (item.unit ? ' ' + item.unit : '');
+            reason = numberReason(item, n, thresholds, status);
           }
+
+        } else if (item.type === 'multi') {
+          const readings = item.fields.map(f => num(v[f.key]));
+          const anyReading = readings.some(r => r !== null);
+          status = manual || gradeMulti(item, v, thresholds);
+          if (!anyReading) {
+            display = manual ? 'Not recorded' : '-';
+          } else if (item.display === 'labelled') {
+            display = item.fields
+              .map((f, i) => `${f.label} ${readings[i] === null ? '-' : readings[i]}`)
+              .join(', ');
+          } else {
+            display = readings.map(r => r === null ? '-' : r.toFixed(item.decimals || 0)).join(' / ');
+          }
+          if (anyReading && item.threshold) reason = multiReason(item, readings, thresholds, status);
+
+        } else if (item.type === 'pair') {
+          const inUse = num(v.inUse), backup = num(v.backup);
+          const hasAny = inUse !== null || backup !== null;
+          const levelStatus = hasAny ? gradePair(v.inUse, v.backup, thresholds) : STATUS.BLANK;
+
+          const usage = item.ibc ? chemicalUsage(v, prevV) : null;
+          const left = daysOfStock(usage);
+          let stockStatus = STATUS.OK;
+          if (left !== null) {
+            const t = thresholds.daysOfStock;
+            if (left <= t.crit) stockStatus = STATUS.FAULT;
+            else if (left <= t.warn) stockStatus = STATUS.WATCH;
+          }
+
+          status = manual || (hasAny ? worstOf([levelStatus, stockStatus]) : STATUS.BLANK);
+          display = hasAny
+            ? `${fmtL(inUse)} ${item.unit} in use / ${fmtL(backup)} ${item.unit} backup`
+            : (manual ? 'Not measured' : '-');
+
+          if (usage) {
+            if (usage.ibcs > 0) {
+              extra.push(`${usage.ibcs} IBC${usage.ibcs > 1 ? 's' : ''} received (+${fmtL(usage.received)} ${item.unit})`);
+            }
+            if (usage.used > 0) {
+              extra.push(`Used ${fmtL(usage.used)} ${item.unit} since ${shortDate(previous.date)}`);
+            } else if (usage.used < 0) {
+              extra.push(`Stock up ${fmtL(Math.abs(usage.used))} ${item.unit} - was a delivery missed?`);
+            } else {
+              extra.push(`No usage since ${shortDate(previous.date)}`);
+            }
+            if (left !== null) {
+              extra.push(`About ${fmtDays(left)} left at that rate`);
+            }
+          }
+
+          const bits = [];
+          if (hasAny) {
+            const lvl = pairReason(v.inUse, v.backup, thresholds);
+            if (lvl) bits.push(lvl);
+          }
+          if (stockStatus !== STATUS.OK && left !== null) {
+            bits.push(`about ${fmtDays(left)} of stock left`);
+          }
+          reason = bits.join(', ');
+
         } else if (item.type === 'date') {
           const iso = v.date;
           status = manual || (iso ? gradeDate(iso, state.date, thresholds) : STATUS.BLANK);
@@ -1217,7 +1430,6 @@ function evaluate(state) {
           }
         }
 
-        // Fall back to a plain description of the tapped status.
         if (!reason && needsAction(status)) {
           if (status === STATUS.FAULT) reason = 'fault reported';
           else if (status === STATUS.WATCH) reason = 'needs monitoring';
@@ -1226,14 +1438,11 @@ function evaluate(state) {
 
         result.counts[status] = (result.counts[status] || 0) + 1;
         const photos = (v.photos || []).filter(id => state.photos && state.photos[id]);
-        result.items[item.id] = { status, display, reason, note: v.note || '', photos };
+        result.items[item.id] = { status, display, reason, extra, note: v.note || '', photos };
 
         if (needsAction(status)) {
           result.actions[section.id].push({
-            label: item.label,
-            group: group.title,
-            status,
-            display,
+            label: item.label, group: group.title, status, display,
             reason: reason || STATUS_META[status].label.toLowerCase(),
             note: v.note || ''
           });
@@ -1242,18 +1451,11 @@ function evaluate(state) {
     });
   });
 
-  // Faults before warnings before not-done, so the urgent stuff reads first.
   Object.keys(result.actions).forEach(k => {
     result.actions[k].sort((a, b) =>
       SEVERITY_ORDER.indexOf(b.status) - SEVERITY_ORDER.indexOf(a.status));
   });
   return result;
-}
-
-function fmtNum(v) {
-  if (v === undefined || v === null || v === '') return '-';
-  const n = Number(v);
-  return isFinite(n) ? String(n) : String(v);
 }
 
 function numberReason(item, n, thresholds, status) {
@@ -1275,14 +1477,46 @@ function numberReason(item, n, thresholds, status) {
   return 'out of range';
 }
 
+/* Names the specific readings in a multi-field row that are out of range,
+   separating the ones over the hard limit from the ones merely drifting. */
+function multiReason(item, readings, thresholds, status) {
+  if (!needsAction(status)) return '';
+  const d = item.decimals || 0;
+  const t = thresholds[item.threshold] || {};
+  const faults = [], warns = [];
+
+  readings.forEach((r, i) => {
+    if (r === null) return;
+    const g = gradeNumber(r, item.threshold, thresholds);
+    const tag = `reading ${item.fields[i].label} (${r.toFixed(d)})`;
+    if (g === STATUS.FAULT) faults.push(tag);
+    else if (g === STATUS.WATCH) warns.push(tag);
+  });
+
+  const phrases = [];
+  if (faults.length) {
+    const low = t.critLow !== undefined ? ` the ${Number(t.critLow).toFixed(d)}-${Number(t.critHigh).toFixed(d)} limit` : ' the limit';
+    phrases.push(`${listOf(faults)} outside${low}`);
+  }
+  if (warns.length) {
+    phrases.push(`${listOf(warns)} drifting`);
+  }
+  return phrases.length ? phrases.join('; ') : 'out of range';
+}
+
+function listOf(arr) {
+  if (arr.length === 1) return arr[0];
+  return arr.slice(0, -1).join(', ') + ' and ' + arr[arr.length - 1];
+}
+
 function pairReason(inUse, backup, thresholds) {
   const bits = [];
-  const b = Number(backup), u = Number(inUse);
-  if (backup !== undefined && backup !== '' && isFinite(b)) {
+  const b = num(backup), u = num(inUse);
+  if (b !== null) {
     if (b <= thresholds.chemBackup.crit) bits.push(`backup down to ${b} L`);
     else if (b <= thresholds.chemBackup.warn) bits.push(`backup low (${b} L)`);
   }
-  if (inUse !== undefined && inUse !== '' && isFinite(u)) {
+  if (u !== null) {
     if (u <= thresholds.chemInUse.crit) bits.push(`only ${u} L in use`);
     else if (u <= thresholds.chemInUse.warn) bits.push(`in-use tank low (${u} L)`);
   }
@@ -1302,25 +1536,24 @@ function buildPdf(state, evaluated, previous) {
   /* ---- header band ---- */
   doc.rect(0, 0, PT.pageW, 74, { fill: BRAND.navy });
   doc.text('DAILY OPERATIONS REPORT', L, 34, { size: 16, bold: true, colour: [255, 255, 255] });
-  doc.text(state.site || 'Rendering Plant Operations', L, 51,
-    { size: 9, colour: [176, 196, 222] });
-  doc.text(prettyDate(state.date), R, 34, { size: 11.5, bold: true, colour: [255, 255, 255], align: 'right' });
-  doc.text(`${state.shift || 'AM'} shift`, R, 50, { size: 9, colour: [176, 196, 222], align: 'right' });
+  doc.text(state.site || 'Rendering Plant Operations', L, 51, { size: 9, colour: [176, 196, 222] });
+  doc.text(prettyDate(state.date), R, 38, { size: 11.5, bold: true, colour: [255, 255, 255], align: 'right' });
   doc.y = 92;
 
   /* ---- meta strip ---- */
   const metaH = 26;
   doc.rect(L, doc.y, W, metaH, { fill: [248, 250, 252], stroke: BRAND.hairline });
   const metas = [
-    ['Reported by', state.reporter || '-'],
+    ['Reported by', state.reporter || DEFAULT_REPORTER],
     ['Generated', new Date().toLocaleString('en-AU', { hour12: false })],
-    ['Photos attached', String(Object.keys(state.photos || {}).length)]
+    ['Compared with', evaluated.previousDate ? prettyDate(evaluated.previousDate) : 'no earlier report'],
+    ['Photos', String(Object.keys(state.photos || {}).length)]
   ];
   let mx = L + 10;
   const mw = W / metas.length;
   metas.forEach(([k, v]) => {
     doc.text(k.toUpperCase(), mx, doc.y + 11, { size: 6.4, bold: true, colour: BRAND.slate });
-    doc.text(v, mx, doc.y + 21, { size: 8.6, colour: BRAND.ink });
+    doc.text(v, mx, doc.y + 21, { size: 8.2, colour: BRAND.ink });
     mx += mw;
   });
   doc.y += metaH + 14;
@@ -1343,24 +1576,20 @@ function buildPdf(state, evaluated, previous) {
   });
   doc.y += 42 + 18;
 
-  /* ---- action required, grouped by who owns it ---- */
+  /* ---- action required ---- */
   CHECKLIST.forEach(section => {
     const actions = evaluated.actions[section.id];
     if (!actions.length) return;
     const faults = actions.filter(a => a.status === STATUS.FAULT);
 
     const lines = actions.map(a => {
-      const bits = [a.label];
-      if (a.reason) bits.push(a.reason);
-      let s = bits.join(' - ');
+      let s = a.reason ? `${a.label} - ${a.reason}` : a.label;
       if (a.note) s += ` (${a.note})`;
       return { text: s, status: a.status };
     });
 
     let bodyH = 0;
-    lines.forEach(l => {
-      bodyH += wrapText(l.text, 8.8, false, W - 46).length * 12;
-    });
+    lines.forEach(l => { bodyH += wrapText(l.text, 8.8, false, W - 46).length * 12; });
     const boxH = 26 + bodyH + 8;
     doc.ensure(boxH + 10);
 
@@ -1373,13 +1602,11 @@ function buildPdf(state, evaluated, previous) {
 
     let ay = doc.y + 30;
     lines.forEach(l => {
-      const meta = STATUS_META[l.status];
-      doc.rect(L + 16, ay - 5.5, 5, 5, { fill: meta.colour });
-      const wrapped = wrapText(l.text, 8.8, false, W - 46);
-      wrapped.forEach((w, i) => {
+      doc.rect(L + 16, ay - 5.5, 5, 5, { fill: STATUS_META[l.status].colour });
+      wrapText(l.text, 8.8, false, W - 46).forEach((w, i) => {
         doc.text(w, L + 27, ay + i * 12, { size: 8.8, colour: BRAND.ink });
       });
-      ay += wrapped.length * 12;
+      ay += wrapText(l.text, 8.8, false, W - 46).length * 12;
     });
     doc.y += boxH + 12;
   });
@@ -1412,12 +1639,8 @@ function buildPdf(state, evaluated, previous) {
         if (idx % 2 === 1) doc.rect(L, doc.y, W, rowH, { fill: BRAND.zebra });
 
         doc.text(item.label, L + 7, doc.y + 13, { size: 8.8, colour: BRAND.ink });
+        doc.pill(STATUS_META[ev.status].short, R - 6, doc.y + 4, STATUS_META[ev.status].colour);
 
-        const meta = STATUS_META[ev.status];
-        doc.pill(meta.short, R - 6, doc.y + 4, meta.colour);
-
-        // Value column. Status-only items say everything in the pill
-        // already, so repeating the word next to it just adds noise.
         const parts = [];
         if (item.type !== 'status') parts.push(ev.display);
         const trend = trendFor(item, state, previous);
@@ -1426,8 +1649,17 @@ function buildPdf(state, evaluated, previous) {
           doc.text(parts.join('   '), R - 74, doc.y + 13,
             { size: 8.6, colour: BRAND.slate, align: 'right' });
         }
-
         doc.y += rowH;
+
+        // Stock movement, shown as a tinted strip under the chemical row.
+        if (ev.extra && ev.extra.length) {
+          const txt = ev.extra.join('   \u00B7   ');
+          const h = 14;
+          doc.ensure(h);
+          doc.rect(L + 12, doc.y, W - 24, h, { fill: BRAND.infoBg });
+          doc.text(txt, L + 20, doc.y + 10, { size: 7.6, colour: [46, 82, 128] });
+          doc.y += h + 2;
+        }
 
         if (ev.photos.length) {
           ev.photos.forEach(pid => {
@@ -1450,6 +1682,15 @@ function buildPdf(state, evaluated, previous) {
     });
   });
 
+  /* ---- free-text notes ---- */
+  if (state.generalNote && state.generalNote.trim()) {
+    doc.ensure(50);
+    doc.text('NOTES', L, doc.y + 10, { size: 9, bold: true, colour: BRAND.navy });
+    doc.y += 16;
+    const h = doc.paragraph(state.generalNote.trim(), L, doc.y, W, { size: 8.6, colour: BRAND.ink });
+    doc.y += h + 10;
+  }
+
   /* ---- photo appendix ---- */
   if (photoOrder.length) {
     doc.newPage();
@@ -1465,8 +1706,7 @@ function buildPdf(state, evaluated, previous) {
     photoOrder.forEach((entry, i) => {
       const photo = state.photos[entry.photoId];
       if (!photo) return;
-      const maxH = 200;
-      const scale = Math.min(colW / photo.width, maxH / photo.height);
+      const scale = Math.min(colW / photo.width, 200 / photo.height);
       const dw = photo.width * scale;
       const dh = photo.height * scale;
       const blockH = dh + 34;
@@ -1494,46 +1734,42 @@ function buildPdf(state, evaluated, previous) {
     });
   }
 
-  const footer = `Daily Operations Report \u00B7 ${prettyDate(state.date)} \u00B7 ${state.shift || 'AM'} shift` +
+  const footer = `Daily Operations Report \u00B7 ${prettyDate(state.date)}` +
                  (state.reporter ? ` \u00B7 ${state.reporter}` : '');
   return doc.build(footer);
 }
 
-/* Small up/down marker comparing today with the last saved report. */
+/* Up/down marker against the last saved report. Chemicals show real usage
+   instead, so they are skipped here. */
 function trendFor(item, state, previous) {
-  if (!previous || !previous.values) return '';
+  if (!previous || !previous.values || item.type === 'pair') return '';
   const now = state.values[item.id] || {};
   const before = previous.values[item.id] || {};
-  const pick = (v) => item.type === 'pair' ? v.inUse : v.value;
-  const a = Number(pick(now));
-  const b = Number(pick(before));
-  if (!isFinite(a) || !isFinite(b) || a === b) return '';
+  if (item.type !== 'number') return '';
+  const a = num(now.value), b = num(before.value);
+  if (a === null || b === null || a === b) return '';
   const delta = a - b;
   const mag = Math.abs(delta);
-  // Keep a decimal unless the change is a whole number, so a pH drop of
-  // 1.8 never gets rounded up to 2.
   const shown = Number.isInteger(mag) ? String(mag) : mag.toFixed(1);
   return `(${delta > 0 ? '+' : '-'}${shown} vs last)`;
 }
 
 /* ------------------------------------------------------------------
-   WhatsApp messages - one per manager
+   WhatsApp messages
    ------------------------------------------------------------------ */
 
 function buildWhatsApp(state, evaluated) {
-  return CHECKLIST.map(section => {
+  return CHECKLIST.map((section, sectionIndex) => {
     const lines = [];
     const actions = evaluated.actions[section.id];
 
-    if (section.id === CHECKLIST[0].id) {
+    if (sectionIndex === 0) {
       lines.push(`*DAILY OPS REPORT* \u2014 ${prettyDate(state.date)}`);
-      lines.push(`_${state.shift || 'AM'} shift${state.reporter ? ' \u00B7 Reported by ' + state.reporter : ''}_`);
+      lines.push(`_Reported by ${state.reporter || DEFAULT_REPORTER}_`);
       lines.push('');
     }
     lines.push(`*\u2501\u2501\u2501 ${section.owner.toUpperCase()} \u2501\u2501\u2501*`);
-    if (section.id !== CHECKLIST[0].id) {
-      lines.push(`_${prettyDate(state.date)} \u00B7 ${state.shift || 'AM'} shift_`);
-    }
+    if (sectionIndex !== 0) lines.push(`_${prettyDate(state.date)}_`);
     lines.push('');
 
     if (actions.length) {
@@ -1554,18 +1790,24 @@ function buildWhatsApp(state, evaluated) {
       lines.push(`*${group.title}*${group.note ? ` _(${group.note})_` : ''}`);
       group.items.forEach(item => {
         const ev = evaluated.items[item.id];
-        const meta = STATUS_META[ev.status];
         let line = `\u2022 ${item.label}`;
         if (item.type !== 'status' && ev.display && ev.display !== '-') {
           line += ` \u2014 ${ev.display}`;
         }
-        line += ` ${meta.wa}`;
+        line += ` ${STATUS_META[ev.status].wa}`;
         if (ev.photos.length) line += ' \uD83D\uDCF7';
         lines.push(line);
+        if (ev.extra && ev.extra.length) lines.push(`   _${ev.extra.join(' \u00B7 ')}_`);
         if (ev.note) lines.push(`   _${ev.note}_`);
       });
       lines.push('');
     });
+
+    if (sectionIndex === CHECKLIST.length - 1 && state.generalNote && state.generalNote.trim()) {
+      lines.push(`*Notes*`);
+      lines.push(state.generalNote.trim());
+      lines.push('');
+    }
 
     lines.push('_\u2705 OK \u00B7 \u26A0\uFE0F Monitor \u00B7 \u274C Fault \u00B7 \u2B1C Not done_');
     return { owner: section.owner, text: lines.join('\n').replace(/\n{3,}/g, '\n\n') };
@@ -1627,13 +1869,14 @@ function todayISO() {
 
 let state = blankState();
 let saveTimer = null;
+/* The most recent saved report before today's, used for chemical usage. */
+let previousReport = null;
 
 function blankState() {
   return {
     id: DRAFT_ID,
     date: todayISO(),
-    shift: 'AM',
-    reporter: '',
+    reporter: DEFAULT_REPORTER,
     site: '',
     generalNote: '',
     values: {},
@@ -1706,9 +1949,21 @@ function renderItem(item) {
                value="${v.value ?? ''}" placeholder="reading">
         <span class="unit">${esc(item.unit || '')}</span>
       </div>`;
+
+  } else if (item.type === 'multi') {
+    control = `
+      <div class="multirow${item.inputWidth === 'narrow' ? ' narrow' : ''}">
+        ${item.fields.map(f => `
+          <label>${esc(f.label)}
+            <input type="number" inputmode="decimal" step="any"
+                   data-multi="${item.id}" data-key="${f.key}" value="${v[f.key] ?? ''}">
+          </label>`).join('')}
+        ${item.unit ? `<span class="unit">${esc(item.unit)}</span>` : ''}
+      </div>`;
+
   } else if (item.type === 'pair') {
     control = `
-      <div class="pairgrid">
+      <div class="pairgrid${item.ibc ? ' with-ibc' : ''}">
         <label>In use (${esc(item.unit)})
           <input type="number" inputmode="decimal" step="any" data-pair="${item.id}" data-side="inUse"
                  value="${v.inUse ?? ''}">
@@ -1717,7 +1972,22 @@ function renderItem(item) {
           <input type="number" inputmode="decimal" step="any" data-pair="${item.id}" data-side="backup"
                  value="${v.backup ?? ''}">
         </label>
+        ${item.ibc ? `
+        <label>New IBCs
+          <input type="number" inputmode="numeric" step="1" min="0" placeholder="0"
+                 data-pair="${item.id}" data-side="ibc" value="${v.ibc ?? ''}">
+        </label>` : ''}
+      </div>
+      <div class="usage" data-usage="${item.id}"></div>`;
+
+  } else if (item.type === 'choice') {
+    control = `
+      <div class="choicerow">
+        ${item.options.map(o => `
+          <button type="button" class="cbtn ${o.status}" data-choice="${item.id}" data-value="${o.value}"
+                  aria-pressed="${v.choice === o.value ? 'true' : 'false'}">${esc(o.label)}</button>`).join('')}
       </div>`;
+
   } else if (item.type === 'date') {
     control = `
       <div class="numrow">
@@ -1725,11 +1995,13 @@ function renderItem(item) {
       </div>`;
   }
 
+  // A choice item already carries its own grading, so the generic status
+  // buttons would only duplicate it.
   const statuses = [
     [STATUS.OK, 'OK'], [STATUS.WATCH, 'Monitor'],
     [STATUS.FAULT, 'Fault'], [STATUS.TODO, 'Not done']
   ];
-  const statusRow = `
+  const statusRow = item.type === 'choice' ? '' : `
     <div class="statusrow">
       ${statuses.map(([s, label]) => `
         <button type="button" class="sbtn ${s}" data-status="${item.id}" data-value="${s}"
@@ -1793,6 +2065,19 @@ function bindChecklist() {
       return;
     }
 
+    const cbtn = e.target.closest('[data-choice]');
+    if (cbtn) {
+      const id = cbtn.dataset.choice;
+      const v = valueOf(id);
+      v.choice = v.choice === cbtn.dataset.value ? undefined : cbtn.dataset.value;
+      root.querySelectorAll(`[data-choice="${id}"]`).forEach(b => {
+        b.setAttribute('aria-pressed', b.dataset.value === v.choice ? 'true' : 'false');
+      });
+      queueSave();
+      refresh();
+      return;
+    }
+
     const photoBtn = e.target.closest('[data-photo]');
     if (photoBtn) {
       root.querySelector(`[data-fileinput="${photoBtn.dataset.photo}"]`).click();
@@ -1820,6 +2105,8 @@ function bindChecklist() {
       valueOf(t.dataset.num).value = t.value;
     } else if (t.dataset.pair !== undefined) {
       valueOf(t.dataset.pair)[t.dataset.side] = t.value;
+    } else if (t.dataset.multi !== undefined) {
+      valueOf(t.dataset.multi)[t.dataset.key] = t.value;
     } else if (t.dataset.date !== undefined) {
       valueOf(t.dataset.date).date = t.value;
     } else if (t.dataset.notefield !== undefined) {
@@ -1922,7 +2209,7 @@ function dataUrlToBytes(dataUrl) {
 /* ---------------- refresh (pills, dots, summary, progress) ---------------- */
 
 function refresh() {
-  const ev = evaluate(state);
+  const ev = evaluate(state, previousReport);
 
   Object.keys(ev.items).forEach(id => {
     const pill = document.querySelector(`[data-pill="${id}"]`);
@@ -1930,6 +2217,17 @@ function refresh() {
     const s = ev.items[id].status;
     pill.className = `pill ${s}`;
     pill.textContent = STATUS_META[s].short;
+
+    // live "used since yesterday" line under the chemical inputs
+    const usage = document.querySelector(`[data-usage="${id}"]`);
+    if (usage) {
+      const extra = ev.items[id].extra || [];
+      usage.innerHTML = extra.length
+        ? extra.map(e => `<span>${esc(e)}</span>`).join('')
+        : (previousReport
+            ? ''
+            : '<span class="faint">No earlier report yet, so usage cannot be worked out.</span>');
+    }
 
     const thumbs = document.querySelector(`[data-thumbs="${id}"]`);
     if (thumbs) {
@@ -1958,7 +2256,7 @@ function refresh() {
   el('#progressFill').style.width = `${Math.round(done / total * 100)}%`;
   el('#progressLabel').textContent = `${done} of ${total} checks recorded`;
   el('#topbarDate').textContent =
-    `${prettyDate(state.date)} \u00B7 ${state.shift} shift${state.reporter ? ' \u00B7 ' + state.reporter : ''}`;
+    `${prettyDate(state.date)}${state.reporter ? ' \u00B7 ' + state.reporter : ''}`;
 
   renderSummary(ev);
   return ev;
@@ -2009,12 +2307,11 @@ async function generatePdf() {
     photosWithBytes[pid] = { ...p, bytes: dataUrlToBytes(p.dataUrl) };
   });
 
-  const previous = await findPreviousReport();
   const forPdf = { ...state, photos: photosWithBytes };
 
   let bytes;
   try {
-    bytes = buildPdf(forPdf, ev, previous);
+    bytes = buildPdf(forPdf, ev, previousReport);
   } catch (err) {
     console.error(err);
     toast('PDF failed to build');
@@ -2023,8 +2320,38 @@ async function generatePdf() {
 
   await archiveCurrent();
 
-  const filename = `Ops-Report-${state.date}-${state.shift}.pdf`;
+  const filename = `Ops-Report-${state.date}.pdf`;
   await deliverPdf(bytes, filename);
+}
+
+/* Clears the checklist for a fresh report, keeping the operator's name,
+   the site name and the trigger levels. Saved reports are untouched. */
+async function startNewReport() {
+  const filled = Object.keys(state.values).length > 0;
+  if (filled) {
+    const ok = confirm(
+      'Start a new report?\n\n' +
+      'This clears all the checks, readings and photos on screen.\n' +
+      'Reports you have already saved are kept.'
+    );
+    if (!ok) return;
+  }
+
+  const carried = {
+    reporter: state.reporter,
+    site: state.site,
+    thresholds: state.thresholds
+  };
+  state = { ...blankState(), ...carried, id: DRAFT_ID };
+
+  await store.put({ ...state, savedAt: Date.now() });
+  previousReport = await findPreviousReport();
+
+  hydrateFields();
+  render();
+  closeSheets();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  toast('Fresh report ready');
 }
 
 async function deliverPdf(bytes, filename) {
@@ -2067,10 +2394,12 @@ async function deliverPdf(bytes, filename) {
 }
 
 async function archiveCurrent() {
-  const id = `report-${state.date}-${state.shift}`;
+  const id = `report-${state.date}`;
   await store.put({ ...state, id, savedAt: Date.now() });
 }
 
+/* The newest saved report from before today, which is what chemical usage
+   and the number trends are measured against. */
 async function findPreviousReport() {
   const all = await store.all();
   const candidates = all
@@ -2082,7 +2411,7 @@ async function findPreviousReport() {
 /* ---------------- WhatsApp sheet ---------------- */
 
 function showWhatsApp() {
-  const ev = refresh();
+  const ev = evaluate(state, previousReport);
   const messages = buildWhatsApp(state, ev);
   el('#waBody').innerHTML = messages.map((m, i) => `
     <div class="wa-block">
@@ -2174,7 +2503,7 @@ async function renderHistory() {
   }
   list.innerHTML = saved.map(r => `
     <div class="history-row">
-      <span>${esc(prettyDate(r.date))} &middot; ${esc(r.shift || '')}
+      <span>${esc(prettyDate(r.date))}
         <span class="muted">${Object.keys(r.photos || {}).length} photo(s)</span></span>
       <span class="h-actions">
         <button type="button" class="tool-btn" data-load="${esc(r.id)}">Load</button>
@@ -2185,8 +2514,9 @@ async function renderHistory() {
   list.querySelectorAll('[data-load]').forEach(b => b.addEventListener('click', async () => {
     const rec = await store.get(b.dataset.load);
     if (!rec) return;
-    state = { ...rec, id: DRAFT_ID };
+    state = { ...blankState(), ...rec, id: DRAFT_ID };
     if (!state.thresholds) state.thresholds = deepCopy(DEFAULT_THRESHOLDS);
+    previousReport = await findPreviousReport();
     hydrateFields();
     render();
     renderThresholds();
@@ -2261,15 +2591,19 @@ function showBuildId() {
 
 function hydrateFields() {
   el('#fDate').value = state.date;
-  el('#fShift').value = state.shift;
   el('#fReporter').value = state.reporter || '';
   el('#fSite').value = state.site || '';
   el('#fGeneralNote').value = state.generalNote || '';
 }
 
 function bindShell() {
-  el('#fDate').addEventListener('change', e => { state.date = e.target.value || todayISO(); queueSave(); refresh(); });
-  el('#fShift').addEventListener('change', e => { state.shift = e.target.value; queueSave(); refresh(); });
+  el('#fDate').addEventListener('change', async e => {
+    state.date = e.target.value || todayISO();
+    // A different date means a different report to compare against.
+    previousReport = await findPreviousReport();
+    queueSave();
+    refresh();
+  });
   el('#fReporter').addEventListener('input', e => { state.reporter = e.target.value; queueSave(); refresh(); });
   el('#fSite').addEventListener('input', e => { state.site = e.target.value; queueSave(); });
   el('#fGeneralNote').addEventListener('input', e => { state.generalNote = e.target.value; queueSave(); });
@@ -2277,6 +2611,7 @@ function bindShell() {
   el('#btnPdf').addEventListener('click', generatePdf);
   el('#btnWhatsApp').addEventListener('click', showWhatsApp);
   el('#btnSettings').addEventListener('click', () => { renderHistory(); openSheet('#settingsSheet'); });
+  el('#btnNewReport').addEventListener('click', startNewReport);
   el('#btnResetThresholds').addEventListener('click', () => {
     state.thresholds = deepCopy(DEFAULT_THRESHOLDS);
     renderThresholds();
@@ -2341,6 +2676,14 @@ async function boot() {
     }
   } catch (err) {
     console.error('could not load draft', err);
+  }
+
+  if (!state.reporter) state.reporter = DEFAULT_REPORTER;
+
+  try {
+    previousReport = await findPreviousReport();
+  } catch (err) {
+    console.error('could not load the previous report', err);
   }
 
   hydrateFields();
