@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1e3a5f">
-<meta name="build-id" content="8e373aa5d112">
+<meta name="build-id" content="bc1792543cce">
 <title>Daily Ops Report</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -622,6 +622,27 @@ body.no-scroll { overflow: hidden; }
       <button class="btn btn-primary" data-close-sheet>Done</button>
     </div>
     <hr>
+    <h2>Average usage</h2>
+    <p class="muted small">
+      How many days of submitted reports the average looks back over. Change it
+      any time &mdash; the next report uses the new number.
+    </p>
+    <label>Days to average over
+      <input type="number" id="fAvgWindow" inputmode="numeric" step="1" min="1" placeholder="14">
+    </label>
+
+    <hr>
+    <h2>Sample data <span class="muted">(for trying the chart)</span></h2>
+    <p class="muted small">
+      Adds 30 days of made-up reports so the usage chart has something to show.
+      Remove it once you have decided.
+    </p>
+    <div class="sheet-foot">
+      <button type="button" id="btnSampleData" class="tool-btn">Add sample data</button>
+      <button type="button" id="btnClearSample" class="tool-btn">Clear sample data</button>
+    </div>
+
+    <hr>
     <h2>Saved reports</h2>
     <div id="historyList" class="history"></div>
     <hr>
@@ -707,6 +728,10 @@ const IBC_LITRES = 1000;
 const DEFAULT_REPORTER = 'HAFIZ SHAKEEB ARSLAN';
 const DEFAULT_SITE = 'AUSTRALIAN TALLOW PRODUCERS';
 const DEFAULT_PREFIX = 'ATP-DOR';
+
+/* How many days of submitted reports the average usage looks back over.
+   Adjustable in Settings. */
+const DEFAULT_AVG_WINDOW = 14;
 
 /* A chemical's usage tank being completely empty is always a fault, whatever
    the backup situation, so it needs no adjustable trigger. */
@@ -1149,6 +1174,62 @@ function defaultValues() {
   return out;
 }
 
+/* ------------------------------------------------------------------
+   Usage history
+   ------------------------------------------------------------------
+   Every submitted report already carries its own period: the last-check
+   levels, what was delivered, and the levels now. So each report yields one
+   usage figure without having to pair reports up.
+
+   Periods that cannot be trusted are skipped - unknown deliveries, or stock
+   that rose with nothing recorded - so they cannot distort the average.
+   ------------------------------------------------------------------ */
+
+function usageFromReport(item, report) {
+  if (!report || !report.values) return null;
+  const v = report.values[item.id];
+  if (!v) return null;
+  const gap = daysBetween(report.lastCheckDate, report.date);
+  const u = stockUsage(item, v, gap);
+  if (!u) return null;
+  if (u.unconfirmed || u.missingLitres > 0) return null;
+  if (u.used < 0) return null;
+  return { date: report.date, used: u.used, days: u.days, perDay: u.used / u.days };
+}
+
+/* Average usage per day across the window, weighted by days rather than by
+   report, so a three-day gap counts for three days. */
+function usageStats(item, reports, windowDays, today) {
+  const window = windowDays > 0 ? windowDays : DEFAULT_AVG_WINDOW;
+  const series = [];
+  let totalUsed = 0;
+  let totalDays = 0;
+
+  (reports || []).forEach(r => {
+    const age = daysBetween(r.date, today);
+    if (age !== null && age > window) return;      // older than the window
+    const u = usageFromReport(item, r);
+    if (!u) return;
+    series.push(u);
+    totalUsed += u.used;
+    totalDays += u.days;
+  });
+
+  series.sort((a, b) => (a.date < b.date ? -1 : 1));
+  return {
+    series,
+    avgPerDay: totalDays > 0 ? totalUsed / totalDays : null,
+    daysCovered: totalDays,
+    window
+  };
+}
+
+/* Days of stock left, based on the average rather than a single day. */
+function daysLeftFromAverage(onHand, avgPerDay) {
+  if (onHand === null || !avgPerDay || avgPerDay <= 0) return null;
+  return onHand / avgPerDay;
+}
+
 /* Copies the current readings into the "last check" boxes and clears the
    current ones, ready for the next report. */
 function carryStockForward(values) {
@@ -1273,11 +1354,13 @@ function charWidth(byte, bold) {
   return bold ? 611 : 556;
 }
 
-function measure(str, size, bold) {
+function measure(str, size, bold, tracking) {
   const bytes = toWinAnsi(str);
   let total = 0;
   for (const b of bytes) total += charWidth(b, bold);
-  return (total / 1000) * size;
+  let w = (total / 1000) * size;
+  if (tracking && bytes.length > 1) w += tracking * (bytes.length - 1);
+  return w;
 }
 
 /* Escape a WinAnsi byte array into a PDF literal string body. */
@@ -1378,14 +1461,17 @@ class PdfDoc {
     if (!bytes.length) return;
 
     let drawX = x;
-    if (opts.align === 'right') drawX = x - measure(str, size, bold);
-    else if (opts.align === 'center') drawX = x - measure(str, size, bold) / 2;
+    const w = measure(str, size, bold, opts.tracking);
+    if (opts.align === 'right') drawX = x - w;
+    else if (opts.align === 'center') drawX = x - w / 2;
 
     this.op('BT');
     this.op(`${fmtColour(colour)} rg`);
-    this.op(`/${bold ? 'F2' : 'F1'} ${size} Tf`);
+    this.op(`/${opts.italic ? 'F3' : (bold ? 'F2' : 'F1')} ${size} Tf`);
+    if (opts.tracking) this.op(`${opts.tracking} Tc`);
     this.op(`1 0 0 1 ${drawX.toFixed(2)} ${this.flip(yTop).toFixed(2)} Tm`);
     this.op(`(${pdfStringBody(bytes)}) Tj`);
+    if (opts.tracking) this.op('0 Tc');
     this.op('ET');
   }
 
@@ -1410,6 +1496,128 @@ class PdfDoc {
     this.rect(x, yTop, w, h, { fill: colour });
     this.text(label, x + padX, yTop + 8.6, { size, bold: true, colour: [255, 255, 255] });
     return w;
+  }
+
+  /* Rounded rectangle, built from four Bezier corners. */
+  roundRect(x, yTop, w, h, r, opts = {}) {
+    const y = this.flip(yTop + h);
+    const rad = Math.max(0, Math.min(r, w / 2, h / 2));
+    const k = 0.5523 * rad;
+    const f = (n) => n.toFixed(2);
+
+    this.op(`${f(x + rad)} ${f(y)} m`);
+    this.op(`${f(x + w - rad)} ${f(y)} l`);
+    this.op(`${f(x + w - rad + k)} ${f(y)} ${f(x + w)} ${f(y + rad - k)} ${f(x + w)} ${f(y + rad)} c`);
+    this.op(`${f(x + w)} ${f(y + h - rad)} l`);
+    this.op(`${f(x + w)} ${f(y + h - rad + k)} ${f(x + w - rad + k)} ${f(y + h)} ${f(x + w - rad)} ${f(y + h)} c`);
+    this.op(`${f(x + rad)} ${f(y + h)} l`);
+    this.op(`${f(x + rad - k)} ${f(y + h)} ${f(x)} ${f(y + h - rad + k)} ${f(x)} ${f(y + h - rad)} c`);
+    this.op(`${f(x)} ${f(y + rad)} l`);
+    this.op(`${f(x)} ${f(y + rad - k)} ${f(x + rad - k)} ${f(y)} ${f(x + rad)} ${f(y)} c`);
+    this.op('h');
+
+    if (opts.fill && opts.stroke) {
+      this.op(`${fmtColour(opts.fill)} rg`);
+      this.op(`${fmtColour(opts.stroke)} RG`);
+      this.op(`${(opts.lineWidth || 0.7).toFixed(2)} w`);
+      this.op('B');
+    } else if (opts.fill) {
+      this.op(`${fmtColour(opts.fill)} rg`);
+      this.op('f');
+    } else if (opts.stroke) {
+      this.op(`${fmtColour(opts.stroke)} RG`);
+      this.op(`${(opts.lineWidth || 0.7).toFixed(2)} w`);
+      this.op('S');
+    }
+  }
+
+  dashedLine(x1, x2, yTop, colour, opts = {}) {
+    const y = this.flip(yTop);
+    this.op('q');
+    this.op(`[${opts.dash || '1.6 1.6'}] 0 d`);
+    this.op(`${fmtColour(colour)} RG`);
+    this.op(`${(opts.lineWidth || 0.6).toFixed(2)} w`);
+    this.op(`${x1.toFixed(2)} ${y.toFixed(2)} m ${x2.toFixed(2)} ${y.toFixed(2)} l S`);
+    this.op('Q');
+  }
+
+  /* Small status glyphs, drawn rather than typed since the base fonts have
+     no symbols worth using. */
+  icon(kind, cx, cyTop, size, colour) {
+    const cy = this.flip(cyTop);
+    const s = size / 2;
+    this.op('q');
+    this.op(`${fmtColour(colour)} RG`);
+    this.op('1 J 1 j');
+    this.op(`${(size * 0.26).toFixed(2)} w`);
+    if (kind === 'tick') {
+      this.op(`${(cx - s).toFixed(2)} ${(cy + s * 0.08).toFixed(2)} m`);
+      this.op(`${(cx - s * 0.22).toFixed(2)} ${(cy - s * 0.62).toFixed(2)} l`);
+      this.op(`${(cx + s).toFixed(2)} ${(cy + s * 0.72).toFixed(2)} l S`);
+    } else if (kind === 'cross') {
+      this.op(`${(cx - s * 0.7).toFixed(2)} ${(cy - s * 0.7).toFixed(2)} m ${(cx + s * 0.7).toFixed(2)} ${(cy + s * 0.7).toFixed(2)} l S`);
+      this.op(`${(cx - s * 0.7).toFixed(2)} ${(cy + s * 0.7).toFixed(2)} m ${(cx + s * 0.7).toFixed(2)} ${(cy - s * 0.7).toFixed(2)} l S`);
+    } else if (kind === 'bang') {
+      this.op(`${cx.toFixed(2)} ${(cy + s * 0.85).toFixed(2)} m ${cx.toFixed(2)} ${(cy - s * 0.1).toFixed(2)} l S`);
+      this.op(`${cx.toFixed(2)} ${(cy - s * 0.72).toFixed(2)} m ${cx.toFixed(2)} ${(cy - s * 0.7).toFixed(2)} l S`);
+    } else if (kind === 'dash') {
+      this.op(`${(cx - s * 0.7).toFixed(2)} ${cy.toFixed(2)} m ${(cx + s * 0.7).toFixed(2)} ${cy.toFixed(2)} l S`);
+    }
+    this.op('Q');
+  }
+
+  /* Pill badge with a drawn glyph and a label. */
+  badge(label, kind, xRight, yTop, colour) {
+    const size = 7;
+    const h = 13;
+    const iconW = 8;
+    const padX = 6;
+    const labelW = measure(label, size, true, 0.25);
+    const w = padX + iconW + 3.5 + labelW + padX;
+    const x = xRight - w;
+    this.roundRect(x, yTop, w, h, h / 2, { fill: colour });
+    this.icon(kind, x + padX + iconW / 2, yTop + h / 2, iconW, [255, 255, 255]);
+    this.text(label, x + padX + iconW + 3.5, yTop + 9,
+      { size, bold: true, colour: [255, 255, 255], tracking: 0.25 });
+    return w;
+  }
+
+  /* Column chart for the daily-usage history.
+
+     Scaled across the range of the data rather than from zero. Daily usage sits
+     in a narrow band, so scaling from zero makes every bar nearly full height
+     and hides the very variation the chart exists to show. The dashed average
+     line gives the reference point. */
+  barChart(x, yTop, w, h, values, opts = {}) {
+    if (!values.length) return;
+    const clean = values.map(v => Math.max(0, Number(v) || 0));
+    const hi = Math.max.apply(null, clean);
+    const lo = Math.min.apply(null, clean);
+    const span = hi - lo;
+    // Floor sits a little below the smallest value so the shortest bar is
+    // still visible, and a flat series shows as an even mid-height row.
+    const floor = span > 0 ? lo - span * 0.35 : Math.max(0, hi * 0.55);
+    const range = Math.max(hi - floor, 1e-6);
+
+    const n = clean.length;
+    const gap = n > 20 ? 0.9 : 1.9;
+    const bw = Math.max(1.1, (w - gap * (n - 1)) / n);
+    const colour = opts.colour || [90, 120, 160];
+    const faint = opts.baseline || [225, 231, 238];
+    const scale = (v) => Math.max(1.2, ((v - floor) / range) * (h - 1.5));
+
+    this.hline(x, x + w, yTop + h, faint, 0.5);
+
+    clean.forEach((v, i) => {
+      const bh = scale(v);
+      this.rect(x + i * (bw + gap), yTop + h - bh, bw, bh, { fill: colour });
+    });
+
+    if (opts.avg !== undefined && opts.avg !== null) {
+      const ay = yTop + h - scale(opts.avg);
+      this.dashedLine(x, x + w, ay, opts.avgColour || [190, 44, 44],
+        { dash: '1.5 1.3', lineWidth: 0.8 });
+    }
   }
 
   addImage(bytes, width, height) {
@@ -1448,10 +1656,10 @@ class PdfDoc {
     const imgCount = this.images.length;
 
     // Object numbering:
-    //   1 catalog, 2 pages, 3 F1, 4 F2,
-    //   5 .. 5+img-1            image xobjects
+    //   1 catalog, 2 pages, 3 F1, 4 F2, 5 F3 (italic)
+    //   6 .. 6+img-1            image xobjects
     //   then per page: page object + content stream
-    const imgFirst = 5;
+    const imgFirst = 6;
     const pageFirst = imgFirst + imgCount;
 
     push('%PDF-1.4\n');
@@ -1475,6 +1683,10 @@ class PdfDoc {
     push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>\n');
     endObj();
 
+    startObj(5);
+    push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Oblique /Encoding /WinAnsiEncoding >>\n');
+    endObj();
+
     this.images.forEach((img, i) => {
       startObj(imgFirst + i);
       push(`<< /Type /XObject /Subtype /Image /Width ${img.width} /Height ${img.height} ` +
@@ -1494,7 +1706,7 @@ class PdfDoc {
 
       startObj(pageObj);
       push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PT.pageW} ${PT.pageH}] ` +
-           `/Resources << /Font << /F1 3 0 R /F2 4 0 R >>` +
+           `/Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >>` +
            (xobjEntries ? ` /XObject << ${xobjEntries} >>` : '') +
            ` >> /Contents ${contentObj} 0 R >>\n`);
       endObj();
@@ -1551,22 +1763,32 @@ function latin1Bytes(str) {
      b) the two WhatsApp messages.
    ------------------------------------------------------------------ */
 
+/* Taken from the ATP logo: deep forest green with a golden amber accent. */
 const BRAND = {
-  ink:      [26, 32, 44],
-  navy:     [30, 58, 95],
-  slate:    [100, 110, 124],
-  hairline: [226, 230, 235],
-  zebra:    [247, 249, 251],
-  ok:       [34, 139, 79],
-  watch:    [201, 138, 4],
-  fault:    [190, 44, 44],
-  todo:     [110, 118, 129],
-  amberBg:  [255, 248, 230],
-  redBg:    [253, 242, 242],
-  sumBg:    [238, 244, 251],
-  sumEdge:  [176, 198, 221],
-  sumInk:   [23, 54, 93]
+  green:     [13, 105, 56],
+  greenDark: [9, 78, 42],
+  gold:      [240, 168, 30],
+  ink:       [26, 32, 44],
+  navy:      [13, 105, 56],   // headers follow the brand green
+  slate:     [104, 114, 126],
+  hairline:  [226, 230, 235],
+  zebra:     [248, 250, 249],
+  ok:        [13, 105, 56],
+  watch:     [193, 128, 6],
+  fault:     [183, 40, 40],
+  todo:      [110, 118, 129],
+  amberBg:   [255, 249, 235],
+  redBg:     [253, 243, 242],
+  okBg:      [240, 248, 243],
+  sumBg:     [243, 248, 244],
+  sumEdge:   [186, 213, 195],
+  sumInk:    [12, 74, 42],
+  chart:     [46, 133, 85],
+  chartFaint:[224, 233, 227]
 };
+
+/* Which drawn glyph goes with each status. */
+const STATUS_ICON = { ok: 'tick', watch: 'bang', fault: 'cross', todo: 'dash', blank: 'dash' };
 
 const GENERIC_REASONS = new Set(['fault reported', 'needs monitoring', 'not completed']);
 
@@ -1608,11 +1830,13 @@ function plural(n, word) {
    Evaluation
    ------------------------------------------------------------------ */
 
-function evaluate(state, previous) {
+function evaluate(state, previous, history) {
   // Always work from a complete set of thresholds, so a report saved by an
   // older version cannot bring the calculation down with a missing limit.
   const thresholds = mergeThresholds(state.thresholds);
   const gapDays = daysBetween(state.lastCheckDate, state.date);
+  const submitted = history || [];
+  const avgWindow = state.avgWindowDays || DEFAULT_AVG_WINDOW;
 
   const result = {
     items: {}, counts: { ok: 0, watch: 0, fault: 0, todo: 0, blank: 0 },
@@ -1680,9 +1904,14 @@ function evaluate(state, previous) {
               : gradeNumber(v.inUse, item.threshold, thresholds);
 
           const usage = stockUsage(item, v, gapDays);
-          const left = daysOfStock(item, usage);
 
-          // Levels alone decide the status. Days of stock is information.
+          // Average across the window, including today's own figure.
+          const stats = usageStats(item,
+            submitted.concat([{ date: state.date, lastCheckDate: state.lastCheckDate, values: state.values }]),
+            avgWindow, state.date);
+          const left = daysLeftFromAverage(onHand, stats.avgPerDay);
+
+          // Levels alone decide the status. Usage and days left are information.
           status = manual || levelStatus;
           display = hasAny
             ? (item.hasBackup
@@ -1690,7 +1919,7 @@ function evaluate(state, previous) {
                 : `${fmtQty(inUse)} ${item.unit}`)
             : (manual ? 'Not measured' : '-');
 
-          if (usage) sum = buildStockSum(item, v, usage, left, state);
+          if (usage) sum = buildStockSum(item, v, usage, left, state, stats);
 
           const bits = [];
           if (hasAny) {
@@ -1710,14 +1939,14 @@ function evaluate(state, previous) {
           }
           reason = bits.join(', ');
 
-          if (item.topUp === 'ibc') {
-            result.stock.push({
-              label: item.label, unit: item.unit, onHand,
-              perDay: usage && !usage.unconfirmed ? usage.perDay : null,
-              daysLeft: left, unconfirmed: !!(usage && usage.unconfirmed),
-              status
-            });
-          }
+          result.stock.push({
+            id: item.id, label: item.label, unit: item.unit, onHand,
+            kind: item.topUp === 'ibc' ? 'chemical' : 'boiler',
+            avgPerDay: stats.avgPerDay, daysCovered: stats.daysCovered,
+            series: stats.series.map(p => p.perDay),
+            daysLeft: left, unconfirmed: !!(usage && usage.unconfirmed),
+            status
+          });
 
         } else if (item.type === 'date') {
           // Recorded for the record only - no automatic grading. A date that
@@ -1783,7 +2012,7 @@ function evaluate(state, previous) {
 }
 
 /* The lines of the stock sum, ready to print as a block. */
-function buildStockSum(item, v, usage, left, state) {
+function buildStockSum(item, v, usage, left, state, stats) {
   const u = item.unit;
   const lastLabel = state.lastCheckDate
     ? `Last check (${shortDate(state.lastCheckDate)})`
@@ -1835,12 +2064,17 @@ function buildStockSum(item, v, usage, left, state) {
       : `Stock is higher than it should be - ${fmtQty(usage.missingLitres)} ${item.unit} was added without being recorded.`;
   } else {
     total = { label: `Used${period}`, value: `${fmtQty(usage.used)} ${u}` };
-    if (usage.days > 1 && usage.used > 0) {
-      footer = `That is ${fmtQty(usage.perDay)} ${u} per day.`;
+    const parts = [];
+    if (stats && stats.avgPerDay && stats.daysCovered >= 2) {
+      parts.push(`Average use ${fmtQty(stats.avgPerDay)} ${u}/day over ${plural(stats.daysCovered, 'day')}`);
+      if (left !== null) parts.push(`about ${fmtDays(left)} left`);
+    } else if (usage.days > 1 && usage.used > 0) {
+      parts.push(`That is ${fmtQty(usage.perDay)} ${u} per day`);
+      parts.push('not enough history yet for an average');
+    } else {
+      parts.push('Not enough history yet for an average');
     }
-    if (left !== null) {
-      footer += `${footer ? ' ' : ''}About ${fmtDays(left)} left at that rate.`;
-    }
+    footer = parts.join(' \u00B7 ') + '.';
   }
   return { rows, total, footer };
 }
@@ -1951,7 +2185,8 @@ function buildPdf(state, evaluated, previous) {
 
   /* ---- 1. header band (first page only) ---- */
   const bandH = 84;
-  doc.rect(0, 0, PT.pageW, bandH, { fill: BRAND.navy });
+  doc.rect(0, 0, PT.pageW, bandH, { fill: BRAND.green });
+  doc.rect(0, bandH, PT.pageW, 3.2, { fill: BRAND.gold });   // brand accent rule
 
   let textX = L;
   if (state.logo && state.logo.bytes) {
@@ -1966,27 +2201,29 @@ function buildPdf(state, evaluated, previous) {
     textX = L + lw + pad * 2 + 14;
   }
 
-  doc.text((state.site || DEFAULT_SITE).toUpperCase(), textX, 34,
-    { size: 14, bold: true, colour: [255, 255, 255] });
-  doc.text('Daily Operations Report', textX, 51, { size: 9.6, colour: [176, 196, 222] });
-  doc.text(reportNumber(state), textX, 65, { size: 7.8, colour: [140, 168, 200] });
-  doc.text(prettyDate(state.date), R, 40,
+  doc.text((state.site || DEFAULT_SITE).toUpperCase(), textX, 33,
+    { size: 13.5, bold: true, colour: [255, 255, 255], tracking: 0.5 });
+  doc.text('DAILY OPERATIONS REPORT', textX, 49,
+    { size: 8, colour: BRAND.gold, tracking: 1.5 });
+  doc.text(reportNumber(state), textX, 64, { size: 7.6, colour: [196, 222, 206] });
+  doc.text(prettyDate(state.date), R, 39,
     { size: 11, bold: true, colour: [255, 255, 255], align: 'right' });
-  doc.text(state.reporter || DEFAULT_REPORTER, R, 55,
-    { size: 8, colour: [176, 196, 222], align: 'right' });
-  doc.y = bandH + 16;
+  doc.text(state.reporter || DEFAULT_REPORTER, R, 54,
+    { size: 7.8, colour: [196, 222, 206], align: 'right' });
+  doc.y = bandH + 19;
 
   /* ---- 2. one-line verdict ---- */
   const v = evaluated.verdict;
   const vColour = v.tone === 'fault' ? BRAND.fault : v.tone === 'watch' ? BRAND.watch : BRAND.ok;
-  const vLines = wrapText(v.text, 10, true, W - 26);
-  const vH = 12 + vLines.length * 13;
-  doc.rect(L, doc.y, W, vH, { fill: [251, 252, 253], stroke: BRAND.hairline });
-  doc.rect(L, doc.y, 4, vH, { fill: vColour });
+  const vLines = wrapText(v.text, 10, true, W - 40);
+  const vH = 14 + vLines.length * 13;
+  const vBg = v.tone === 'fault' ? BRAND.redBg : v.tone === 'watch' ? BRAND.amberBg : BRAND.okBg;
+  doc.roundRect(L, doc.y, W, vH, 7, { fill: vBg, stroke: vColour, lineWidth: 0.8 });
+  doc.icon(STATUS_ICON[v.tone === 'ok' ? 'ok' : v.tone], L + 16, doc.y + vH / 2, 11, vColour);
   vLines.forEach((line, i) => {
-    doc.text(line, L + 14, doc.y + 15 + i * 13, { size: 10, bold: true, colour: vColour });
+    doc.text(line, L + 30, doc.y + 17 + i * 13, { size: 10, bold: true, colour: vColour });
   });
-  doc.y += vH + 12;
+  doc.y += vH + 13;
 
   /* ---- 3. counters ---- */
   const cards = [
@@ -1999,12 +2236,26 @@ function buildPdf(state, evaluated, previous) {
   const cw = (W - gap * (cards.length - 1)) / cards.length;
   cards.forEach(([label, count, colour], i) => {
     const x = L + i * (cw + gap);
-    doc.rect(x, doc.y, cw, 40, { fill: [252, 253, 254], stroke: BRAND.hairline });
-    doc.rect(x, doc.y, 3, 40, { fill: colour });
-    doc.text(String(count), x + 11, doc.y + 23, { size: 16, bold: true, colour });
-    doc.text(label, x + 11, doc.y + 34, { size: 6.6, bold: true, colour: BRAND.slate });
+    doc.roundRect(x, doc.y, cw, 42, 6, { fill: [253, 254, 253], stroke: BRAND.hairline });
+    doc.roundRect(x, doc.y, 3.4, 42, 1.7, { fill: colour });
+    doc.text(String(count), x + 12, doc.y + 24, { size: 17, bold: true, colour });
+    doc.text(label, x + 12, doc.y + 35, { size: 6.4, bold: true, colour: BRAND.slate, tracking: 0.5 });
   });
-  doc.y += 40 + 16;
+  doc.y += 42 + 10;
+
+  // One slim bar showing the whole split at a glance.
+  const totalChecks = cards.reduce((a, c) => a + c[1], 0) || 1;
+  const barH = 6;
+  doc.roundRect(L, doc.y, W, barH, barH / 2, { fill: [238, 241, 239] });
+  let bx = L;
+  cards.forEach(([, count, colour]) => {
+    if (!count) return;
+    const seg = (count / totalChecks) * W;
+    doc.rect(bx, doc.y, seg, barH, { fill: colour });
+    bx += seg;
+  });
+  // tidy the rounded ends back over the square segments
+  doc.y += barH + 16;
 
   /* ---- 4. action required ---- */
   CHECKLIST.forEach(section => {
@@ -2026,10 +2277,10 @@ function buildPdf(state, evaluated, previous) {
 
     const bg = faults.length ? BRAND.redBg : BRAND.amberBg;
     const edge = faults.length ? BRAND.fault : BRAND.watch;
-    doc.rect(L, doc.y, W, boxH, { fill: bg, stroke: edge, lineWidth: 0.8 });
-    doc.rect(L, doc.y, 3.5, boxH, { fill: edge });
-    doc.text(`ACTION REQUIRED \u00B7 ${section.owner.toUpperCase()}`, L + 14, doc.y + 17,
-      { size: 9, bold: true, colour: edge });
+    doc.roundRect(L, doc.y, W, boxH, 7, { fill: bg, stroke: edge, lineWidth: 0.8 });
+    doc.roundRect(L, doc.y, 3.6, boxH, 1.8, { fill: edge });
+    doc.text(`ACTION REQUIRED \u00B7 ${section.owner.toUpperCase()}`, L + 15, doc.y + 17,
+      { size: 8.6, bold: true, colour: edge, tracking: 0.7 });
 
     let ay = doc.y + 31;
     lines.forEach((l, i) => {
@@ -2042,42 +2293,66 @@ function buildPdf(state, evaluated, previous) {
     doc.y += boxH + 12;
   });
 
-  /* ---- 5. chemical stock at a glance ---- */
-  if (evaluated.stock.length) {
-    const rowH = 18;
-    const needed = 22 + 16 + evaluated.stock.length * rowH + 10;
-    doc.ensure(needed);
+  /* ---- 5. stock at a glance, with a daily-usage chart ---- */
+  const chemStock = evaluated.stock.filter(s => s.kind === 'chemical');
+  if (chemStock.length) {
+    const rowH = 25;
+    doc.ensure(20 + 17 + chemStock.length * rowH + 22);
 
     doc.text('CHEMICAL STOCK AT A GLANCE', L, doc.y + 10,
-      { size: 9, bold: true, colour: BRAND.navy });
+      { size: 8.6, bold: true, colour: BRAND.green, tracking: 0.9 });
+    doc.y += 15;
+    doc.rect(L, doc.y, 26, 2, { fill: BRAND.gold });
+    doc.y += 6;
+
+    const chartW = 112;
+    const cols = {
+      label: L + 8,
+      onSite: L + W * 0.40,
+      avg: L + W * 0.56,
+      days: L + W * 0.70,
+      chart: R - chartW - 6
+    };
+
+    doc.roundRect(L, doc.y, W, 16, 3, { fill: [240, 246, 242] });
+    doc.text('CHEMICAL', cols.label, doc.y + 11, { size: 6.6, bold: true, colour: BRAND.slate, tracking: 0.6 });
+    doc.text('ON SITE', cols.onSite, doc.y + 11, { size: 6.6, bold: true, colour: BRAND.slate, align: 'right', tracking: 0.6 });
+    doc.text('AVG / DAY', cols.avg, doc.y + 11, { size: 6.6, bold: true, colour: BRAND.slate, align: 'right', tracking: 0.6 });
+    doc.text('DAYS LEFT', cols.days, doc.y + 11, { size: 6.6, bold: true, colour: BRAND.slate, align: 'right', tracking: 0.6 });
+    doc.text('DAILY USE', cols.chart + chartW, doc.y + 11, { size: 6.6, bold: true, colour: BRAND.slate, align: 'right', tracking: 0.6 });
     doc.y += 16;
 
-    const cols = [L + 7, L + W * 0.46, L + W * 0.68, R - 7];
-    doc.rect(L, doc.y, W, 16, { fill: [241, 245, 249] });
-    doc.text('CHEMICAL', cols[0], doc.y + 11, { size: 7, bold: true, colour: BRAND.slate });
-    doc.text('ON SITE', cols[1], doc.y + 11, { size: 7, bold: true, colour: BRAND.slate, align: 'right' });
-    doc.text('USED / DAY', cols[2], doc.y + 11, { size: 7, bold: true, colour: BRAND.slate, align: 'right' });
-    doc.text('DAYS LEFT', cols[3], doc.y + 11, { size: 7, bold: true, colour: BRAND.slate, align: 'right' });
-    doc.y += 16;
-
-    evaluated.stock.forEach((s, i) => {
+    chemStock.forEach((s, i) => {
       if (i % 2 === 1) doc.rect(L, doc.y, W, rowH, { fill: BRAND.zebra });
-      doc.rect(L, doc.y, 2.5, rowH, { fill: STATUS_META[s.status].colour });
-      doc.text(s.label, cols[0], doc.y + 12.5, { size: 8.8, colour: BRAND.ink });
-      doc.text(`${fmtQty(s.onHand)} ${s.unit}`, cols[1], doc.y + 12.5,
-        { size: 8.8, colour: BRAND.ink, align: 'right' });
-      doc.text(s.unconfirmed ? 'not confirmed' : (s.perDay ? `${fmtQty(s.perDay)} ${s.unit}` : '-'),
-        cols[2], doc.y + 12.5, { size: 8.8, colour: BRAND.slate, align: 'right' });
-      const daysTxt = s.unconfirmed ? '-' : (s.daysLeft === null ? '-' : fmtDays(s.daysLeft));
-      const daysBold = s.status === STATUS.FAULT || s.status === STATUS.WATCH;
-      doc.text(daysTxt, cols[3], doc.y + 12.5, {
-        size: 8.8, bold: daysBold, align: 'right',
-        colour: daysBold ? STATUS_META[s.status].colour : BRAND.ink
+      doc.rect(L, doc.y + 3.5, 2.5, rowH - 7, { fill: STATUS_META[s.status].colour });
+      const mid = doc.y + 15.5;
+      doc.text(s.label, cols.label, mid, { size: 8.6, colour: BRAND.ink });
+      doc.text(`${fmtQty(s.onHand)} ${s.unit}`, cols.onSite, mid,
+        { size: 8.6, bold: true, colour: BRAND.ink, align: 'right' });
+      doc.text(s.unconfirmed ? 'n/a' : (s.avgPerDay ? `${fmtQty(s.avgPerDay)} ${s.unit}` : '-'),
+        cols.avg, mid, { size: 8.6, colour: BRAND.slate, align: 'right' });
+      const daysTxt = s.daysLeft === null ? '-' : fmtDays(s.daysLeft);
+      const strong = s.status === STATUS.FAULT || s.status === STATUS.WATCH;
+      doc.text(daysTxt, cols.days, mid, {
+        size: 8.6, bold: strong, align: 'right',
+        colour: strong ? STATUS_META[s.status].colour : BRAND.ink
       });
+      if (s.series && s.series.length >= 3) {
+        doc.barChart(cols.chart, doc.y + 4.5, chartW, rowH - 9, s.series,
+          { colour: BRAND.chart, baseline: BRAND.chartFaint,
+            avg: s.avgPerDay, avgColour: BRAND.gold });
+      } else {
+        doc.text('no history yet', cols.chart + chartW, mid,
+          { size: 6.8, colour: [172, 180, 188], align: 'right', italic: true });
+      }
       doc.y += rowH;
     });
     doc.hline(L, R, doc.y, BRAND.hairline);
-    doc.y += 16;
+    doc.y += 5;
+    const win = (evaluated.stock[0] && evaluated.stock[0].daysCovered) || 0;
+    doc.text(`Bars show daily use over the last ${plural(win || 0, 'day')}. Dotted line is the average.`,
+      L, doc.y + 8, { size: 6.8, colour: BRAND.slate, italic: true });
+    doc.y += 18;
   }
 
   /* ---- 6. detail sections ---- */
@@ -2085,10 +2360,11 @@ function buildPdf(state, evaluated, previous) {
 
   CHECKLIST.forEach(section => {
     doc.ensure(64);
-    doc.rect(L, doc.y, W, 22, { fill: BRAND.navy });
-    doc.text(`${section.number}.  ${section.owner.toUpperCase()}`, L + 10, doc.y + 15,
-      { size: 9.4, bold: true, colour: [255, 255, 255] });
-    doc.y += 22 + 10;
+    doc.roundRect(L, doc.y, W, 22, 4, { fill: BRAND.green });
+    doc.rect(L + 10, doc.y + 7, 2.4, 8, { fill: BRAND.gold });
+    doc.text(`${section.number}.  ${section.owner.toUpperCase()}`, L + 18, doc.y + 15,
+      { size: 9, bold: true, colour: [255, 255, 255], tracking: 0.8 });
+    doc.y += 22 + 11;
 
     section.groups.forEach(group => {
       const heading = `${group.number}  ${group.title}` + (group.note ? `  (${group.note})` : '');
@@ -2102,10 +2378,11 @@ function buildPdf(state, evaluated, previous) {
         : (normalItems.length ? itemHeight(doc, normalItems[0], evaluated.items[normalItems[0].id]) : 0);
       doc.ensure(18 + 4 + firstBlock);
 
-      doc.text(heading, L, doc.y + 9, { size: 9.2, bold: true, colour: BRAND.navy });
-      doc.y += 14;
-      doc.hline(L, R, doc.y, BRAND.navy, 0.9);
-      doc.y += 4;
+      doc.text(heading, L, doc.y + 9, { size: 9, bold: true, colour: BRAND.green });
+      doc.y += 13;
+      doc.hline(L, R, doc.y, BRAND.green, 0.8);
+      doc.rect(L, doc.y - 0.4, 24, 1.6, { fill: BRAND.gold });
+      doc.y += 5;
 
       // Compact stock rows: everything on one line, in a small table.
       if (compactItems.length) drawCompactStock(doc, compactItems, evaluated, L, R, W);
@@ -2122,7 +2399,7 @@ function buildPdf(state, evaluated, previous) {
         if (idx % 2 === 1) doc.rect(L, doc.y, W, rowH, { fill: BRAND.zebra });
 
         doc.text(item.label, L + 7, doc.y + 13, { size: 8.8, colour: BRAND.ink });
-        doc.pill(ev.badge, R - 6, doc.y + 4, STATUS_META[ev.status].colour);
+        doc.badge(ev.badge, STATUS_ICON[ev.status], R - 6, doc.y + 3.5, STATUS_META[ev.status].colour);
 
         // Skip the value when the badge beside it already says the same thing,
         // e.g. an OK / Fault pick.
@@ -2155,7 +2432,7 @@ function buildPdf(state, evaluated, previous) {
         }
         if (ev.note) {
           const h = doc.paragraph(`Note: ${ev.note}`, L + 16, doc.y, W - 32,
-            { size: 8, colour: BRAND.slate, leading: 10.5 });
+            { size: 8, colour: BRAND.slate, leading: 10.5, italic: true });
           doc.y += h + 2;
         }
       });
@@ -2242,18 +2519,20 @@ function sumHeight(W, sum) {
 function drawCompactStock(doc, items, evaluated, L, R, W) {
   const rowH = 18;
   const cols = {
-    label: L + 7,
-    last: L + W * 0.44,
-    added: L + W * 0.57,
-    now: L + W * 0.70,
-    used: L + W * 0.83
+    label: L + 8,
+    last: L + W * 0.40,
+    added: L + W * 0.52,
+    now: L + W * 0.64,
+    used: L + W * 0.755,
+    avg: L + W * 0.875
   };
 
-  doc.rect(L, doc.y, W, 15, { fill: [241, 245, 249] });
-  doc.text('TANK', cols.label, doc.y + 10.5, { size: 6.8, bold: true, colour: BRAND.slate });
-  [['LAST CHECK', cols.last], ['ADDED', cols.added], ['NOW', cols.now], ['USED', cols.used]]
-    .forEach(([t, x]) => {
-      doc.text(t, x, doc.y + 10.5, { size: 6.8, bold: true, colour: BRAND.slate, align: 'right' });
+  doc.roundRect(L, doc.y, W, 15, 3, { fill: [240, 246, 242] });
+  doc.text('TANK', cols.label, doc.y + 10.5, { size: 6.6, bold: true, colour: BRAND.slate, tracking: 0.6 });
+  [['LAST CHECK', cols.last], ['ADDED', cols.added], ['NOW', cols.now],
+   ['USED', cols.used], ['AVG / DAY', cols.avg]].forEach(([t, x]) => {
+      doc.text(t, x, doc.y + 10.5,
+        { size: 6.6, bold: true, colour: BRAND.slate, align: 'right', tracking: 0.6 });
     });
   doc.y += 15;
 
@@ -2270,7 +2549,10 @@ function drawCompactStock(doc, items, evaluated, L, R, W) {
     doc.text(sum.rows[1].value, cols.added, doc.y + 12.5, { ...base, align: 'right', colour: BRAND.slate });
     doc.text(sum.rows[2].value, cols.now, doc.y + 12.5, { ...base, align: 'right' });
     doc.text(sum.total.value, cols.used, doc.y + 12.5, { ...base, align: 'right', bold: true });
-    doc.pill(ev.badge, R - 6, doc.y + 3.5, STATUS_META[ev.status].colour);
+    const st = (evaluated.stock || []).find(x => x.id === item.id);
+    doc.text(st && st.avgPerDay ? `${fmtQty(st.avgPerDay)} ${item.unit}` : '-',
+      cols.avg, doc.y + 12.5, { ...base, align: 'right', colour: BRAND.slate });
+    doc.badge(ev.badge, STATUS_ICON[ev.status], R - 6, doc.y + 2.5, STATUS_META[ev.status].colour);
     doc.y += rowH;
 
     if (ev.showReason) {
@@ -2297,7 +2579,7 @@ function drawStockSum(doc, sum, L, R, W) {
 
   const x = L + 12;
   const w = W - 24;
-  doc.rect(x, doc.y, w, boxH, { fill: BRAND.sumBg, stroke: BRAND.sumEdge, lineWidth: 0.7 });
+  doc.roundRect(x, doc.y, w, boxH, 6, { fill: BRAND.sumBg, stroke: BRAND.sumEdge, lineWidth: 0.7 });
 
   const labelX = x + 12;
   const detailX = x + w * 0.52;
@@ -2448,6 +2730,8 @@ let state = blankState();
 let saveTimer = null;
 /* The most recent saved report before today's, used for chemical usage. */
 let previousReport = null;
+/* Submitted reports, newest last. Feeds the average usage figures. */
+let submittedReports = [];
 
 function blankState() {
   return {
@@ -2456,6 +2740,7 @@ function blankState() {
     reporter: DEFAULT_REPORTER,
     site: DEFAULT_SITE,
     reportPrefix: DEFAULT_PREFIX,
+    avgWindowDays: DEFAULT_AVG_WINDOW,
     logo: null,
     lastCheckDate: null,
     generalNote: '',
@@ -2471,6 +2756,7 @@ function carriedSettings() {
     reporter: state.reporter,
     site: state.site,
     reportPrefix: state.reportPrefix || DEFAULT_PREFIX,
+    avgWindowDays: state.avgWindowDays || DEFAULT_AVG_WINDOW,
     logo: state.logo,
     thresholds: mergeThresholds(state.thresholds)
   };
@@ -2842,7 +3128,7 @@ function dataUrlToBytes(dataUrl) {
 /* ---------------- refresh (pills, dots, summary, progress) ---------------- */
 
 function refresh() {
-  const ev = evaluate(state, previousReport);
+  const ev = evaluate(state, previousReport, submittedReports);
 
   Object.keys(ev.items).forEach(id => {
     const pill = document.querySelector(`[data-pill="${id}"]`);
@@ -2993,6 +3279,7 @@ async function startNewReport() {
 
   await store.put({ ...state, savedAt: Date.now() });
   previousReport = await findPreviousReport();
+  submittedReports = await loadSubmittedReports();
 
   hydrateFields();
   render();
@@ -3040,9 +3327,47 @@ async function deliverPdf(bytes, filename) {
   toast('PDF saved to your downloads');
 }
 
+/* Archives the submitted report. Photos are left out of the stored copy - they
+   have already gone out by WhatsApp or email, and keeping them would slowly
+   fill the phone. The copy on screen keeps its photos so it can be re-sent. */
 async function archiveCurrent() {
   const id = `report-${state.date}`;
-  await store.put({ ...state, id, savedAt: Date.now() });
+  const stripped = { ...state, id, savedAt: Date.now(), photos: {} };
+  stripped.values = {};
+  Object.entries(state.values).forEach(([k, v]) => {
+    stripped.values[k] = { ...v, photos: [] };
+  });
+  await store.put(stripped);
+  await pruneOldReports();
+  submittedReports = await loadSubmittedReports();
+}
+
+const KEEP_REPORT_DAYS = 365;
+
+async function pruneOldReports() {
+  try {
+    const all = await store.all();
+    const today = todayISO();
+    for (const r of all) {
+      if (r.id === DRAFT_ID || !r.date) continue;
+      const age = daysBetween(r.date, today);
+      if (age !== null && age > KEEP_REPORT_DAYS) await store.del(r.id);
+    }
+  } catch (err) {
+    console.error('could not prune old reports', err);
+  }
+}
+
+async function loadSubmittedReports() {
+  try {
+    const all = await store.all();
+    return all
+      .filter(r => r.id !== DRAFT_ID && r.date && r.values)
+      .sort((a, b) => (a.date < b.date ? -1 : 1));
+  } catch (err) {
+    console.error('could not load report history', err);
+    return [];
+  }
 }
 
 /* Fills any empty Yesterday box from the most recent saved report.
@@ -3090,7 +3415,7 @@ async function findPreviousReport() {
 /* ---------------- WhatsApp sheet ---------------- */
 
 function showWhatsApp() {
-  const ev = evaluate(state, previousReport);
+  const ev = evaluate(state, previousReport, submittedReports);
   const messages = buildWhatsApp(state, ev);
   el('#waBody').innerHTML = messages.map((m, i) => `
     <div class="wa-block">
@@ -3172,7 +3497,7 @@ async function renderHistory() {
   list.innerHTML = saved.map(r => `
     <div class="history-row">
       <span>${esc(prettyDate(r.date))}
-        <span class="muted">${Object.keys(r.photos || {}).length} photo(s)</span></span>
+        <span class="muted">${r.source === SAMPLE_TAG ? 'sample' : 'submitted'}</span></span>
       <span class="h-actions">
         <button type="button" class="tool-btn" data-load="${esc(r.id)}">Load</button>
         <button type="button" class="tool-btn" data-delete="${esc(r.id)}">Delete</button>
@@ -3185,6 +3510,7 @@ async function renderHistory() {
     state = { ...blankState(), ...rec, id: DRAFT_ID };
     state.thresholds = mergeThresholds(state.thresholds);
     previousReport = await findPreviousReport();
+    submittedReports = await loadSubmittedReports();
     hydrateFields();
     render();
     renderThresholds();
@@ -3197,6 +3523,110 @@ async function renderHistory() {
     renderHistory();
     toast('Deleted');
   }));
+}
+
+/* ---------------- sample history (temporary) ----------------
+   Fills 30 days of believable submitted reports so the usage chart can be
+   judged before there is any real history. Everything it creates is tagged,
+   so "Clear sample data" removes exactly those and nothing else.
+   ------------------------------------------------------------------ */
+
+const SAMPLE_TAG = 'sample';
+
+const SAMPLE_PROFILE = {
+  caustic:    { start: 2600, perDay: 420, spread: 160, ibcAt: [4, 11, 19, 26] },
+  coagulant:  { start: 2400, perDay: 300, spread: 90,  ibcAt: [6, 14, 23] },
+  flocculant: { start: 1500, perDay: 180, spread: 70,  ibcAt: [9, 21] },
+  sulphuric:  { start: 3000, perDay: 240, spread: 110, ibcAt: [7, 16, 25] },
+  boiler1_chem: { start: 900, perDay: 70, spread: 30, addAt: [5, 12, 20, 27], addLitres: 400 },
+  boiler2_chem: { start: 800, perDay: 55, spread: 25, addAt: [8, 18, 28], addLitres: 400 }
+};
+
+function sampleDateISO(daysAgo) {
+  const d = new Date();
+  d.setDate(d.getDate() - daysAgo);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+async function loadSampleData() {
+  const days = 30;
+  // Repeatable pseudo-random so the chart looks natural but not chaotic.
+  let seed = 20260929;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+
+  const level = {};
+  Object.keys(SAMPLE_PROFILE).forEach(k => {
+    const p = SAMPLE_PROFILE[k];
+    level[k] = ITEM_INDEX[k].hasBackup
+      ? { inUse: 900, backup: p.start - 900 }
+      : { inUse: p.start };
+  });
+
+  for (let i = days; i >= 1; i--) {
+    const date = sampleDateISO(i);
+    const lastCheckDate = sampleDateISO(i + 1);
+    const values = {};
+
+    Object.keys(SAMPLE_PROFILE).forEach(k => {
+      const item = ITEM_INDEX[k];
+      const p = SAMPLE_PROFILE[k];
+      const prev = { ...level[k] };
+      const used = Math.max(20, Math.round(p.perDay + (rnd() - 0.5) * 2 * p.spread));
+
+      let ibc = 0, added = 0;
+      if (item.topUp === 'ibc' && (p.ibcAt || []).includes(i)) ibc = 1;
+      if (item.topUp === 'litres' && (p.addAt || []).includes(i)) added = p.addLitres;
+      const topUp = ibc * IBC_LITRES + added;
+
+      let total = (prev.inUse || 0) + (prev.backup || 0) + topUp - used;
+      if (total < 120) total += IBC_LITRES * (item.topUp === 'ibc' ? 2 : 0) || 500;
+
+      const now = item.hasBackup
+        ? { inUse: Math.max(80, Math.min(1000, Math.round(total * 0.35))),
+            backup: 0 }
+        : { inUse: Math.max(40, Math.round(total)) };
+      if (item.hasBackup) now.backup = Math.max(0, Math.round(total - now.inUse));
+
+      const v = { prevInUse: String(prev.inUse), inUse: String(now.inUse), photos: [] };
+      if (item.hasBackup) {
+        v.prevBackup = String(prev.backup);
+        v.backup = String(now.backup);
+        if (ibc) v.ibc = String(ibc);
+      } else if (added) {
+        v.added = String(added);
+      }
+      values[k] = v;
+      level[k] = now;
+    });
+
+    await store.put({
+      id: `report-${date}`, date, lastCheckDate,
+      reporter: state.reporter, site: state.site,
+      reportPrefix: state.reportPrefix, thresholds: state.thresholds,
+      values, photos: {}, source: SAMPLE_TAG, savedAt: Date.now() - i * 86400000
+    });
+  }
+
+  submittedReports = await loadSubmittedReports();
+  previousReport = await findPreviousReport();
+  await seedYesterdayFromHistory();
+  hydrateFields();
+  render();
+  await renderHistory();
+  toast(`${days} days of sample data added`);
+}
+
+async function clearSampleData() {
+  const all = await store.all();
+  let n = 0;
+  for (const r of all) {
+    if (r.source === SAMPLE_TAG) { await store.del(r.id); n++; }
+  }
+  submittedReports = await loadSubmittedReports();
+  previousReport = await findPreviousReport();
+  await renderHistory();
+  refresh();
+  toast(n ? `${n} sample reports removed` : 'No sample data found');
 }
 
 /* ---------------- sheets + toast ---------------- */
@@ -3306,6 +3736,7 @@ function hydrateFields() {
   el('#fReporter').value = state.reporter || '';
   el('#fSite').value = state.site || '';
   el('#fPrefix').value = state.reportPrefix || DEFAULT_PREFIX;
+  el('#fAvgWindow').value = state.avgWindowDays || DEFAULT_AVG_WINDOW;
   el('#fGeneralNote').value = state.generalNote || '';
 }
 
@@ -3319,6 +3750,14 @@ function bindShell() {
   });
   el('#fReporter').addEventListener('input', e => { state.reporter = e.target.value; queueSave(); refresh(); });
   el('#fSite').addEventListener('input', e => { state.site = e.target.value; queueSave(); });
+  el('#fAvgWindow').addEventListener('input', e => {
+    const n = Math.round(Number(e.target.value));
+    state.avgWindowDays = isFinite(n) && n > 0 ? n : DEFAULT_AVG_WINDOW;
+    queueSave();
+    refresh();
+  });
+  el('#btnSampleData').addEventListener('click', loadSampleData);
+  el('#btnClearSample').addEventListener('click', clearSampleData);
   el('#fPrefix').addEventListener('input', e => {
     state.reportPrefix = e.target.value.trim() || DEFAULT_PREFIX;
     queueSave();
@@ -3410,6 +3849,7 @@ async function boot() {
 
   try {
     previousReport = await findPreviousReport();
+    submittedReports = await loadSubmittedReports();
   } catch (err) {
     console.error('could not load the previous report', err);
   }
