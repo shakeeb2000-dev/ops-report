@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1e3a5f">
-<meta name="build-id" content="080184d89b0c">
+<meta name="build-id" content="8e373aa5d112">
 <title>Daily Ops Report</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -446,6 +446,14 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
 .history-row:first-child { border-top: 0; }
 .history-row .h-actions { display: flex; gap: 6px; }
 
+.version-line {
+  margin: 2px 4px 0;
+  font-size: .72rem;
+  color: #9aa2ac;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
 .toast {
   position: fixed;
   left: 50%; bottom: 88px;
@@ -574,6 +582,8 @@ body.no-scroll { overflow: hidden; }
     <h2>Notes <span class="muted">(optional)</span></h2>
     <textarea id="fGeneralNote" rows="3" placeholder="Anything else your managers should know"></textarea>
   </section>
+
+  <p class="version-line">Version <span id="buildIdMain">dev</span></p>
 
   <div class="spacer"></div>
 </main>
@@ -3283,8 +3293,12 @@ function showBuildId() {
   const raw = meta ? meta.getAttribute('content') : '';
   // Still the literal placeholder when running straight from www/ in development.
   const label = (!raw || raw.indexOf('BUILD_ID') !== -1) ? 'development build' : raw;
-  const target = el('#buildId');
-  if (target) target.textContent = label;
+  // Shown in Settings and at the foot of the main screen, so which build is
+  // actually running is never a guess.
+  ['#buildId', '#buildIdMain'].forEach(sel => {
+    const target = el(sel);
+    if (target) target.textContent = label;
+  });
 }
 
 function hydrateFields() {
