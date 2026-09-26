@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1e3a5f">
-<meta name="build-id" content="a55063f344aa">
+<meta name="build-id" content="78322f5be21e">
 <title>Daily Ops Report</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -188,6 +188,39 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
 .pairgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
 .pairgrid.with-ibc { grid-template-columns: 1fr 1fr .72fr; }
 .pairgrid label { margin-bottom: 0; }
+
+/* yesterday / today tank levels */
+.stockblock { margin-top: 9px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.stockrow { display: flex; gap: 8px; align-items: flex-end; padding: 9px 10px; }
+.stockrow.yesterday { background: #f6f7f9; border-bottom: 1px dashed var(--line); }
+.stockrow.today { background: #fff; }
+.stockrow label { margin-bottom: 0; flex: 1 1 0; min-width: 0; font-size: .72rem; }
+.stockrow input { margin-top: 3px; padding: 9px 10px; min-height: 40px; }
+.stockrow.yesterday input { background: #fbfbfc; color: var(--slate); }
+.stocktag {
+  flex: 0 0 58px;
+  font-size: .64rem;
+  font-weight: 800;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: var(--slate);
+  padding-bottom: 13px;
+}
+.stockrow.today .stocktag { color: var(--navy); }
+
+/* company logo picker */
+.logo-row { display: flex; gap: 12px; align-items: center; margin-top: 8px; }
+.logo-preview {
+  width: 84px; height: 84px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+  flex: 0 0 84px;
+}
+.logo-preview img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.logo-actions { display: flex; flex-direction: column; gap: 8px; }
 
 /* several small readings on one line (pH 1/2/3, separator counts) */
 .multirow { display: flex; gap: 8px; margin-top: 8px; align-items: flex-end; flex-wrap: wrap; }
@@ -551,8 +584,20 @@ body.no-scroll { overflow: hidden; }
     <h2>Saved reports</h2>
     <div id="historyList" class="history"></div>
     <hr>
-    <h2>Site name</h2>
+    <h2>Company name</h2>
     <input type="text" id="fSite" placeholder="Shown in the PDF header">
+
+    <hr>
+    <h2>Company logo</h2>
+    <p class="muted small">Appears at the top of every PDF. Pick it once and it is remembered.</p>
+    <div class="logo-row">
+      <div class="logo-preview" id="logoPreview"><span class="muted small">No logo</span></div>
+      <div class="logo-actions">
+        <button type="button" id="btnLogoPick" class="tool-btn">Choose image</button>
+        <button type="button" id="btnLogoClear" class="tool-btn">Remove</button>
+      </div>
+    </div>
+    <input type="file" accept="image/*" id="logoInput" hidden>
 
     <hr>
     <h2>About</h2>
@@ -613,6 +658,7 @@ const STATUS_META = {
 const IBC_LITRES = 1000;
 
 const DEFAULT_REPORTER = 'ARSLAN';
+const DEFAULT_SITE = 'AUSTRALIAN TALLOW PRODUCERS';
 
 /* Default trigger levels. All editable in Settings. */
 const DEFAULT_THRESHOLDS = {
@@ -627,7 +673,32 @@ const DEFAULT_THRESHOLDS = {
   sampleLagDays:     { warn: 8, crit: 15 }
 };
 
+/* Takes whatever thresholds were saved previously and returns a complete set.
+
+   Reports saved by an older version are missing any limit added since, and a
+   missing limit used to crash the whole report. Every group and key from the
+   defaults is guaranteed to exist here, with the operator's own numbers kept
+   wherever they are still valid. */
+function mergeThresholds(saved) {
+  const out = JSON.parse(JSON.stringify(DEFAULT_THRESHOLDS));
+  if (!saved || typeof saved !== 'object') return out;
+  Object.keys(out).forEach(group => {
+    const savedGroup = saved[group];
+    if (!savedGroup || typeof savedGroup !== 'object') return;
+    Object.keys(out[group]).forEach(key => {
+      const v = Number(savedGroup[key]);
+      if (isFinite(v)) out[group][key] = v;
+    });
+  });
+  return out;
+}
+
 /* Reusable option sets ------------------------------------------------ */
+
+const DONE_OPTIONS = [
+  { value: 'done',    label: 'Done',     status: STATUS.OK },
+  { value: 'notdone', label: 'Not done', status: STATUS.TODO }
+];
 
 // Standard wastewater clarity descriptors, worst-to-best mapped onto status.
 const CLARITY_OPTIONS = [
@@ -673,12 +744,12 @@ const CHECKLIST = [
       {
         id: 'chemicals',
         title: 'Chemical Levels',
-        note: 'in use / backup / IBCs received',
+        note: 'yesterday carries over automatically',
         items: [
-          { id: 'caustic',    label: 'Caustic 46%',        type: 'pair', unit: 'L', ibc: true },
-          { id: 'coagulant',  label: 'Coagulant 720',      type: 'pair', unit: 'L', ibc: true },
-          { id: 'flocculant', label: 'Flocculant 7686',    type: 'pair', unit: 'L', ibc: true },
-          { id: 'sulphuric',  label: 'Sulphuric Acid 73%', type: 'pair', unit: 'L', ibc: true }
+          { id: 'caustic',    label: 'Caustic 46%',        type: 'stock', unit: 'L', hasBackup: true, topUp: 'ibc' },
+          { id: 'coagulant',  label: 'Coagulant 720',      type: 'stock', unit: 'L', hasBackup: true, topUp: 'ibc' },
+          { id: 'flocculant', label: 'Flocculant 7686',    type: 'stock', unit: 'L', hasBackup: true, topUp: 'ibc' },
+          { id: 'sulphuric',  label: 'Sulphuric Acid 73%', type: 'stock', unit: 'L', hasBackup: true, topUp: 'ibc' }
         ]
       },
       {
@@ -717,7 +788,7 @@ const CHECKLIST = [
         id: 'pits',
         title: 'Pit Pumps & Cleaning',
         items: [
-          { id: 'beef_pit_pump', label: 'Beef pit pump', type: 'status' },
+          { id: 'pit_pump', label: 'Pit Pump', type: 'status' },
           { id: 'lamb_pit', label: 'Lamb underpit', type: 'choice', options: CLEANLINESS_OPTIONS },
           { id: 'beef_pit', label: 'Beef underpit', type: 'choice', options: CLEANLINESS_OPTIONS }
         ]
@@ -738,11 +809,14 @@ const CHECKLIST = [
       {
         id: 'boilers',
         title: 'Boilers',
+        note: 'yesterday carries over automatically',
         items: [
-          { id: 'boiler1_chem', label: 'Boiler 1 chemical', type: 'number', unit: 'L', threshold: 'boilerChem', decimals: 0 },
-          { id: 'boiler2_chem', label: 'Boiler 2 chemical', type: 'number', unit: 'L', threshold: 'boilerChem', decimals: 0 },
-          { id: 'blowdown',     label: 'Blowdown',          type: 'status' },
-          { id: 'water_test',   label: 'Water testing',     type: 'status' }
+          { id: 'boiler1_chem', label: 'Boiler 1 chemical', type: 'stock', unit: 'L',
+            hasBackup: false, topUp: 'litres', threshold: 'boilerChem' },
+          { id: 'boiler2_chem', label: 'Boiler 2 chemical', type: 'stock', unit: 'L',
+            hasBackup: false, topUp: 'litres', threshold: 'boilerChem' },
+          { id: 'blowdown',   label: 'Blowdown',      type: 'choice', options: DONE_OPTIONS },
+          { id: 'water_test', label: 'Water testing', type: 'choice', options: DONE_OPTIONS }
         ]
       },
       {
@@ -830,32 +904,67 @@ function gradeMulti(item, values, thresholds) {
   return worstOf(grades);
 }
 
-/* Stock movement for a chemical, against the previous report.
+/* Stock movement for a chemical or boiler dose tank.
 
-   used = (what was on site yesterday + what arrived today) - what is here now
+   used = (what was here yesterday + what was added today) - what is here now
 
-   A negative result means stock went up without a delivery being logged,
+   Yesterday's figures are entered on the form and carried forward
+   automatically when a new report is started, so nothing has to be looked up.
+   A negative result means stock went up without a delivery being recorded,
    which is worth pointing out rather than hiding. */
-function chemicalUsage(todayVal, prevVal) {
-  if (!todayVal || !prevVal) return null;
-  const tIn = num(todayVal.inUse), tBack = num(todayVal.backup);
-  const pIn = num(prevVal.inUse), pBack = num(prevVal.backup);
-  if (tIn === null && tBack === null) return null;
-  if (pIn === null && pBack === null) return null;
+function stockUsage(item, v) {
+  if (!v) return null;
+  const pIn = num(v.prevInUse);
+  const pBack = item.hasBackup ? num(v.prevBackup) : null;
+  const tIn = num(v.inUse);
+  const tBack = item.hasBackup ? num(v.backup) : null;
 
-  const todayTotal = (tIn || 0) + (tBack || 0);
+  const hasPrev = pIn !== null || pBack !== null;
+  const hasToday = tIn !== null || tBack !== null;
+  if (!hasPrev || !hasToday) return null;
+
   const prevTotal = (pIn || 0) + (pBack || 0);
-  const ibcs = num(todayVal.ibc) || 0;
-  const received = ibcs * IBC_LITRES;
-  const used = prevTotal + received - todayTotal;
+  const todayTotal = (tIn || 0) + (tBack || 0);
 
-  return { used, received, ibcs, todayTotal, prevTotal };
+  const ibcs = item.topUp === 'ibc' ? (num(v.ibc) || 0) : 0;
+  const addedL = item.topUp === 'litres' ? (num(v.added) || 0) : 0;
+  const topUp = item.topUp === 'ibc' ? ibcs * IBC_LITRES : addedL;
+
+  return { used: prevTotal + topUp - todayTotal, topUp, ibcs, prevTotal, todayTotal };
+}
+
+/* Total litres on site right now, used for the level grading. */
+function stockOnHand(item, v) {
+  const tIn = num(v && v.inUse);
+  const tBack = item.hasBackup ? num(v && v.backup) : null;
+  if (tIn === null && tBack === null) return null;
+  return (tIn || 0) + (tBack || 0);
 }
 
 /* How many days of stock are left at today's consumption rate. */
 function daysOfStock(usage) {
   if (!usage || usage.used <= 0) return null;
   return usage.todayTotal / usage.used;
+}
+
+/* Copies today's readings into the yesterday slots and clears today's, ready
+   for the next report. Returns a fresh values object holding only that. */
+function carryStockForward(values) {
+  const out = {};
+  if (!values) return out;
+  Object.values(ITEM_INDEX).forEach(item => {
+    if (item.type !== 'stock') return;
+    const v = values[item.id];
+    if (!v) return;
+    const carried = {};
+    if (num(v.inUse) !== null) carried.prevInUse = String(num(v.inUse));
+    if (item.hasBackup && num(v.backup) !== null) carried.prevBackup = String(num(v.backup));
+    if (Object.keys(carried).length) {
+      carried.photos = [];
+      out[item.id] = carried;
+    }
+  });
+  return out;
 }
 
 const SEVERITY_ORDER = [STATUS.OK, STATUS.BLANK, STATUS.TODO, STATUS.WATCH, STATUS.FAULT];
@@ -1312,7 +1421,9 @@ function fmtDays(n) {
    ------------------------------------------------------------------ */
 
 function evaluate(state, previous) {
-  const thresholds = state.thresholds || DEFAULT_THRESHOLDS;
+  // Always work from a complete set, so a report saved by an older version
+  // cannot bring the whole calculation down with a missing limit.
+  const thresholds = mergeThresholds(state.thresholds);
   const prevValues = (previous && previous.values) || null;
   const result = {
     items: {}, counts: { ok: 0, watch: 0, fault: 0, todo: 0, blank: 0 },
@@ -1370,47 +1481,61 @@ function evaluate(state, previous) {
           }
           if (anyReading && item.threshold) reason = multiReason(item, readings, thresholds, status);
 
-        } else if (item.type === 'pair') {
-          const inUse = num(v.inUse), backup = num(v.backup);
-          const hasAny = inUse !== null || backup !== null;
-          const levelStatus = hasAny ? gradePair(v.inUse, v.backup, thresholds) : STATUS.BLANK;
+        } else if (item.type === 'stock') {
+          const inUse = num(v.inUse), backup = item.hasBackup ? num(v.backup) : null;
+          const onHand = stockOnHand(item, v);
+          const hasAny = onHand !== null;
 
-          const usage = item.ibc ? chemicalUsage(v, prevV) : null;
-          const left = daysOfStock(usage);
-          let stockStatus = STATUS.OK;
-          if (left !== null) {
-            const t = thresholds.daysOfStock;
-            if (left <= t.crit) stockStatus = STATUS.FAULT;
-            else if (left <= t.warn) stockStatus = STATUS.WATCH;
+          // Level grading: chemicals judge the two tanks separately, a single
+          // boiler dose tank is judged on its own threshold.
+          let levelStatus = STATUS.BLANK;
+          if (hasAny) {
+            levelStatus = item.hasBackup
+              ? gradePair(v.inUse, v.backup, thresholds)
+              : gradeNumber(v.inUse, item.threshold, thresholds);
           }
 
-          status = manual || (hasAny ? worstOf([levelStatus, stockStatus]) : STATUS.BLANK);
-          display = hasAny
-            ? `${fmtL(inUse)} ${item.unit} in use / ${fmtL(backup)} ${item.unit} backup`
-            : (manual ? 'Not measured' : '-');
+          const usage = stockUsage(item, v);
+          const left = daysOfStock(usage);
+          let runOutStatus = STATUS.OK;
+          if (left !== null) {
+            // Defensive: an older saved report may not carry this limit.
+            const t = thresholds.daysOfStock || DEFAULT_THRESHOLDS.daysOfStock;
+            if (left <= t.crit) runOutStatus = STATUS.FAULT;
+            else if (left <= t.warn) runOutStatus = STATUS.WATCH;
+          }
+
+          status = manual || (hasAny ? worstOf([levelStatus, runOutStatus]) : STATUS.BLANK);
+          if (hasAny) {
+            display = item.hasBackup
+              ? `${fmtL(inUse)} ${item.unit} in use / ${fmtL(backup)} ${item.unit} backup`
+              : `${fmtL(inUse)} ${item.unit}`;
+          } else {
+            display = manual ? 'Not measured' : '-';
+          }
 
           if (usage) {
-            if (usage.ibcs > 0) {
-              extra.push(`${usage.ibcs} IBC${usage.ibcs > 1 ? 's' : ''} received (+${fmtL(usage.received)} ${item.unit})`);
+            if (item.topUp === 'ibc' && usage.ibcs > 0) {
+              extra.push(`${usage.ibcs} IBC${usage.ibcs > 1 ? 's' : ''} received (+${fmtL(usage.topUp)} ${item.unit})`);
+            } else if (item.topUp === 'litres' && usage.topUp > 0) {
+              extra.push(`Added ${fmtL(usage.topUp)} ${item.unit}`);
             }
-            if (usage.used > 0) {
-              extra.push(`Used ${fmtL(usage.used)} ${item.unit} since ${shortDate(previous.date)}`);
-            } else if (usage.used < 0) {
-              extra.push(`Stock up ${fmtL(Math.abs(usage.used))} ${item.unit} - was a delivery missed?`);
-            } else {
-              extra.push(`No usage since ${shortDate(previous.date)}`);
-            }
-            if (left !== null) {
-              extra.push(`About ${fmtDays(left)} left at that rate`);
-            }
+            if (usage.used > 0) extra.push(`Used ${fmtL(usage.used)} ${item.unit} since yesterday`);
+            else if (usage.used < 0) extra.push(`Stock up ${fmtL(Math.abs(usage.used))} ${item.unit} - was a delivery missed?`);
+            else extra.push('No usage since yesterday');
+            if (left !== null) extra.push(`About ${fmtDays(left)} left at that rate`);
+          } else if (hasAny) {
+            extra.push('Enter yesterday\u2019s level to work out usage');
           }
 
           const bits = [];
           if (hasAny) {
-            const lvl = pairReason(v.inUse, v.backup, thresholds);
+            const lvl = item.hasBackup
+              ? pairReason(v.inUse, v.backup, thresholds)
+              : numberReason(item, inUse, thresholds, levelStatus);
             if (lvl) bits.push(lvl);
           }
-          if (stockStatus !== STATUS.OK && left !== null) {
+          if (runOutStatus !== STATUS.OK && left !== null) {
             bits.push(`about ${fmtDays(left)} of stock left`);
           }
           reason = bits.join(', ');
@@ -1533,12 +1658,30 @@ function buildPdf(state, evaluated, previous) {
   const R = PT.pageW - PT.margin;
   const W = doc.contentWidth;
 
-  /* ---- header band ---- */
-  doc.rect(0, 0, PT.pageW, 74, { fill: BRAND.navy });
-  doc.text('DAILY OPERATIONS REPORT', L, 34, { size: 16, bold: true, colour: [255, 255, 255] });
-  doc.text(state.site || 'Rendering Plant Operations', L, 51, { size: 9, colour: [176, 196, 222] });
-  doc.text(prettyDate(state.date), R, 38, { size: 11.5, bold: true, colour: [255, 255, 255], align: 'right' });
-  doc.y = 92;
+  /* ---- header band, with the company logo when one has been chosen ---- */
+  const bandH = 80;
+  doc.rect(0, 0, PT.pageW, bandH, { fill: BRAND.navy });
+
+  let textX = L;
+  if (state.logo && state.logo.bytes) {
+    const boxH = 46;
+    const scale = Math.min(boxH / state.logo.height, boxH / state.logo.width);
+    const lw = state.logo.width * scale;
+    const lh = state.logo.height * scale;
+    const pad = 4;
+    // White tile behind it so a logo drawn for white paper still reads on navy.
+    doc.rect(L, (bandH - lh) / 2 - pad, lw + pad * 2, lh + pad * 2, { fill: [255, 255, 255] });
+    const name = doc.addImage(state.logo.bytes, state.logo.width, state.logo.height);
+    doc.drawImage(name, L + pad, (bandH - lh) / 2, lw, lh);
+    textX = L + lw + pad * 2 + 14;
+  }
+
+  doc.text((state.site || DEFAULT_SITE).toUpperCase(), textX, 36,
+    { size: 14, bold: true, colour: [255, 255, 255] });
+  doc.text('Daily Operations Report', textX, 53, { size: 9.6, colour: [176, 196, 222] });
+  doc.text(prettyDate(state.date), R, 44,
+    { size: 11, bold: true, colour: [255, 255, 255], align: 'right' });
+  doc.y = bandH + 18;
 
   /* ---- meta strip ---- */
   const metaH = 26;
@@ -1546,7 +1689,6 @@ function buildPdf(state, evaluated, previous) {
   const metas = [
     ['Reported by', state.reporter || DEFAULT_REPORTER],
     ['Generated', new Date().toLocaleString('en-AU', { hour12: false })],
-    ['Compared with', evaluated.previousDate ? prettyDate(evaluated.previousDate) : 'no earlier report'],
     ['Photos', String(Object.keys(state.photos || {}).length)]
   ];
   let mx = L + 10;
@@ -1739,10 +1881,10 @@ function buildPdf(state, evaluated, previous) {
   return doc.build(footer);
 }
 
-/* Up/down marker against the last saved report. Chemicals show real usage
+/* Up/down marker against the last saved report. Stock items show real usage
    instead, so they are skipped here. */
 function trendFor(item, state, previous) {
-  if (!previous || !previous.values || item.type === 'pair') return '';
+  if (!previous || !previous.values || item.type === 'stock') return '';
   const now = state.values[item.id] || {};
   const before = previous.values[item.id] || {};
   if (item.type !== 'number') return '';
@@ -1877,11 +2019,22 @@ function blankState() {
     id: DRAFT_ID,
     date: todayISO(),
     reporter: DEFAULT_REPORTER,
-    site: '',
+    site: DEFAULT_SITE,
+    logo: null,
     generalNote: '',
     values: {},
     photos: {},
     thresholds: deepCopy(DEFAULT_THRESHOLDS)
+  };
+}
+
+/* Everything that should survive from one report to the next. */
+function carriedSettings() {
+  return {
+    reporter: state.reporter,
+    site: state.site,
+    logo: state.logo,
+    thresholds: mergeThresholds(state.thresholds)
   };
 }
 
@@ -1961,22 +2114,43 @@ function renderItem(item) {
         ${item.unit ? `<span class="unit">${esc(item.unit)}</span>` : ''}
       </div>`;
 
-  } else if (item.type === 'pair') {
+  } else if (item.type === 'stock') {
+    const u = esc(item.unit);
     control = `
-      <div class="pairgrid${item.ibc ? ' with-ibc' : ''}">
-        <label>In use (${esc(item.unit)})
-          <input type="number" inputmode="decimal" step="any" data-pair="${item.id}" data-side="inUse"
-                 value="${v.inUse ?? ''}">
-        </label>
-        <label>Backup (${esc(item.unit)})
-          <input type="number" inputmode="decimal" step="any" data-pair="${item.id}" data-side="backup"
-                 value="${v.backup ?? ''}">
-        </label>
-        ${item.ibc ? `
-        <label>New IBCs
-          <input type="number" inputmode="numeric" step="1" min="0" placeholder="0"
-                 data-pair="${item.id}" data-side="ibc" value="${v.ibc ?? ''}">
-        </label>` : ''}
+      <div class="stockblock">
+        <div class="stockrow yesterday">
+          <span class="stocktag">Yesterday</span>
+          <label>${item.hasBackup ? 'In use' : 'Level'}
+            <input type="number" inputmode="decimal" step="any"
+                   data-pair="${item.id}" data-side="prevInUse" value="${v.prevInUse ?? ''}">
+          </label>
+          ${item.hasBackup ? `
+          <label>Backup
+            <input type="number" inputmode="decimal" step="any"
+                   data-pair="${item.id}" data-side="prevBackup" value="${v.prevBackup ?? ''}">
+          </label>` : ''}
+        </div>
+        <div class="stockrow today">
+          <span class="stocktag">Today</span>
+          <label>${item.hasBackup ? 'In use' : 'Level'} (${u})
+            <input type="number" inputmode="decimal" step="any"
+                   data-pair="${item.id}" data-side="inUse" value="${v.inUse ?? ''}">
+          </label>
+          ${item.hasBackup ? `
+          <label>Backup (${u})
+            <input type="number" inputmode="decimal" step="any"
+                   data-pair="${item.id}" data-side="backup" value="${v.backup ?? ''}">
+          </label>` : ''}
+          ${item.topUp === 'ibc' ? `
+          <label>New IBCs
+            <input type="number" inputmode="numeric" step="1" min="0" placeholder="0"
+                   data-pair="${item.id}" data-side="ibc" value="${v.ibc ?? ''}">
+          </label>` : `
+          <label>Added (${u})
+            <input type="number" inputmode="decimal" step="any" placeholder="0"
+                   data-pair="${item.id}" data-side="added" value="${v.added ?? ''}">
+          </label>`}
+        </div>
       </div>
       <div class="usage" data-usage="${item.id}"></div>`;
 
@@ -1995,13 +2169,13 @@ function renderItem(item) {
       </div>`;
   }
 
-  // A choice item already carries its own grading, so the generic status
-  // buttons would only duplicate it.
+  // Choice items carry their own grading, and the sample-date rows only need
+  // a date, so neither shows the generic status buttons.
   const statuses = [
     [STATUS.OK, 'OK'], [STATUS.WATCH, 'Monitor'],
     [STATUS.FAULT, 'Fault'], [STATUS.TODO, 'Not done']
   ];
-  const statusRow = item.type === 'choice' ? '' : `
+  const statusRow = (item.type === 'choice' || item.type === 'date') ? '' : `
     <div class="statusrow">
       ${statuses.map(([s, label]) => `
         <button type="button" class="sbtn ${s}" data-status="${item.id}" data-value="${s}"
@@ -2159,9 +2333,10 @@ function removePhoto(itemId, pid) {
   refresh();
 }
 
-async function downscaleToJpeg(file) {
+async function downscaleToJpeg(file, maxEdge) {
   const bitmap = await loadBitmap(file);
-  const scale = Math.min(1, MAX_EDGE / Math.max(bitmap.width, bitmap.height));
+  const limit = maxEdge || MAX_EDGE;
+  const scale = Math.min(1, limit / Math.max(bitmap.width, bitmap.height));
   const w = Math.max(1, Math.round(bitmap.width * scale));
   const h = Math.max(1, Math.round(bitmap.height * scale));
 
@@ -2224,9 +2399,7 @@ function refresh() {
       const extra = ev.items[id].extra || [];
       usage.innerHTML = extra.length
         ? extra.map(e => `<span>${esc(e)}</span>`).join('')
-        : (previousReport
-            ? ''
-            : '<span class="faint">No earlier report yet, so usage cannot be worked out.</span>');
+        : '';
     }
 
     const thumbs = document.querySelector(`[data-thumbs="${id}"]`);
@@ -2308,6 +2481,9 @@ async function generatePdf() {
   });
 
   const forPdf = { ...state, photos: photosWithBytes };
+  if (state.logo && state.logo.dataUrl) {
+    forPdf.logo = { ...state.logo, bytes: dataUrlToBytes(state.logo.dataUrl) };
+  }
 
   let bytes;
   try {
@@ -2331,27 +2507,25 @@ async function startNewReport() {
   if (filled) {
     const ok = confirm(
       'Start a new report?\n\n' +
-      'This clears all the checks, readings and photos on screen.\n' +
+      "This clears the checks, readings and photos on screen. Today's tank " +
+      'levels are moved into the Yesterday boxes so usage still works.\n\n' +
       'Reports you have already saved are kept.'
     );
     if (!ok) return;
   }
 
-  const carried = {
-    reporter: state.reporter,
-    site: state.site,
-    thresholds: state.thresholds
-  };
-  state = { ...blankState(), ...carried, id: DRAFT_ID };
+  // Today's levels become tomorrow's starting point.
+  const carriedStock = carryStockForward(state.values);
+  state = { ...blankState(), ...carriedSettings(), values: carriedStock, id: DRAFT_ID };
 
   await store.put({ ...state, savedAt: Date.now() });
   previousReport = await findPreviousReport();
 
   hydrateFields();
   render();
+  renderThresholds();
   closeSheets();
-  window.scrollTo({ top: 0, behavior: 'smooth' });
-  toast('Fresh report ready');
+  toast('Fresh report ready - yesterday\u2019s levels carried over');
 }
 
 async function deliverPdf(bytes, filename) {
@@ -2398,8 +2572,38 @@ async function archiveCurrent() {
   await store.put({ ...state, id, savedAt: Date.now() });
 }
 
-/* The newest saved report from before today, which is what chemical usage
-   and the number trends are measured against. */
+/* Fills any empty Yesterday box from the most recent saved report.
+
+   This is what makes an already-saved report useful straight away, and it only
+   ever fills blanks, so anything typed by hand is left alone. */
+async function seedYesterdayFromHistory() {
+  try {
+    const all = await store.all();
+    const saved = all
+      .filter(r => r.id !== DRAFT_ID && r.values)
+      .sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
+    if (!saved.length) return;
+    const source = saved[0];
+
+    Object.values(ITEM_INDEX).forEach(item => {
+      if (item.type !== 'stock') return;
+      const from = source.values[item.id];
+      if (!from) return;
+      const target = valueOf(item.id);
+      if (target.prevInUse === undefined || target.prevInUse === '') {
+        if (num(from.inUse) !== null) target.prevInUse = String(num(from.inUse));
+      }
+      if (item.hasBackup && (target.prevBackup === undefined || target.prevBackup === '')) {
+        if (num(from.backup) !== null) target.prevBackup = String(num(from.backup));
+      }
+    });
+  } catch (err) {
+    console.error('could not seed yesterday figures', err);
+  }
+}
+
+/* The newest saved report from before today, used only for the number trends;
+   stock usage now comes from the Yesterday boxes on the form. */
 async function findPreviousReport() {
   const all = await store.all();
   const candidates = all
@@ -2515,7 +2719,7 @@ async function renderHistory() {
     const rec = await store.get(b.dataset.load);
     if (!rec) return;
     state = { ...blankState(), ...rec, id: DRAFT_ID };
-    if (!state.thresholds) state.thresholds = deepCopy(DEFAULT_THRESHOLDS);
+    state.thresholds = mergeThresholds(state.thresholds);
     previousReport = await findPreviousReport();
     hydrateFields();
     render();
@@ -2579,6 +2783,46 @@ function toast(msg) {
 }
 
 /* ---------------- wiring ---------------- */
+
+/* ---------------- company logo ---------------- */
+
+const LOGO_MAX_EDGE = 420;
+
+function renderLogo() {
+  const box = el('#logoPreview');
+  if (!box) return;
+  box.innerHTML = state.logo && state.logo.dataUrl
+    ? `<img src="${state.logo.dataUrl}" alt="Company logo">`
+    : '<span class="muted small">No logo</span>';
+}
+
+function bindLogo() {
+  el('#btnLogoPick').addEventListener('click', () => el('#logoInput').click());
+
+  el('#btnLogoClear').addEventListener('click', () => {
+    state.logo = null;
+    renderLogo();
+    queueSave();
+    toast('Logo removed');
+  });
+
+  el('#logoInput').addEventListener('change', async (e) => {
+    const file = (e.target.files || [])[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      // Flattened onto white and re-encoded as JPEG, which is what the PDF
+      // writer can embed. Transparent PNGs therefore stay readable.
+      state.logo = await downscaleToJpeg(file, LOGO_MAX_EDGE);
+      renderLogo();
+      queueSave();
+      toast('Logo saved - it will appear on the next PDF');
+    } catch (err) {
+      console.error(err);
+      toast('That image could not be read');
+    }
+  });
+}
 
 function showBuildId() {
   const meta = document.querySelector('meta[name="build-id"]');
@@ -2667,11 +2911,11 @@ async function boot() {
     if (draft) {
       state = { ...blankState(), ...draft, id: DRAFT_ID };
       if (!state.thresholds) state.thresholds = deepCopy(DEFAULT_THRESHOLDS);
-      // A draft left over from a previous day starts fresh but keeps
-      // the operator's name, site and trigger levels.
+      // A draft left over from a previous day starts fresh, keeping the
+      // settings and rolling the tank levels into the Yesterday boxes.
       if (draft.date !== todayISO() && !location.search.includes('keep')) {
-        const carried = { reporter: state.reporter, site: state.site, thresholds: state.thresholds };
-        state = { ...blankState(), ...carried, id: DRAFT_ID };
+        const carriedStock = carryStockForward(state.values);
+        state = { ...blankState(), ...carriedSettings(), values: carriedStock, id: DRAFT_ID };
       }
     }
   } catch (err) {
@@ -2679,6 +2923,10 @@ async function boot() {
   }
 
   if (!state.reporter) state.reporter = DEFAULT_REPORTER;
+  if (!state.site) state.site = DEFAULT_SITE;
+  // Repairs settings saved by an older version that lack newer limits.
+  state.thresholds = mergeThresholds(state.thresholds);
+  await seedYesterdayFromHistory();
 
   try {
     previousReport = await findPreviousReport();
@@ -2691,6 +2939,8 @@ async function boot() {
   bindShell();
   bindChecklist();   // delegated, attached once
   bindThresholds();  // delegated, attached once
+  bindLogo();
+  renderLogo();
   render();
   renderThresholds();
 
