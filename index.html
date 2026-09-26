@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1e3a5f">
-<meta name="build-id" content="78322f5be21e">
+<meta name="build-id" content="9470754c911b">
 <title>Daily Ops Report</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -228,18 +228,49 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
 .multirow.narrow label { flex: 0 1 84px; }
 .multirow .unit { font-size: .8rem; color: var(--slate); padding-bottom: 12px; }
 
-/* stock movement line under a chemical */
-.usage { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-.usage span {
-  background: #f0f6fc;
-  border: 1px solid #d5e3f0;
-  color: #2e5280;
-  border-radius: 6px;
-  padding: 4px 8px;
-  font-size: .74rem;
-  font-weight: 600;
+/* the stock sum, shown the same way it prints on the PDF */
+.usage { margin-top: 9px; }
+.sumbox {
+  background: #eef4fb;
+  border: 1px solid #b0c6dd;
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: #17365d;
 }
-.usage span.faint { background: #f6f7f9; border-color: var(--line); color: var(--slate); font-weight: 400; }
+.sumrow { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; padding: 3px 0; font-size: .84rem; }
+.sumrow em { font-style: normal; color: #5c7a9e; font-size: .78rem; }
+.sumrow strong { font-variant-numeric: tabular-nums; }
+.sumrow.total {
+  border-top: 1px solid #b0c6dd;
+  margin-top: 5px;
+  padding-top: 7px;
+  font-size: .95rem;
+  font-weight: 700;
+}
+.sumrow.total strong { font-size: 1.02rem; }
+.sumfoot { margin-top: 6px; font-size: .76rem; color: #4c6a8e; }
+
+/* "I don't know if any were delivered" */
+.stockrow.unsure { padding-top: 0; }
+.unsure-btn {
+  width: 100%;
+  border: 1.5px dashed var(--line);
+  background: #fff;
+  border-radius: 9px;
+  padding: 9px 10px;
+  font-size: .76rem;
+  font-weight: 600;
+  color: var(--slate);
+  font-family: inherit;
+  cursor: pointer;
+  min-height: 40px;
+}
+.unsure-btn[aria-pressed="true"] {
+  background: #fff8e6;
+  border-color: var(--watch);
+  border-style: solid;
+  color: #8a6100;
+}
 
 /* named options, e.g. clarity and cleanliness grades */
 .choicerow { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 9px; }
@@ -588,6 +619,11 @@ body.no-scroll { overflow: hidden; }
     <input type="text" id="fSite" placeholder="Shown in the PDF header">
 
     <hr>
+    <h2>Report number prefix</h2>
+    <p class="muted small">Used for the reference on each report, e.g. ATP-DOR-2026-09-28.</p>
+    <input type="text" id="fPrefix" placeholder="ATP-DOR">
+
+    <hr>
     <h2>Company logo</h2>
     <p class="muted small">Appears at the top of every PDF. Pick it once and it is remembered.</p>
     <div class="logo-row">
@@ -633,9 +669,10 @@ body.no-scroll { overflow: hidden; }
      status  - tap one of OK / WATCH / FAULT / NOT DONE
      choice  - tap one named option, each mapped to a status
      number  - single numeric reading, auto-graded
-     multi   - several small readings on one line, one status for the set
-     pair    - chemical stock: in use / backup, plus IBCs received
-     date    - "sampled up to" date, graded on how far behind it is
+     multi   - several small readings on one line; each reading can have
+               its own trigger levels
+     stock   - tank levels: last check / delivered since / now
+     date    - "sampled up to" date, recorded without grading
    ------------------------------------------------------------------ */
 
 const STATUS = {
@@ -654,30 +691,47 @@ const STATUS_META = {
   blank: { label: 'Not set',  short: '-',     colour: [160, 167, 175], wa: '\u2B1C' }
 };
 
-/* One IBC of any of the site chemicals holds this much. */
+/* Every IBC on site holds this much. */
 const IBC_LITRES = 1000;
 
-const DEFAULT_REPORTER = 'ARSLAN';
+const DEFAULT_REPORTER = 'HAFIZ SHAKEEB ARSLAN';
 const DEFAULT_SITE = 'AUSTRALIAN TALLOW PRODUCERS';
+const DEFAULT_PREFIX = 'ATP-DOR';
 
-/* Default trigger levels. All editable in Settings. */
+/* A chemical's usage tank being completely empty is always a fault, whatever
+   the backup situation, so it needs no adjustable trigger. */
+const EMPTY_TANK = 0;
+
+/* Adjustable trigger levels. Readings without an entry here are not graded
+   automatically and rely on the operator's own OK / Fault choice. */
 const DEFAULT_THRESHOLDS = {
-  ph:                { critLow: 6.0, warnLow: 6.5, warnHigh: 8.5, critHigh: 9.0 },
-  chemInUse:         { crit: 200,  warn: 500 },
-  chemBackup:        { crit: 100,  warn: 400 },
-  daysOfStock:       { crit: 3,    warn: 7 },
-  boilerChem:        { crit: 50,   warn: 100 },
-  saturator:         { critLow: 350, warnLow: 450, warnHigh: 700, critHigh: 800 },
-  flow:              { critLow: 5,  warnLow: 10,  warnHigh: 30, critHigh: 40 },
-  humidity:          { critLow: 30, warnLow: 40,  warnHigh: 75, critHigh: 85 },
-  sampleLagDays:     { warn: 8, crit: 15 }
+  ph1:         { critLow: 6.0, warnLow: 6.5, warnHigh: 8.5, critHigh: 9.0 },
+  ph2:         { critLow: 6.0, warnLow: 6.5, warnHigh: 8.5, critHigh: 9.0 },
+  ph3:         { critLow: 6.0, warnLow: 6.5, warnHigh: 8.5, critHigh: 9.0 },
+  chemBackup:  { crit: 0,   warn: 500 },
+  daysOfStock: { crit: 3,   warn: 7 },
+  boilerChem:  { crit: 50,  warn: 100 },
+  saturator:   { critLow: 350, warnLow: 450, warnHigh: 700, critHigh: 800 },
+  flow:        { critLow: 5, warnLow: 10, warnHigh: 30, critHigh: 40 }
+};
+
+/* Plain-language names for the Settings screen. */
+const TH_LABELS = {
+  ph1:         'pH reading 1',
+  ph2:         'pH reading 2',
+  ph3:         'pH reading 3',
+  chemBackup:  'Chemical backup stock (L)',
+  daysOfStock: 'Chemical - days of stock left',
+  boilerChem:  'Boiler chemical (L)',
+  saturator:   'Saturator pressure (kPa)',
+  flow:        'Flow rate (m3/h)'
 };
 
 /* Takes whatever thresholds were saved previously and returns a complete set.
 
    Reports saved by an older version are missing any limit added since, and a
-   missing limit used to crash the whole report. Every group and key from the
-   defaults is guaranteed to exist here, with the operator's own numbers kept
+   missing limit used to bring the whole report down. Every group and key from
+   the defaults is guaranteed to exist here, keeping the operator's own numbers
    wherever they are still valid. */
 function mergeThresholds(saved) {
   const out = JSON.parse(JSON.stringify(DEFAULT_THRESHOLDS));
@@ -695,30 +749,35 @@ function mergeThresholds(saved) {
 
 /* Reusable option sets ------------------------------------------------ */
 
+const OK_FAULT_OPTIONS = [
+  { value: 'ok',    label: 'OK',    status: STATUS.OK },
+  { value: 'fault', label: 'Fault', status: STATUS.FAULT }
+];
+
 const DONE_OPTIONS = [
   { value: 'done',    label: 'Done',     status: STATUS.OK },
   { value: 'notdone', label: 'Not done', status: STATUS.TODO }
 ];
 
-// Standard wastewater clarity descriptors, worst-to-best mapped onto status.
+// Standard wastewater clarity descriptors.
 const CLARITY_OPTIONS = [
-  { value: 'clear',   label: 'Clear',            status: STATUS.OK },
-  { value: 'slight',  label: 'Slightly turbid',  status: STATUS.WATCH },
-  { value: 'turbid',  label: 'Turbid',           status: STATUS.FAULT },
-  { value: 'offline', label: 'Out of service',   status: STATUS.FAULT }
+  { value: 'clear',   label: 'Clear',           status: STATUS.OK },
+  { value: 'slight',  label: 'Slightly turbid', status: STATUS.WATCH },
+  { value: 'turbid',  label: 'Turbid',          status: STATUS.FAULT },
+  { value: 'offline', label: 'Out of service',  status: STATUS.FAULT }
 ];
 
 // Housekeeping grades for the underpits.
 const CLEANLINESS_OPTIONS = [
-  { value: 'clean',   label: 'Clean',          status: STATUS.OK },
-  { value: 'minor',   label: 'Minor residue',  status: STATUS.OK },
-  { value: 'heavy',   label: 'Heavy residue',  status: STATUS.WATCH },
-  { value: 'notdone', label: 'Not cleaned',    status: STATUS.FAULT }
+  { value: 'clean',   label: 'Clean',         status: STATUS.OK },
+  { value: 'minor',   label: 'Minor residue', status: STATUS.OK },
+  { value: 'heavy',   label: 'Heavy residue', status: STATUS.WATCH },
+  { value: 'notdone', label: 'Not cleaned',   status: STATUS.FAULT }
 ];
 
 const PAPERWORK_OPTIONS = [
-  { value: 'updated', label: 'Updated',          status: STATUS.OK },
-  { value: 'prints',  label: 'Need new prints',  status: STATUS.WATCH }
+  { value: 'updated', label: 'Updated',         status: STATUS.OK },
+  { value: 'prints',  label: 'Need new prints', status: STATUS.WATCH }
 ];
 
 /* ------------------------------------------------------------------
@@ -727,24 +786,23 @@ const PAPERWORK_OPTIONS = [
 const CHECKLIST = [
   {
     id: 'leighton',
-    owner: 'Leighton',
-    title: 'Leighton Section',
+    owner: 'Leighton Black',
     groups: [
       {
         id: 'biofilters',
         title: 'Biofilters',
         items: [
-          { id: 'bio_running',  label: 'System running',  type: 'status' },
-          { id: 'bio_target',   label: 'Within target',   type: 'status' },
-          { id: 'bio_vacuum',   label: 'Vacuum gauge',    type: 'status' },
-          { id: 'bio1_rh',      label: 'Bio 1 humidity',  type: 'number', unit: '%RH', threshold: 'humidity', decimals: 0 },
-          { id: 'bio2_rh',      label: 'Bio 2 humidity',  type: 'number', unit: '%RH', threshold: 'humidity', decimals: 0 }
+          { id: 'bio_running', label: 'System running', type: 'status' },
+          { id: 'bio_target',  label: 'Within target',  type: 'status' },
+          { id: 'bio_vacuum',  label: 'Vacuum gauge',   type: 'status' },
+          { id: 'bio1_rh',     label: 'Bio 1 humidity', type: 'choice', options: OK_FAULT_OPTIONS },
+          { id: 'bio2_rh',     label: 'Bio 2 humidity', type: 'choice', options: OK_FAULT_OPTIONS }
         ]
       },
       {
         id: 'chemicals',
         title: 'Chemical Levels',
-        note: 'yesterday carries over automatically',
+        note: 'last check carries over automatically',
         items: [
           { id: 'caustic',    label: 'Caustic 46%',        type: 'stock', unit: 'L', hasBackup: true, topUp: 'ibc' },
           { id: 'coagulant',  label: 'Coagulant 720',      type: 'stock', unit: 'L', hasBackup: true, topUp: 'ibc' },
@@ -756,39 +814,39 @@ const CHECKLIST = [
         id: 'wwtp',
         title: 'Waste Water Treatment Plant',
         items: [
-          { id: 'daf_pumps',    label: 'DAF sludge pumps',     type: 'status' },
-          { id: 'daf_paddles',  label: 'DAF paddles',          type: 'status' },
-          { id: 'daf_clarity',  label: 'DAF effluent clarity', type: 'choice', options: CLARITY_OPTIONS },
-          { id: 'no_overflow',  label: 'No overflow - process',    type: 'status' },
-          { id: 'waste_tanks',  label: 'No overflow - waste tanks', type: 'status' },
-          { id: 'sat1',         label: 'Saturator DAF 1',      type: 'number', unit: 'kPa', threshold: 'saturator', decimals: 0 },
-          { id: 'sat2',         label: 'Saturator DAF 2',      type: 'number', unit: 'kPa', threshold: 'saturator', decimals: 0 },
+          { id: 'daf_pumps',   label: 'DAF sludge pumps',     type: 'status' },
+          { id: 'daf_paddles', label: 'DAF paddles',          type: 'status' },
+          { id: 'daf_clarity', label: 'DAF effluent clarity', type: 'choice', options: CLARITY_OPTIONS },
+          { id: 'no_overflow', label: 'No overflow - process',     type: 'status' },
+          { id: 'waste_tanks', label: 'No overflow - waste tanks', type: 'status' },
+          { id: 'sat1', label: 'Saturator DAF 1', type: 'number', unit: 'kPa', threshold: 'saturator', decimals: 0 },
+          { id: 'sat2', label: 'Saturator DAF 2', type: 'number', unit: 'kPa', threshold: 'saturator', decimals: 0 },
           {
+            // Each reading comes off a different point, so each has its own limits.
             id: 'ph', label: 'pH readings', type: 'multi',
-            threshold: 'ph', decimals: 1, display: 'slash', inputWidth: 'narrow',
+            decimals: 1, display: 'slash', inputWidth: 'narrow',
             fields: [
-              { key: 'a', label: '1' },
-              { key: 'b', label: '2' },
-              { key: 'c', label: '3' }
+              { key: 'a', label: '1', threshold: 'ph1' },
+              { key: 'b', label: '2', threshold: 'ph2' },
+              { key: 'c', label: '3', threshold: 'ph3' }
             ]
           },
-          { id: 'tank1_mixer',  label: 'Tank 1 mixer',              type: 'status' },
-          { id: 'floc_mixer',   label: 'Flocculant mixer adjusted', type: 'status' },
-          { id: 'flow_rate',    label: 'Flow rate', type: 'number', unit: 'm3/h', threshold: 'flow', decimals: 1 }
+          { id: 'tank1_mixer', label: 'Tank 1 mixer',              type: 'status' },
+          { id: 'floc_mixer',  label: 'Flocculant mixer adjusted', type: 'status' },
+          { id: 'flow_rate',   label: 'Flow rate', type: 'number', unit: 'm3/h', threshold: 'flow', decimals: 1 }
         ]
       }
     ]
   },
   {
     id: 'hafiz',
-    owner: 'Hafiz',
-    title: 'Hafiz Section',
+    owner: 'Hafiz Sarosh',
     groups: [
       {
         id: 'pits',
         title: 'Pit Pumps & Cleaning',
         items: [
-          { id: 'pit_pump', label: 'Pit Pump', type: 'status' },
+          { id: 'pit_pump', label: 'Pit Pump',      type: 'status' },
           { id: 'lamb_pit', label: 'Lamb underpit', type: 'choice', options: CLEANLINESS_OPTIONS },
           { id: 'beef_pit', label: 'Beef underpit', type: 'choice', options: CLEANLINESS_OPTIONS }
         ]
@@ -809,7 +867,7 @@ const CHECKLIST = [
       {
         id: 'boilers',
         title: 'Boilers',
-        note: 'yesterday carries over automatically',
+        note: 'last check carries over automatically',
         items: [
           { id: 'boiler1_chem', label: 'Boiler 1 chemical', type: 'stock', unit: 'L',
             hasBackup: false, topUp: 'litres', threshold: 'boilerChem' },
@@ -841,21 +899,39 @@ const CHECKLIST = [
   }
 ];
 
+/* Section and group numbering, e.g. 1, then 1.1, 1.2 ... */
+CHECKLIST.forEach((section, si) => {
+  section.number = String(si + 1);
+  section.title = section.owner;
+  section.groups.forEach((group, gi) => {
+    group.number = `${si + 1}.${gi + 1}`;
+  });
+});
+
 /* Flat lookup so the rest of the app can resolve an item by id. */
 const ITEM_INDEX = (() => {
   const map = {};
   CHECKLIST.forEach(section => {
     section.groups.forEach(group => {
       group.items.forEach(item => {
-        map[item.id] = { ...item, sectionId: section.id, owner: section.owner, groupTitle: group.title };
+        map[item.id] = {
+          ...item,
+          sectionId: section.id, owner: section.owner,
+          groupTitle: group.title, groupNumber: group.number
+        };
       });
     });
   });
   return map;
 })();
 
+/* The four chemicals, for the stock summary table. */
+function chemicalItems() {
+  return Object.values(ITEM_INDEX).filter(i => i.type === 'stock' && i.topUp === 'ibc');
+}
+
 /* ------------------------------------------------------------------
-   Grading helpers
+   Numbers
    ------------------------------------------------------------------ */
 
 function num(v) {
@@ -863,6 +939,22 @@ function num(v) {
   const n = Number(v);
   return isFinite(n) ? n : null;
 }
+
+/* 2900 -> "2,900" */
+function fmtQty(n, decimals) {
+  if (n === null || n === undefined) return '-';
+  const v = Number(n);
+  if (!isFinite(v)) return '-';
+  const dp = decimals !== undefined ? decimals : (Number.isInteger(v) ? 0 : 1);
+  const fixed = Math.abs(v).toFixed(dp);
+  const [whole, frac] = fixed.split('.');
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return (v < 0 ? '-' : '') + grouped + (frac ? '.' + frac : '');
+}
+
+/* ------------------------------------------------------------------
+   Grading
+   ------------------------------------------------------------------ */
 
 function gradeNumber(value, thresholdKey, thresholds) {
   const n = num(value);
@@ -894,46 +986,90 @@ function choiceLabel(item, value) {
   return opt ? opt.label : '';
 }
 
+/* Each field may name its own threshold; the worst one wins for the row. */
 function gradeMulti(item, values, thresholds) {
-  const readings = (item.fields || []).map(f => num(values && values[f.key]));
-  if (readings.every(r => r === null)) return STATUS.BLANK;
-  if (!item.threshold) return STATUS.OK;
-  const grades = readings
-    .filter(r => r !== null)
-    .map(r => gradeNumber(r, item.threshold, thresholds));
-  return worstOf(grades);
+  const grades = [];
+  let any = false;
+  (item.fields || []).forEach(f => {
+    const n = num(values && values[f.key]);
+    if (n === null) return;
+    any = true;
+    const key = f.threshold || item.threshold;
+    if (key) grades.push(gradeNumber(n, key, thresholds));
+  });
+  if (!any) return STATUS.BLANK;
+  return grades.length ? worstOf(grades) : STATUS.OK;
 }
 
-/* Stock movement for a chemical or boiler dose tank.
+/* Chemical tanks: an empty usage tank is always a fault, and the backup
+   stock is graded on its own trigger levels. */
+function gradeChemical(v, thresholds) {
+  const inUse = num(v.inUse);
+  const backup = num(v.backup);
+  const grades = [];
+  if (inUse !== null && inUse <= EMPTY_TANK) grades.push(STATUS.FAULT);
+  if (backup !== null) grades.push(gradeNumber(backup, 'chemBackup', thresholds));
+  return grades.length ? worstOf(grades) : STATUS.BLANK;
+}
 
-   used = (what was here yesterday + what was added today) - what is here now
+const SEVERITY_ORDER = [STATUS.OK, STATUS.BLANK, STATUS.TODO, STATUS.WATCH, STATUS.FAULT];
 
-   Yesterday's figures are entered on the form and carried forward
-   automatically when a new report is started, so nothing has to be looked up.
-   A negative result means stock went up without a delivery being recorded,
-   which is worth pointing out rather than hiding. */
-function stockUsage(item, v) {
+function worstOf(list) {
+  let worst = STATUS.OK;
+  list.forEach(s => {
+    if (SEVERITY_ORDER.indexOf(s) > SEVERITY_ORDER.indexOf(worst)) worst = s;
+  });
+  return worst;
+}
+
+function needsAction(status) {
+  return status === STATUS.FAULT || status === STATUS.WATCH || status === STATUS.TODO;
+}
+
+/* ------------------------------------------------------------------
+   Stock movement
+   ------------------------------------------------------------------
+   A delivered IBC is placed beside the backup stock straight away, so it is
+   already inside the backup figure read at the next check:
+
+     used = last check total + delivered since - total now
+
+   Refilling the usage tank from a backup IBC moves stock between the two
+   boxes without changing the total, so it needs no recording at all.
+   ------------------------------------------------------------------ */
+
+function stockUsage(item, v, gapDays) {
   if (!v) return null;
   const pIn = num(v.prevInUse);
   const pBack = item.hasBackup ? num(v.prevBackup) : null;
   const tIn = num(v.inUse);
   const tBack = item.hasBackup ? num(v.backup) : null;
 
-  const hasPrev = pIn !== null || pBack !== null;
-  const hasToday = tIn !== null || tBack !== null;
-  if (!hasPrev || !hasToday) return null;
+  if (pIn === null && pBack === null) return null;
+  if (tIn === null && tBack === null) return null;
 
   const prevTotal = (pIn || 0) + (pBack || 0);
   const todayTotal = (tIn || 0) + (tBack || 0);
 
   const ibcs = item.topUp === 'ibc' ? (num(v.ibc) || 0) : 0;
-  const addedL = item.topUp === 'litres' ? (num(v.added) || 0) : 0;
-  const topUp = item.topUp === 'ibc' ? ibcs * IBC_LITRES : addedL;
+  const topUp = item.topUp === 'ibc' ? ibcs * IBC_LITRES : (num(v.added) || 0);
 
-  return { used: prevTotal + topUp - todayTotal, topUp, ibcs, prevTotal, todayTotal };
+  const days = gapDays && gapDays > 0 ? gapDays : 1;
+  const used = prevTotal + topUp - todayTotal;
+
+  // Stock cannot rise on its own, so an unexplained rise means a delivery
+  // was not recorded. Whole IBCs only, so the shortfall can be named.
+  const rise = todayTotal - (prevTotal + topUp);
+  const missingIbcs = rise > 0 ? Math.ceil(rise / IBC_LITRES) : 0;
+
+  return {
+    used, topUp, ibcs, prevTotal, todayTotal, days,
+    perDay: used > 0 ? used / days : 0,
+    missingIbcs,
+    unconfirmed: !!v.unknownDelivery
+  };
 }
 
-/* Total litres on site right now, used for the level grading. */
 function stockOnHand(item, v) {
   const tIn = num(v && v.inUse);
   const tBack = item.hasBackup ? num(v && v.backup) : null;
@@ -941,14 +1077,14 @@ function stockOnHand(item, v) {
   return (tIn || 0) + (tBack || 0);
 }
 
-/* How many days of stock are left at today's consumption rate. */
+/* Days of stock left, using the daily rate from the last gap. */
 function daysOfStock(usage) {
-  if (!usage || usage.used <= 0) return null;
-  return usage.todayTotal / usage.used;
+  if (!usage || usage.unconfirmed || usage.perDay <= 0) return null;
+  return usage.todayTotal / usage.perDay;
 }
 
-/* Copies today's readings into the yesterday slots and clears today's, ready
-   for the next report. Returns a fresh values object holding only that. */
+/* Copies the current readings into the "last check" boxes and clears the
+   current ones, ready for the next report. */
 function carryStockForward(values) {
   const out = {};
   if (!values) return out;
@@ -967,25 +1103,13 @@ function carryStockForward(values) {
   return out;
 }
 
-const SEVERITY_ORDER = [STATUS.OK, STATUS.BLANK, STATUS.TODO, STATUS.WATCH, STATUS.FAULT];
-
-function worstOf(list) {
-  let worst = STATUS.OK;
-  list.forEach(s => {
-    if (SEVERITY_ORDER.indexOf(s) > SEVERITY_ORDER.indexOf(worst)) worst = s;
-  });
-  return worst;
-}
-
-function needsAction(status) {
-  return status === STATUS.FAULT || status === STATUS.WATCH || status === STATUS.TODO;
-}
-
-function gradePair(inUse, backup, thresholds) {
-  return worstOf([
-    gradeNumber(inUse, 'chemInUse', thresholds),
-    gradeNumber(backup, 'chemBackup', thresholds)
-  ]);
+function daysBetween(fromISO, toISO) {
+  if (!fromISO || !toISO) return null;
+  const a = new Date(fromISO + 'T00:00:00');
+  const b = new Date(toISO + 'T00:00:00');
+  if (isNaN(a.getTime()) || isNaN(b.getTime())) return null;
+  const d = Math.round((b - a) / 86400000);
+  return d > 0 ? d : null;
 }
 
 function daysBehind(dateStr, reportDate) {
@@ -994,15 +1118,6 @@ function daysBehind(dateStr, reportDate) {
   const now = new Date(reportDate + 'T00:00:00');
   if (isNaN(then.getTime()) || isNaN(now.getTime())) return null;
   return Math.round((now - then) / 86400000);
-}
-
-function gradeDate(dateStr, reportDate, thresholds) {
-  const lag = daysBehind(dateStr, reportDate);
-  if (lag === null) return STATUS.BLANK;
-  const t = thresholds.sampleLagDays;
-  if (lag >= t.crit) return STATUS.FAULT;
-  if (lag >= t.warn) return STATUS.WATCH;
-  return STATUS.OK;
 }
 
 /* ===== pdf.js ===== */
@@ -1382,7 +1497,9 @@ const BRAND = {
   todo:     [110, 118, 129],
   amberBg:  [255, 248, 230],
   redBg:    [253, 242, 242],
-  infoBg:   [240, 246, 252]
+  sumBg:    [238, 244, 251],
+  sumEdge:  [176, 198, 221],
+  sumInk:   [23, 54, 93]
 };
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -1402,9 +1519,8 @@ function shortDate(iso) {
   return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
-function fmtL(n) {
-  if (n === null || n === undefined) return '-';
-  return Number.isInteger(n) ? String(n) : Number(n).toFixed(1);
+function reportNumber(state) {
+  return `${state.reportPrefix || DEFAULT_PREFIX}-${state.date || ''}`;
 }
 
 /* "less than a day" / "1 day" / "2.8 days" / "14 days" */
@@ -1416,18 +1532,23 @@ function fmtDays(n) {
   return `${Number.isInteger(rounded) ? rounded : rounded.toFixed(1)} days`;
 }
 
+function plural(n, word) {
+  return `${n} ${word}${n === 1 ? '' : 's'}`;
+}
+
 /* ------------------------------------------------------------------
    Evaluation
    ------------------------------------------------------------------ */
 
 function evaluate(state, previous) {
-  // Always work from a complete set, so a report saved by an older version
-  // cannot bring the whole calculation down with a missing limit.
+  // Always work from a complete set of thresholds, so a report saved by an
+  // older version cannot bring the calculation down with a missing limit.
   const thresholds = mergeThresholds(state.thresholds);
-  const prevValues = (previous && previous.values) || null;
+  const gapDays = daysBetween(state.lastCheckDate, state.date);
+
   const result = {
     items: {}, counts: { ok: 0, watch: 0, fault: 0, todo: 0, blank: 0 },
-    actions: {}, previousDate: previous ? previous.date : null
+    actions: {}, gapDays, lastCheckDate: state.lastCheckDate || null, stock: []
   };
 
   CHECKLIST.forEach(section => {
@@ -1435,16 +1556,13 @@ function evaluate(state, previous) {
     section.groups.forEach(group => {
       group.items.forEach(item => {
         const v = (state.values && state.values[item.id]) || {};
-        const prevV = prevValues ? prevValues[item.id] : null;
-
-        // A tapped status always wins over the automatic grade, so a broken
-        // gauge can be reported as a fault with no reading entered.
         const manual = v.status && v.status !== STATUS.BLANK ? v.status : null;
 
         let status = STATUS.BLANK;
         let display = '-';
         let reason = '';
         const extra = [];
+        let sum = null;
 
         if (item.type === 'status') {
           status = manual || STATUS.BLANK;
@@ -1462,94 +1580,94 @@ function evaluate(state, previous) {
           if (n === null) {
             display = manual ? 'No reading' : '-';
           } else {
-            display = n.toFixed(item.decimals || 0) + (item.unit ? ' ' + item.unit : '');
-            reason = numberReason(item, n, thresholds, status);
+            display = fmtQty(n, item.decimals) + (item.unit ? ' ' + item.unit : '');
+            reason = numberReason(item, n, item.threshold, thresholds, status);
           }
 
         } else if (item.type === 'multi') {
           const readings = item.fields.map(f => num(v[f.key]));
-          const anyReading = readings.some(r => r !== null);
+          const any = readings.some(r => r !== null);
           status = manual || gradeMulti(item, v, thresholds);
-          if (!anyReading) {
+          if (!any) {
             display = manual ? 'Not recorded' : '-';
           } else if (item.display === 'labelled') {
             display = item.fields
-              .map((f, i) => `${f.label} ${readings[i] === null ? '-' : readings[i]}`)
+              .map((f, i) => `${f.label} ${readings[i] === null ? '-' : fmtQty(readings[i], item.decimals)}`)
               .join(', ');
           } else {
-            display = readings.map(r => r === null ? '-' : r.toFixed(item.decimals || 0)).join(' / ');
+            display = readings
+              .map(r => r === null ? '-' : fmtQty(r, item.decimals)).join(' / ');
           }
-          if (anyReading && item.threshold) reason = multiReason(item, readings, thresholds, status);
+          if (any) reason = multiReason(item, readings, thresholds, status);
 
         } else if (item.type === 'stock') {
-          const inUse = num(v.inUse), backup = item.hasBackup ? num(v.backup) : null;
+          const inUse = num(v.inUse);
+          const backup = item.hasBackup ? num(v.backup) : null;
           const onHand = stockOnHand(item, v);
           const hasAny = onHand !== null;
 
-          // Level grading: chemicals judge the two tanks separately, a single
-          // boiler dose tank is judged on its own threshold.
-          let levelStatus = STATUS.BLANK;
-          if (hasAny) {
-            levelStatus = item.hasBackup
-              ? gradePair(v.inUse, v.backup, thresholds)
+          const levelStatus = !hasAny ? STATUS.BLANK
+            : item.hasBackup
+              ? gradeChemical(v, thresholds)
               : gradeNumber(v.inUse, item.threshold, thresholds);
-          }
 
-          const usage = stockUsage(item, v);
+          const usage = stockUsage(item, v, gapDays);
           const left = daysOfStock(usage);
+
           let runOutStatus = STATUS.OK;
           if (left !== null) {
-            // Defensive: an older saved report may not carry this limit.
             const t = thresholds.daysOfStock || DEFAULT_THRESHOLDS.daysOfStock;
             if (left <= t.crit) runOutStatus = STATUS.FAULT;
             else if (left <= t.warn) runOutStatus = STATUS.WATCH;
           }
 
           status = manual || (hasAny ? worstOf([levelStatus, runOutStatus]) : STATUS.BLANK);
-          if (hasAny) {
-            display = item.hasBackup
-              ? `${fmtL(inUse)} ${item.unit} in use / ${fmtL(backup)} ${item.unit} backup`
-              : `${fmtL(inUse)} ${item.unit}`;
-          } else {
-            display = manual ? 'Not measured' : '-';
-          }
+          display = hasAny
+            ? (item.hasBackup
+                ? `${fmtQty(inUse)} ${item.unit} in use / ${fmtQty(backup)} ${item.unit} backup`
+                : `${fmtQty(inUse)} ${item.unit}`)
+            : (manual ? 'Not measured' : '-');
 
-          if (usage) {
-            if (item.topUp === 'ibc' && usage.ibcs > 0) {
-              extra.push(`${usage.ibcs} IBC${usage.ibcs > 1 ? 's' : ''} received (+${fmtL(usage.topUp)} ${item.unit})`);
-            } else if (item.topUp === 'litres' && usage.topUp > 0) {
-              extra.push(`Added ${fmtL(usage.topUp)} ${item.unit}`);
-            }
-            if (usage.used > 0) extra.push(`Used ${fmtL(usage.used)} ${item.unit} since yesterday`);
-            else if (usage.used < 0) extra.push(`Stock up ${fmtL(Math.abs(usage.used))} ${item.unit} - was a delivery missed?`);
-            else extra.push('No usage since yesterday');
-            if (left !== null) extra.push(`About ${fmtDays(left)} left at that rate`);
-          } else if (hasAny) {
-            extra.push('Enter yesterday\u2019s level to work out usage');
-          }
+          if (usage) sum = buildStockSum(item, v, usage, left, state);
 
           const bits = [];
           if (hasAny) {
-            const lvl = item.hasBackup
-              ? pairReason(v.inUse, v.backup, thresholds)
-              : numberReason(item, inUse, thresholds, levelStatus);
-            if (lvl) bits.push(lvl);
+            if (item.hasBackup) {
+              const lvl = chemicalReason(v, thresholds);
+              if (lvl) bits.push(lvl);
+            } else {
+              const lvl = numberReason(item, inUse, item.threshold, thresholds, levelStatus);
+              if (lvl) bits.push(lvl);
+            }
+          }
+          if (usage && usage.unconfirmed) bits.push('usage not confirmed');
+          if (usage && usage.missingIbcs > 0) {
+            bits.push(`stock rose unexpectedly - at least ${plural(usage.missingIbcs, 'IBC')} not recorded`);
           }
           if (runOutStatus !== STATUS.OK && left !== null) {
             bits.push(`about ${fmtDays(left)} of stock left`);
           }
           reason = bits.join(', ');
 
+          if (item.topUp === 'ibc') {
+            result.stock.push({
+              label: item.label, unit: item.unit, onHand,
+              perDay: usage && !usage.unconfirmed ? usage.perDay : null,
+              daysLeft: left, unconfirmed: !!(usage && usage.unconfirmed),
+              status
+            });
+          }
+
         } else if (item.type === 'date') {
+          // Recorded for the record only - no automatic grading. A date that
+          // cannot be read counts as nothing recorded.
           const iso = v.date;
-          status = manual || (iso ? gradeDate(iso, state.date, thresholds) : STATUS.BLANK);
-          if (iso) {
+          const valid = !!iso && !isNaN(new Date(iso + 'T00:00:00').getTime());
+          status = manual || (valid ? STATUS.OK : STATUS.BLANK);
+          if (valid) {
             const lag = daysBehind(iso, state.date);
             display = `sampled to ${shortDate(iso)}`;
-            if (lag !== null && lag > 1) {
-              display += ` (${lag} days behind)`;
-              reason = `${lag} days behind`;
-            }
+            if (lag !== null && lag > 1) display += ` (${lag} days ago)`;
           } else {
             display = manual ? 'No date recorded' : '-';
           }
@@ -1563,12 +1681,12 @@ function evaluate(state, previous) {
 
         result.counts[status] = (result.counts[status] || 0) + 1;
         const photos = (v.photos || []).filter(id => state.photos && state.photos[id]);
-        result.items[item.id] = { status, display, reason, extra, note: v.note || '', photos };
+        result.items[item.id] = { status, display, reason, extra, sum, note: v.note || '', photos };
 
         if (needsAction(status)) {
           result.actions[section.id].push({
-            label: item.label, group: group.title, status, display,
-            reason: reason || STATUS_META[status].label.toLowerCase(),
+            label: item.label, group: group.title, groupNumber: group.number,
+            status, display, reason: reason || STATUS_META[status].label.toLowerCase(),
             note: v.note || ''
           });
         }
@@ -1580,52 +1698,149 @@ function evaluate(state, previous) {
     result.actions[k].sort((a, b) =>
       SEVERITY_ORDER.indexOf(b.status) - SEVERITY_ORDER.indexOf(a.status));
   });
+
+  // Worst first: fewest days of stock, unconfirmed last.
+  result.stock.sort((a, b) => {
+    if (a.daysLeft === null && b.daysLeft === null) return 0;
+    if (a.daysLeft === null) return 1;
+    if (b.daysLeft === null) return -1;
+    return a.daysLeft - b.daysLeft;
+  });
+
+  result.verdict = buildVerdict(result);
   return result;
 }
 
-function numberReason(item, n, thresholds, status) {
+/* The lines of the stock sum, ready to print as a block. */
+function buildStockSum(item, v, usage, left, state) {
+  const u = item.unit;
+  const lastLabel = state.lastCheckDate
+    ? `Last check (${shortDate(state.lastCheckDate)})`
+    : 'Last check';
+
+  const rows = [];
+  rows.push({
+    label: lastLabel,
+    detail: item.hasBackup
+      ? `${fmtQty(num(v.prevInUse) || 0)} + ${fmtQty(num(v.prevBackup) || 0)}`
+      : '',
+    value: `${fmtQty(usage.prevTotal)} ${u}`
+  });
+
+  if (usage.unconfirmed) {
+    rows.push({ label: 'Delivered since', detail: 'not known', value: '?' });
+  } else if (item.topUp === 'ibc') {
+    rows.push({
+      label: 'Delivered since',
+      detail: usage.ibcs > 0 ? plural(usage.ibcs, 'IBC') : 'none',
+      value: `+${fmtQty(usage.topUp)} ${u}`
+    });
+  } else {
+    rows.push({
+      label: 'Added since',
+      detail: '',
+      value: `+${fmtQty(usage.topUp)} ${u}`
+    });
+  }
+
+  rows.push({
+    label: 'On site now',
+    detail: item.hasBackup
+      ? `${fmtQty(num(v.inUse) || 0)} + ${fmtQty(num(v.backup) || 0)}`
+      : '',
+    value: `${fmtQty(usage.todayTotal)} ${u}`
+  });
+
+  const period = usage.days > 1 ? ` over ${plural(usage.days, 'day')}` : '';
+  let total, footer = '';
+
+  if (usage.unconfirmed) {
+    total = { label: 'Usage not confirmed', value: '-' };
+    footer = 'Deliveries during this period are unknown, so usage cannot be worked out.';
+  } else if (usage.missingIbcs > 0) {
+    total = { label: 'Usage not confirmed', value: '-' };
+    footer = `Stock is higher than it should be - at least ${plural(usage.missingIbcs, 'IBC')} arrived without being recorded.`;
+  } else {
+    total = { label: `Used${period}`, value: `${fmtQty(usage.used)} ${u}` };
+    if (usage.days > 1 && usage.used > 0) {
+      footer = `That is ${fmtQty(usage.perDay)} ${u} per day.`;
+    }
+    if (left !== null) {
+      footer += `${footer ? ' ' : ''}About ${fmtDays(left)} left at that rate.`;
+    }
+  }
+  return { rows, total, footer };
+}
+
+function buildVerdict(result) {
+  const all = [].concat(...Object.values(result.actions));
+  const faults = all.filter(a => a.status === STATUS.FAULT);
+  const others = all.filter(a => a.status !== STATUS.FAULT);
+  if (!all.length) {
+    return { tone: 'ok', text: 'All checks clear - nothing needs action today.' };
+  }
+  // Name the most serious few, keeping their proper labels.
+  const headline = faults.length ? faults : others;
+  const named = headline.slice(0, 3).map(a => a.label);
+  const faultCount = faults.length;
+
+  let text = faultCount
+    ? `${plural(faultCount, 'fault')} to deal with`
+    : `${plural(all.length, 'item')} to watch`;
+  if (named.length) text += `: ${named.join(', ')}`;
+  const remaining = all.length - named.length;
+  if (remaining > 0) text += `, plus ${remaining} more needing attention`;
+  return { tone: faultCount ? 'fault' : 'watch', text: text + '.' };
+}
+
+function numberReason(item, n, thresholdKey, thresholds, status) {
   if (!needsAction(status)) return '';
-  const t = thresholds[item.threshold];
+  const t = thresholds[thresholdKey];
   const d = item.decimals || 0;
-  const show = (x) => Number(x).toFixed(d);
   const unit = item.unit ? ' ' + item.unit : '';
   if (!t) return 'out of range';
   if (t.critLow !== undefined) {
-    if (n <= t.critLow) return `${show(n)}${unit} - at or below the ${show(t.critLow)} limit`;
-    if (n >= t.critHigh) return `${show(n)}${unit} - at or above the ${show(t.critHigh)} limit`;
-    if (n <= t.warnLow) return `${show(n)}${unit} - drifting low`;
-    if (n >= t.warnHigh) return `${show(n)}${unit} - drifting high`;
+    if (n <= t.critLow) return `${fmtQty(n, d)}${unit} - at or below the ${fmtQty(t.critLow, d)} limit`;
+    if (n >= t.critHigh) return `${fmtQty(n, d)}${unit} - at or above the ${fmtQty(t.critHigh, d)} limit`;
+    if (n <= t.warnLow) return `${fmtQty(n, d)}${unit} - drifting low`;
+    if (n >= t.warnHigh) return `${fmtQty(n, d)}${unit} - drifting high`;
   } else if (t.crit !== undefined) {
-    if (n <= t.crit) return `only ${show(n)}${unit} left`;
-    if (n <= t.warn) return `running low at ${show(n)}${unit}`;
+    if (n <= t.crit) return `only ${fmtQty(n, d)}${unit} left`;
+    if (n <= t.warn) return `running low at ${fmtQty(n, d)}${unit}`;
   }
   return 'out of range';
 }
 
-/* Names the specific readings in a multi-field row that are out of range,
-   separating the ones over the hard limit from the ones merely drifting. */
+/* Names the readings in a multi-field row that are out of range, using each
+   field's own limits. */
 function multiReason(item, readings, thresholds, status) {
   if (!needsAction(status)) return '';
   const d = item.decimals || 0;
-  const t = thresholds[item.threshold] || {};
   const faults = [], warns = [];
-
   readings.forEach((r, i) => {
     if (r === null) return;
-    const g = gradeNumber(r, item.threshold, thresholds);
-    const tag = `reading ${item.fields[i].label} (${r.toFixed(d)})`;
-    if (g === STATUS.FAULT) faults.push(tag);
-    else if (g === STATUS.WATCH) warns.push(tag);
+    const key = item.fields[i].threshold || item.threshold;
+    if (!key) return;
+    const g = gradeNumber(r, key, thresholds);
+    const tag = `reading ${item.fields[i].label} (${fmtQty(r, d)})`;
+    if (g === STATUS.FAULT) faults.push({ tag, key });
+    else if (g === STATUS.WATCH) warns.push({ tag, key });
   });
 
   const phrases = [];
   if (faults.length) {
-    const low = t.critLow !== undefined ? ` the ${Number(t.critLow).toFixed(d)}-${Number(t.critHigh).toFixed(d)} limit` : ' the limit';
-    phrases.push(`${listOf(faults)} outside${low}`);
+    // Limits can differ per reading, so only quote one when they all share it.
+    const keys = new Set(faults.map(f => f.key));
+    let limit = ' the limit';
+    if (keys.size === 1) {
+      const t = thresholds[faults[0].key];
+      if (t && t.critLow !== undefined) {
+        limit = ` the ${fmtQty(t.critLow, d)}-${fmtQty(t.critHigh, d)} limit`;
+      }
+    }
+    phrases.push(`${listOf(faults.map(f => f.tag))} outside${limit}`);
   }
-  if (warns.length) {
-    phrases.push(`${listOf(warns)} drifting`);
-  }
+  if (warns.length) phrases.push(`${listOf(warns.map(w => w.tag))} drifting`);
   return phrases.length ? phrases.join('; ') : 'out of range';
 }
 
@@ -1634,16 +1849,14 @@ function listOf(arr) {
   return arr.slice(0, -1).join(', ') + ' and ' + arr[arr.length - 1];
 }
 
-function pairReason(inUse, backup, thresholds) {
+function chemicalReason(v, thresholds) {
   const bits = [];
-  const b = num(backup), u = num(inUse);
-  if (b !== null) {
-    if (b <= thresholds.chemBackup.crit) bits.push(`backup down to ${b} L`);
-    else if (b <= thresholds.chemBackup.warn) bits.push(`backup low (${b} L)`);
-  }
-  if (u !== null) {
-    if (u <= thresholds.chemInUse.crit) bits.push(`only ${u} L in use`);
-    else if (u <= thresholds.chemInUse.warn) bits.push(`in-use tank low (${u} L)`);
+  const inUse = num(v.inUse), backup = num(v.backup);
+  if (inUse !== null && inUse <= EMPTY_TANK) bits.push('usage tank empty');
+  if (backup !== null) {
+    const t = thresholds.chemBackup;
+    if (backup <= t.crit) bits.push('no backup stock');
+    else if (backup <= t.warn) bits.push(`backup low (${fmtQty(backup)} L)`);
   }
   return bits.join(', ');
 }
@@ -1658,8 +1871,8 @@ function buildPdf(state, evaluated, previous) {
   const R = PT.pageW - PT.margin;
   const W = doc.contentWidth;
 
-  /* ---- header band, with the company logo when one has been chosen ---- */
-  const bandH = 80;
+  /* ---- 1. header band (first page only) ---- */
+  const bandH = 84;
   doc.rect(0, 0, PT.pageW, bandH, { fill: BRAND.navy });
 
   let textX = L;
@@ -1669,38 +1882,35 @@ function buildPdf(state, evaluated, previous) {
     const lw = state.logo.width * scale;
     const lh = state.logo.height * scale;
     const pad = 4;
-    // White tile behind it so a logo drawn for white paper still reads on navy.
     doc.rect(L, (bandH - lh) / 2 - pad, lw + pad * 2, lh + pad * 2, { fill: [255, 255, 255] });
     const name = doc.addImage(state.logo.bytes, state.logo.width, state.logo.height);
     doc.drawImage(name, L + pad, (bandH - lh) / 2, lw, lh);
     textX = L + lw + pad * 2 + 14;
   }
 
-  doc.text((state.site || DEFAULT_SITE).toUpperCase(), textX, 36,
+  doc.text((state.site || DEFAULT_SITE).toUpperCase(), textX, 34,
     { size: 14, bold: true, colour: [255, 255, 255] });
-  doc.text('Daily Operations Report', textX, 53, { size: 9.6, colour: [176, 196, 222] });
-  doc.text(prettyDate(state.date), R, 44,
+  doc.text('Daily Operations Report', textX, 51, { size: 9.6, colour: [176, 196, 222] });
+  doc.text(reportNumber(state), textX, 65, { size: 7.8, colour: [140, 168, 200] });
+  doc.text(prettyDate(state.date), R, 40,
     { size: 11, bold: true, colour: [255, 255, 255], align: 'right' });
-  doc.y = bandH + 18;
+  doc.text(state.reporter || DEFAULT_REPORTER, R, 55,
+    { size: 8, colour: [176, 196, 222], align: 'right' });
+  doc.y = bandH + 16;
 
-  /* ---- meta strip ---- */
-  const metaH = 26;
-  doc.rect(L, doc.y, W, metaH, { fill: [248, 250, 252], stroke: BRAND.hairline });
-  const metas = [
-    ['Reported by', state.reporter || DEFAULT_REPORTER],
-    ['Generated', new Date().toLocaleString('en-AU', { hour12: false })],
-    ['Photos', String(Object.keys(state.photos || {}).length)]
-  ];
-  let mx = L + 10;
-  const mw = W / metas.length;
-  metas.forEach(([k, v]) => {
-    doc.text(k.toUpperCase(), mx, doc.y + 11, { size: 6.4, bold: true, colour: BRAND.slate });
-    doc.text(v, mx, doc.y + 21, { size: 8.2, colour: BRAND.ink });
-    mx += mw;
+  /* ---- 2. one-line verdict ---- */
+  const v = evaluated.verdict;
+  const vColour = v.tone === 'fault' ? BRAND.fault : v.tone === 'watch' ? BRAND.watch : BRAND.ok;
+  const vLines = wrapText(v.text, 10, true, W - 26);
+  const vH = 12 + vLines.length * 13;
+  doc.rect(L, doc.y, W, vH, { fill: [251, 252, 253], stroke: BRAND.hairline });
+  doc.rect(L, doc.y, 4, vH, { fill: vColour });
+  vLines.forEach((line, i) => {
+    doc.text(line, L + 14, doc.y + 15 + i * 13, { size: 10, bold: true, colour: vColour });
   });
-  doc.y += metaH + 14;
+  doc.y += vH + 12;
 
-  /* ---- summary counters ---- */
+  /* ---- 3. counters ---- */
   const cards = [
     ['OK', evaluated.counts.ok || 0, BRAND.ok],
     ['MONITOR', evaluated.counts.watch || 0, BRAND.watch],
@@ -1711,14 +1921,14 @@ function buildPdf(state, evaluated, previous) {
   const cw = (W - gap * (cards.length - 1)) / cards.length;
   cards.forEach(([label, count, colour], i) => {
     const x = L + i * (cw + gap);
-    doc.rect(x, doc.y, cw, 42, { fill: [252, 253, 254], stroke: BRAND.hairline });
-    doc.rect(x, doc.y, 3, 42, { fill: colour });
-    doc.text(String(count), x + 11, doc.y + 24, { size: 17, bold: true, colour });
-    doc.text(label, x + 11, doc.y + 35, { size: 6.6, bold: true, colour: BRAND.slate });
+    doc.rect(x, doc.y, cw, 40, { fill: [252, 253, 254], stroke: BRAND.hairline });
+    doc.rect(x, doc.y, 3, 40, { fill: colour });
+    doc.text(String(count), x + 11, doc.y + 23, { size: 16, bold: true, colour });
+    doc.text(label, x + 11, doc.y + 34, { size: 6.6, bold: true, colour: BRAND.slate });
   });
-  doc.y += 42 + 18;
+  doc.y += 40 + 16;
 
-  /* ---- action required ---- */
+  /* ---- 4. action required ---- */
   CHECKLIST.forEach(section => {
     const actions = evaluated.actions[section.id];
     if (!actions.length) return;
@@ -1731,8 +1941,9 @@ function buildPdf(state, evaluated, previous) {
     });
 
     let bodyH = 0;
-    lines.forEach(l => { bodyH += wrapText(l.text, 8.8, false, W - 46).length * 12; });
-    const boxH = 26 + bodyH + 8;
+    const wrapped = lines.map(l => wrapText(l.text, 9, false, W - 46));
+    wrapped.forEach(w => { bodyH += w.length * 12.5; });
+    const boxH = 27 + bodyH + 8;
     doc.ensure(boxH + 10);
 
     const bg = faults.length ? BRAND.redBg : BRAND.amberBg;
@@ -1742,30 +1953,68 @@ function buildPdf(state, evaluated, previous) {
     doc.text(`ACTION REQUIRED \u00B7 ${section.owner.toUpperCase()}`, L + 14, doc.y + 17,
       { size: 9, bold: true, colour: edge });
 
-    let ay = doc.y + 30;
-    lines.forEach(l => {
+    let ay = doc.y + 31;
+    lines.forEach((l, i) => {
       doc.rect(L + 16, ay - 5.5, 5, 5, { fill: STATUS_META[l.status].colour });
-      wrapText(l.text, 8.8, false, W - 46).forEach((w, i) => {
-        doc.text(w, L + 27, ay + i * 12, { size: 8.8, colour: BRAND.ink });
+      wrapped[i].forEach((w, j) => {
+        doc.text(w, L + 27, ay + j * 12.5, { size: 9, colour: BRAND.ink });
       });
-      ay += wrapText(l.text, 8.8, false, W - 46).length * 12;
+      ay += wrapped[i].length * 12.5;
     });
     doc.y += boxH + 12;
   });
 
-  /* ---- detail sections ---- */
+  /* ---- 5. chemical stock at a glance ---- */
+  if (evaluated.stock.length) {
+    const rowH = 18;
+    const needed = 22 + 16 + evaluated.stock.length * rowH + 10;
+    doc.ensure(needed);
+
+    doc.text('CHEMICAL STOCK AT A GLANCE', L, doc.y + 10,
+      { size: 9, bold: true, colour: BRAND.navy });
+    doc.y += 16;
+
+    const cols = [L + 7, L + W * 0.46, L + W * 0.68, R - 7];
+    doc.rect(L, doc.y, W, 16, { fill: [241, 245, 249] });
+    doc.text('CHEMICAL', cols[0], doc.y + 11, { size: 7, bold: true, colour: BRAND.slate });
+    doc.text('ON SITE', cols[1], doc.y + 11, { size: 7, bold: true, colour: BRAND.slate, align: 'right' });
+    doc.text('USED / DAY', cols[2], doc.y + 11, { size: 7, bold: true, colour: BRAND.slate, align: 'right' });
+    doc.text('DAYS LEFT', cols[3], doc.y + 11, { size: 7, bold: true, colour: BRAND.slate, align: 'right' });
+    doc.y += 16;
+
+    evaluated.stock.forEach((s, i) => {
+      if (i % 2 === 1) doc.rect(L, doc.y, W, rowH, { fill: BRAND.zebra });
+      doc.rect(L, doc.y, 2.5, rowH, { fill: STATUS_META[s.status].colour });
+      doc.text(s.label, cols[0], doc.y + 12.5, { size: 8.8, colour: BRAND.ink });
+      doc.text(`${fmtQty(s.onHand)} ${s.unit}`, cols[1], doc.y + 12.5,
+        { size: 8.8, colour: BRAND.ink, align: 'right' });
+      doc.text(s.unconfirmed ? 'not confirmed' : (s.perDay ? `${fmtQty(s.perDay)} ${s.unit}` : '-'),
+        cols[2], doc.y + 12.5, { size: 8.8, colour: BRAND.slate, align: 'right' });
+      const daysTxt = s.unconfirmed ? '-' : (s.daysLeft === null ? '-' : fmtDays(s.daysLeft));
+      const daysBold = s.status === STATUS.FAULT || s.status === STATUS.WATCH;
+      doc.text(daysTxt, cols[3], doc.y + 12.5, {
+        size: 8.8, bold: daysBold, align: 'right',
+        colour: daysBold ? STATUS_META[s.status].colour : BRAND.ink
+      });
+      doc.y += rowH;
+    });
+    doc.hline(L, R, doc.y, BRAND.hairline);
+    doc.y += 16;
+  }
+
+  /* ---- 6. detail sections ---- */
   const photoOrder = [];
 
   CHECKLIST.forEach(section => {
     doc.ensure(64);
     doc.rect(L, doc.y, W, 22, { fill: BRAND.navy });
-    doc.text(section.title.toUpperCase(), L + 10, doc.y + 15,
+    doc.text(`${section.number}.  ${section.owner.toUpperCase()}`, L + 10, doc.y + 15,
       { size: 9.4, bold: true, colour: [255, 255, 255] });
     doc.y += 22 + 10;
 
     section.groups.forEach(group => {
       doc.ensure(46);
-      const heading = group.note ? `${group.title}  (${group.note})` : group.title;
+      const heading = `${group.number}  ${group.title}` + (group.note ? `  (${group.note})` : '');
       doc.text(heading, L, doc.y + 9, { size: 9.2, bold: true, colour: BRAND.navy });
       doc.y += 14;
       doc.hline(L, R, doc.y, BRAND.navy, 0.9);
@@ -1775,7 +2024,8 @@ function buildPdf(state, evaluated, previous) {
         const ev = evaluated.items[item.id];
         const rowH = 19;
         if (doc.ensure(rowH + 4)) {
-          doc.text(`${heading} (continued)`, L, doc.y + 9, { size: 8.4, bold: true, colour: BRAND.slate });
+          doc.text(`${heading} (continued)`, L, doc.y + 9,
+            { size: 8.4, bold: true, colour: BRAND.slate });
           doc.y += 16;
         }
         if (idx % 2 === 1) doc.rect(L, doc.y, W, rowH, { fill: BRAND.zebra });
@@ -1783,25 +2033,13 @@ function buildPdf(state, evaluated, previous) {
         doc.text(item.label, L + 7, doc.y + 13, { size: 8.8, colour: BRAND.ink });
         doc.pill(STATUS_META[ev.status].short, R - 6, doc.y + 4, STATUS_META[ev.status].colour);
 
-        const parts = [];
-        if (item.type !== 'status') parts.push(ev.display);
-        const trend = trendFor(item, state, previous);
-        if (trend) parts.push(trend);
-        if (parts.length) {
-          doc.text(parts.join('   '), R - 74, doc.y + 13,
+        if (item.type !== 'status') {
+          doc.text(ev.display, R - 74, doc.y + 13,
             { size: 8.6, colour: BRAND.slate, align: 'right' });
         }
         doc.y += rowH;
 
-        // Stock movement, shown as a tinted strip under the chemical row.
-        if (ev.extra && ev.extra.length) {
-          const txt = ev.extra.join('   \u00B7   ');
-          const h = 14;
-          doc.ensure(h);
-          doc.rect(L + 12, doc.y, W - 24, h, { fill: BRAND.infoBg });
-          doc.text(txt, L + 20, doc.y + 10, { size: 7.6, colour: [46, 82, 128] });
-          doc.y += h + 2;
-        }
+        if (ev.sum) drawStockSum(doc, ev.sum, L, R, W);
 
         if (ev.photos.length) {
           ev.photos.forEach(pid => {
@@ -1810,12 +2048,12 @@ function buildPdf(state, evaluated, previous) {
           const refs = ev.photos.map((_, i) =>
             `Photo ${photoOrder.length - ev.photos.length + i + 1}`).join(', ');
           doc.ensure(13);
-          doc.text(`see ${refs}`, L + 16, doc.y + 9, { size: 7.6, colour: [90, 120, 170] });
+          doc.text(`see ${refs}`, L + 16, doc.y + 9, { size: 7.8, colour: [90, 120, 170] });
           doc.y += 12;
         }
         if (ev.note) {
           const h = doc.paragraph(`Note: ${ev.note}`, L + 16, doc.y, W - 32,
-            { size: 7.8, colour: BRAND.slate, leading: 10 });
+            { size: 8, colour: BRAND.slate, leading: 10.5 });
           doc.y += h + 2;
         }
       });
@@ -1824,16 +2062,16 @@ function buildPdf(state, evaluated, previous) {
     });
   });
 
-  /* ---- free-text notes ---- */
+  /* ---- 7. notes ---- */
   if (state.generalNote && state.generalNote.trim()) {
     doc.ensure(50);
     doc.text('NOTES', L, doc.y + 10, { size: 9, bold: true, colour: BRAND.navy });
     doc.y += 16;
-    const h = doc.paragraph(state.generalNote.trim(), L, doc.y, W, { size: 8.6, colour: BRAND.ink });
+    const h = doc.paragraph(state.generalNote.trim(), L, doc.y, W, { size: 8.8, colour: BRAND.ink });
     doc.y += h + 10;
   }
 
-  /* ---- photo appendix ---- */
+  /* ---- 8. photo appendix ---- */
   if (photoOrder.length) {
     doc.newPage();
     doc.rect(L, doc.y, W, 22, { fill: BRAND.navy });
@@ -1876,24 +2114,48 @@ function buildPdf(state, evaluated, previous) {
     });
   }
 
-  const footer = `Daily Operations Report \u00B7 ${prettyDate(state.date)}` +
-                 (state.reporter ? ` \u00B7 ${state.reporter}` : '');
+  const footer = `${state.site || DEFAULT_SITE} \u00B7 ${reportNumber(state)} \u00B7 ${prettyDate(state.date)}`;
   return doc.build(footer);
 }
 
-/* Up/down marker against the last saved report. Stock items show real usage
-   instead, so they are skipped here. */
-function trendFor(item, state, previous) {
-  if (!previous || !previous.values || item.type === 'stock') return '';
-  const now = state.values[item.id] || {};
-  const before = previous.values[item.id] || {};
-  if (item.type !== 'number') return '';
-  const a = num(now.value), b = num(before.value);
-  if (a === null || b === null || a === b) return '';
-  const delta = a - b;
-  const mag = Math.abs(delta);
-  const shown = Number.isInteger(mag) ? String(mag) : mag.toFixed(1);
-  return `(${delta > 0 ? '+' : '-'}${shown} vs last)`;
+/* The stock sum, printed as a proper bordered block. This is the number the
+   managers act on, so it gets real size and contrast. */
+function drawStockSum(doc, sum, L, R, W) {
+  const rowH = 14;
+  const footerLines = sum.footer ? wrapText(sum.footer, 8, false, W - 60) : [];
+  const boxH = 8 + sum.rows.length * rowH + 20 + (footerLines.length * 10.5) + 6;
+  doc.ensure(boxH + 4);
+
+  const x = L + 12;
+  const w = W - 24;
+  doc.rect(x, doc.y, w, boxH, { fill: BRAND.sumBg, stroke: BRAND.sumEdge, lineWidth: 0.7 });
+
+  const labelX = x + 12;
+  const detailX = x + w * 0.52;
+  const valueX = x + w - 12;
+  let y = doc.y + 8;
+
+  sum.rows.forEach(row => {
+    doc.text(row.label, labelX, y + 10, { size: 8.6, colour: BRAND.sumInk });
+    if (row.detail) {
+      doc.text(row.detail, detailX, y + 10, { size: 8.2, colour: [92, 122, 158], align: 'right' });
+    }
+    doc.text(row.value, valueX, y + 10, { size: 8.8, colour: BRAND.sumInk, align: 'right' });
+    y += rowH;
+  });
+
+  doc.hline(labelX, valueX, y + 2, BRAND.sumEdge, 0.8);
+  y += 4;
+  doc.text(sum.total.label, labelX, y + 12, { size: 10, bold: true, colour: BRAND.sumInk });
+  doc.text(sum.total.value, valueX, y + 12,
+    { size: 11, bold: true, colour: BRAND.sumInk, align: 'right' });
+  y += 18;
+
+  footerLines.forEach((line, i) => {
+    doc.text(line, labelX, y + 9 + i * 10.5, { size: 8, colour: [76, 106, 142] });
+  });
+
+  doc.y += boxH + 4;
 }
 
 /* ------------------------------------------------------------------
@@ -1907,7 +2169,9 @@ function buildWhatsApp(state, evaluated) {
 
     if (sectionIndex === 0) {
       lines.push(`*DAILY OPS REPORT* \u2014 ${prettyDate(state.date)}`);
-      lines.push(`_Reported by ${state.reporter || DEFAULT_REPORTER}_`);
+      lines.push(`_${reportNumber(state)} \u00B7 ${state.reporter || DEFAULT_REPORTER}_`);
+      lines.push('');
+      lines.push(`_${evaluated.verdict.text}_`);
       lines.push('');
     }
     lines.push(`*\u2501\u2501\u2501 ${section.owner.toUpperCase()} \u2501\u2501\u2501*`);
@@ -1929,7 +2193,7 @@ function buildWhatsApp(state, evaluated) {
     lines.push('');
 
     section.groups.forEach(group => {
-      lines.push(`*${group.title}*${group.note ? ` _(${group.note})_` : ''}`);
+      lines.push(`*${group.number} ${group.title}*${group.note ? ` _(${group.note})_` : ''}`);
       group.items.forEach(item => {
         const ev = evaluated.items[item.id];
         let line = `\u2022 ${item.label}`;
@@ -1939,14 +2203,16 @@ function buildWhatsApp(state, evaluated) {
         line += ` ${STATUS_META[ev.status].wa}`;
         if (ev.photos.length) line += ' \uD83D\uDCF7';
         lines.push(line);
-        if (ev.extra && ev.extra.length) lines.push(`   _${ev.extra.join(' \u00B7 ')}_`);
+        if (ev.sum) {
+          lines.push(`   _${ev.sum.total.label}: ${ev.sum.total.value}_`);
+        }
         if (ev.note) lines.push(`   _${ev.note}_`);
       });
       lines.push('');
     });
 
     if (sectionIndex === CHECKLIST.length - 1 && state.generalNote && state.generalNote.trim()) {
-      lines.push(`*Notes*`);
+      lines.push('*Notes*');
       lines.push(state.generalNote.trim());
       lines.push('');
     }
@@ -2020,7 +2286,9 @@ function blankState() {
     date: todayISO(),
     reporter: DEFAULT_REPORTER,
     site: DEFAULT_SITE,
+    reportPrefix: DEFAULT_PREFIX,
     logo: null,
+    lastCheckDate: null,
     generalNote: '',
     values: {},
     photos: {},
@@ -2033,6 +2301,7 @@ function carriedSettings() {
   return {
     reporter: state.reporter,
     site: state.site,
+    reportPrefix: state.reportPrefix || DEFAULT_PREFIX,
     logo: state.logo,
     thresholds: mergeThresholds(state.thresholds)
   };
@@ -2119,7 +2388,7 @@ function renderItem(item) {
     control = `
       <div class="stockblock">
         <div class="stockrow yesterday">
-          <span class="stocktag">Yesterday</span>
+          <span class="stocktag">Last check</span>
           <label>${item.hasBackup ? 'In use' : 'Level'}
             <input type="number" inputmode="decimal" step="any"
                    data-pair="${item.id}" data-side="prevInUse" value="${v.prevInUse ?? ''}">
@@ -2131,7 +2400,7 @@ function renderItem(item) {
           </label>` : ''}
         </div>
         <div class="stockrow today">
-          <span class="stocktag">Today</span>
+          <span class="stocktag">Now</span>
           <label>${item.hasBackup ? 'In use' : 'Level'} (${u})
             <input type="number" inputmode="decimal" step="any"
                    data-pair="${item.id}" data-side="inUse" value="${v.inUse ?? ''}">
@@ -2142,15 +2411,23 @@ function renderItem(item) {
                    data-pair="${item.id}" data-side="backup" value="${v.backup ?? ''}">
           </label>` : ''}
           ${item.topUp === 'ibc' ? `
-          <label>New IBCs
+          <label>IBCs in
             <input type="number" inputmode="numeric" step="1" min="0" placeholder="0"
-                   data-pair="${item.id}" data-side="ibc" value="${v.ibc ?? ''}">
+                   data-pair="${item.id}" data-side="ibc" value="${v.ibc ?? ''}"
+                   ${v.unknownDelivery ? 'disabled' : ''}>
           </label>` : `
           <label>Added (${u})
             <input type="number" inputmode="decimal" step="any" placeholder="0"
                    data-pair="${item.id}" data-side="added" value="${v.added ?? ''}">
           </label>`}
         </div>
+        ${item.topUp === 'ibc' ? `
+        <div class="stockrow unsure">
+          <button type="button" class="unsure-btn" data-unsure="${item.id}"
+                  aria-pressed="${v.unknownDelivery ? 'true' : 'false'}">
+            I don&rsquo;t know if any were delivered
+          </button>
+        </div>` : ''}
       </div>
       <div class="usage" data-usage="${item.id}"></div>`;
 
@@ -2249,6 +2526,17 @@ function bindChecklist() {
       });
       queueSave();
       refresh();
+      return;
+    }
+
+    const unsure = e.target.closest('[data-unsure]');
+    if (unsure) {
+      const id = unsure.dataset.unsure;
+      const val = valueOf(id);
+      val.unknownDelivery = !val.unknownDelivery;
+      if (val.unknownDelivery) val.ibc = '';
+      queueSave();
+      render();
       return;
     }
 
@@ -2396,10 +2684,20 @@ function refresh() {
     // live "used since yesterday" line under the chemical inputs
     const usage = document.querySelector(`[data-usage="${id}"]`);
     if (usage) {
-      const extra = ev.items[id].extra || [];
-      usage.innerHTML = extra.length
-        ? extra.map(e => `<span>${esc(e)}</span>`).join('')
-        : '';
+      const sum = ev.items[id].sum;
+      if (sum) {
+        const rows = sum.rows.map(r =>
+          `<div class="sumrow"><span>${esc(r.label)}${r.detail ? ' <em>' + esc(r.detail) + '</em>' : ''}</span>` +
+          `<strong>${esc(r.value)}</strong></div>`).join('');
+        usage.innerHTML =
+          `<div class="sumbox">${rows}` +
+          `<div class="sumrow total"><span>${esc(sum.total.label)}</span>` +
+          `<strong>${esc(sum.total.value)}</strong></div>` +
+          (sum.footer ? `<div class="sumfoot">${esc(sum.footer)}</div>` : '') +
+          `</div>`;
+      } else {
+        usage.innerHTML = '';
+      }
     }
 
     const thumbs = document.querySelector(`[data-thumbs="${id}"]`);
@@ -2514,9 +2812,13 @@ async function startNewReport() {
     if (!ok) return;
   }
 
-  // Today's levels become tomorrow's starting point.
+  // Today's levels become the next report's starting point.
   const carriedStock = carryStockForward(state.values);
-  state = { ...blankState(), ...carriedSettings(), values: carriedStock, id: DRAFT_ID };
+  const previousDate = state.date;
+  state = {
+    ...blankState(), ...carriedSettings(),
+    values: carriedStock, lastCheckDate: previousDate, id: DRAFT_ID
+  };
 
   await store.put({ ...state, savedAt: Date.now() });
   previousReport = await findPreviousReport();
@@ -2585,18 +2887,20 @@ async function seedYesterdayFromHistory() {
     if (!saved.length) return;
     const source = saved[0];
 
+    let seeded = false;
     Object.values(ITEM_INDEX).forEach(item => {
       if (item.type !== 'stock') return;
       const from = source.values[item.id];
       if (!from) return;
       const target = valueOf(item.id);
       if (target.prevInUse === undefined || target.prevInUse === '') {
-        if (num(from.inUse) !== null) target.prevInUse = String(num(from.inUse));
+        if (num(from.inUse) !== null) { target.prevInUse = String(num(from.inUse)); seeded = true; }
       }
       if (item.hasBackup && (target.prevBackup === undefined || target.prevBackup === '')) {
-        if (num(from.backup) !== null) target.prevBackup = String(num(from.backup));
+        if (num(from.backup) !== null) { target.prevBackup = String(num(from.backup)); seeded = true; }
       }
     });
+    if (seeded && !state.lastCheckDate) state.lastCheckDate = source.date || null;
   } catch (err) {
     console.error('could not seed yesterday figures', err);
   }
@@ -2645,17 +2949,6 @@ function showWhatsApp() {
 }
 
 /* ---------------- settings ---------------- */
-
-const TH_LABELS = {
-  ph: 'pH readings',
-  chemInUse: 'Chemical - in-use tank (L)',
-  chemBackup: 'Chemical - backup drum (L)',
-  boilerChem: 'Boiler chemical (L)',
-  saturator: 'Saturator pressure (kPa)',
-  flow: 'Flow rate (m3/h)',
-  humidity: 'Biofilter humidity (%RH)',
-  sampleLagDays: 'Sample testing lag (days)'
-};
 
 const KEY_LABELS = {
   critLow: 'Fault at/below',
@@ -2837,6 +3130,7 @@ function hydrateFields() {
   el('#fDate').value = state.date;
   el('#fReporter').value = state.reporter || '';
   el('#fSite').value = state.site || '';
+  el('#fPrefix').value = state.reportPrefix || DEFAULT_PREFIX;
   el('#fGeneralNote').value = state.generalNote || '';
 }
 
@@ -2850,6 +3144,10 @@ function bindShell() {
   });
   el('#fReporter').addEventListener('input', e => { state.reporter = e.target.value; queueSave(); refresh(); });
   el('#fSite').addEventListener('input', e => { state.site = e.target.value; queueSave(); });
+  el('#fPrefix').addEventListener('input', e => {
+    state.reportPrefix = e.target.value.trim() || DEFAULT_PREFIX;
+    queueSave();
+  });
   el('#fGeneralNote').addEventListener('input', e => { state.generalNote = e.target.value; queueSave(); });
 
   el('#btnPdf').addEventListener('click', generatePdf);
@@ -2914,8 +3212,14 @@ async function boot() {
       // A draft left over from a previous day starts fresh, keeping the
       // settings and rolling the tank levels into the Yesterday boxes.
       if (draft.date !== todayISO() && !location.search.includes('keep')) {
-        const carriedStock = carryStockForward(state.values);
-        state = { ...blankState(), ...carriedSettings(), values: carriedStock, id: DRAFT_ID };
+        const hadReadings = Object.values(state.values || {})
+          .some(v => v && (v.inUse !== undefined && v.inUse !== ''));
+        const carriedStock = hadReadings ? carryStockForward(state.values) : (state.values || {});
+        state = {
+          ...blankState(), ...carriedSettings(), values: carriedStock,
+          lastCheckDate: hadReadings ? draft.date : (draft.lastCheckDate || null),
+          id: DRAFT_ID
+        };
       }
     }
   } catch (err) {
