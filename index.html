@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1e3a5f">
-<meta name="build-id" content="9470754c911b">
+<meta name="build-id" content="080184d89b0c">
 <title>Daily Ops Report</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -708,8 +708,8 @@ const DEFAULT_THRESHOLDS = {
   ph1:         { critLow: 6.0, warnLow: 6.5, warnHigh: 8.5, critHigh: 9.0 },
   ph2:         { critLow: 6.0, warnLow: 6.5, warnHigh: 8.5, critHigh: 9.0 },
   ph3:         { critLow: 6.0, warnLow: 6.5, warnHigh: 8.5, critHigh: 9.0 },
-  chemBackup:  { crit: 0,   warn: 500 },
-  daysOfStock: { crit: 3,   warn: 7 },
+  chemInUse:   { crit: 0,   warn: 300 },
+  chemBackup:  { crit: 0,   warn: 0 },
   boilerChem:  { crit: 50,  warn: 100 },
   saturator:   { critLow: 350, warnLow: 450, warnHigh: 700, critHigh: 800 },
   flow:        { critLow: 5, warnLow: 10, warnHigh: 30, critHigh: 40 }
@@ -720,8 +720,8 @@ const TH_LABELS = {
   ph1:         'pH reading 1',
   ph2:         'pH reading 2',
   ph3:         'pH reading 3',
+  chemInUse:   'Chemical usage tank (L)',
   chemBackup:  'Chemical backup stock (L)',
-  daysOfStock: 'Chemical - days of stock left',
   boilerChem:  'Boiler chemical (L)',
   saturator:   'Saturator pressure (kPa)',
   flow:        'Flow rate (m3/h)'
@@ -754,6 +754,12 @@ const OK_FAULT_OPTIONS = [
   { value: 'fault', label: 'Fault', status: STATUS.FAULT }
 ];
 
+// For "is it overflowing?" style questions, where No is the good answer.
+const YES_NO_OPTIONS = [
+  { value: 'no',  label: 'No',  status: STATUS.OK },
+  { value: 'yes', label: 'Yes', status: STATUS.FAULT }
+];
+
 const DONE_OPTIONS = [
   { value: 'done',    label: 'Done',     status: STATUS.OK },
   { value: 'notdone', label: 'Not done', status: STATUS.TODO }
@@ -777,7 +783,7 @@ const CLEANLINESS_OPTIONS = [
 
 const PAPERWORK_OPTIONS = [
   { value: 'updated', label: 'Updated',         status: STATUS.OK },
-  { value: 'prints',  label: 'Need new prints', status: STATUS.WATCH }
+  { value: 'prints',  label: 'Need new prints', status: STATUS.FAULT }
 ];
 
 /* ------------------------------------------------------------------
@@ -792,11 +798,13 @@ const CHECKLIST = [
         id: 'biofilters',
         title: 'Biofilters',
         items: [
-          { id: 'bio_running', label: 'System running', type: 'status' },
-          { id: 'bio_target',  label: 'Within target',  type: 'status' },
-          { id: 'bio_vacuum',  label: 'Vacuum gauge',   type: 'status' },
-          { id: 'bio1_rh',     label: 'Bio 1 humidity', type: 'choice', options: OK_FAULT_OPTIONS },
-          { id: 'bio2_rh',     label: 'Bio 2 humidity', type: 'choice', options: OK_FAULT_OPTIONS }
+          { id: 'bio_running', label: 'System running', type: 'status', default: { status: STATUS.OK } },
+          { id: 'bio_target',  label: 'Within target',  type: 'status', default: { status: STATUS.OK } },
+          { id: 'bio_vacuum',  label: 'Vacuum gauge',   type: 'status', default: { status: STATUS.OK } },
+          { id: 'bio1_rh',     label: 'Bio 1 humidity', type: 'choice', options: OK_FAULT_OPTIONS,
+            default: { choice: 'fault' } },
+          { id: 'bio2_rh',     label: 'Bio 2 humidity', type: 'choice', options: OK_FAULT_OPTIONS,
+            default: { choice: 'fault' } }
         ]
       },
       {
@@ -814,13 +822,18 @@ const CHECKLIST = [
         id: 'wwtp',
         title: 'Waste Water Treatment Plant',
         items: [
-          { id: 'daf_pumps',   label: 'DAF sludge pumps',     type: 'status' },
-          { id: 'daf_paddles', label: 'DAF paddles',          type: 'status' },
-          { id: 'daf_clarity', label: 'DAF effluent clarity', type: 'choice', options: CLARITY_OPTIONS },
-          { id: 'no_overflow', label: 'No overflow - process',     type: 'status' },
-          { id: 'waste_tanks', label: 'No overflow - waste tanks', type: 'status' },
-          { id: 'sat1', label: 'Saturator DAF 1', type: 'number', unit: 'kPa', threshold: 'saturator', decimals: 0 },
-          { id: 'sat2', label: 'Saturator DAF 2', type: 'number', unit: 'kPa', threshold: 'saturator', decimals: 0 },
+          { id: 'daf_pumps',   label: 'DAF sludge pumps', type: 'status', default: { status: STATUS.OK } },
+          { id: 'daf_paddles', label: 'DAF paddles',      type: 'status', default: { status: STATUS.OK } },
+          { id: 'daf_clarity', label: 'DAF effluent clarity', type: 'choice', options: CLARITY_OPTIONS,
+            default: { choice: 'clear' } },
+          { id: 'daf_overflow', label: 'DAF overflow', type: 'choice', options: YES_NO_OPTIONS,
+            default: { choice: 'no' } },
+          { id: 'waste_tanks', label: 'Waste Tanks - Overflow', type: 'choice', options: YES_NO_OPTIONS,
+            default: { choice: 'no' } },
+          { id: 'sat1', label: 'Saturator DAF 1', type: 'number', unit: 'kPa', threshold: 'saturator',
+            decimals: 0, default: { value: 500 } },
+          { id: 'sat2', label: 'Saturator DAF 2', type: 'number', unit: 'kPa', threshold: 'saturator',
+            decimals: 0, default: { value: 500 } },
           {
             // Each reading comes off a different point, so each has its own limits.
             id: 'ph', label: 'pH readings', type: 'multi',
@@ -831,9 +844,10 @@ const CHECKLIST = [
               { key: 'c', label: '3', threshold: 'ph3' }
             ]
           },
-          { id: 'tank1_mixer', label: 'Tank 1 mixer',              type: 'status' },
-          { id: 'floc_mixer',  label: 'Flocculant mixer adjusted', type: 'status' },
-          { id: 'flow_rate',   label: 'Flow rate', type: 'number', unit: 'm3/h', threshold: 'flow', decimals: 1 }
+          { id: 'tank1_mixer', label: 'Tank 1 mixer', type: 'status', default: { status: STATUS.OK } },
+          { id: 'floc_mixer',  label: 'Flocculant mixer adjusted', type: 'status', default: { status: STATUS.OK } },
+          { id: 'flow_rate',   label: 'Flow rate', type: 'number', unit: 'm3/h', threshold: 'flow',
+            decimals: 1, default: { value: 19.9 } }
         ]
       }
     ]
@@ -846,9 +860,11 @@ const CHECKLIST = [
         id: 'pits',
         title: 'Pit Pumps & Cleaning',
         items: [
-          { id: 'pit_pump', label: 'Pit Pump',      type: 'status' },
-          { id: 'lamb_pit', label: 'Lamb underpit', type: 'choice', options: CLEANLINESS_OPTIONS },
-          { id: 'beef_pit', label: 'Beef underpit', type: 'choice', options: CLEANLINESS_OPTIONS }
+          { id: 'pit_pump', label: 'Pit Pump', type: 'status', default: { status: STATUS.OK } },
+          { id: 'lamb_pit', label: 'Lamb underpit', type: 'choice', options: CLEANLINESS_OPTIONS,
+            default: { choice: 'minor' } },
+          { id: 'beef_pit', label: 'Beef underpit', type: 'choice', options: CLEANLINESS_OPTIONS,
+            default: { choice: 'minor' } }
         ]
       },
       {
@@ -856,12 +872,18 @@ const CHECKLIST = [
         title: 'Production Fume Ducting',
         note: 'checking for steaming',
         items: [
-          { id: 'duct_lamb_cooker', label: 'Lamb cooker', type: 'status', hint: 'OK = no steaming' },
-          { id: 'duct_beef_cooker', label: 'Beef cooker', type: 'status', hint: 'OK = no steaming' },
-          { id: 'duct_beef_press',  label: 'Beef press',  type: 'status', hint: 'OK = no steaming' },
-          { id: 'duct_drier1',      label: 'Drier 1',     type: 'status', hint: 'OK = no steaming' },
-          { id: 'duct_drier2',      label: 'Drier 2',     type: 'status', hint: 'OK = no steaming' },
-          { id: 'duct_drier3',      label: 'Drier 3',     type: 'status', hint: 'OK = no steaming' }
+          { id: 'duct_lamb_cooker', label: 'Lamb cooker', type: 'status', hint: 'OK = no steaming',
+            default: { status: STATUS.OK } },
+          { id: 'duct_beef_cooker', label: 'Beef cooker', type: 'status', hint: 'OK = no steaming',
+            default: { status: STATUS.OK } },
+          { id: 'duct_beef_press',  label: 'Beef press',  type: 'status', hint: 'OK = no steaming',
+            default: { status: STATUS.OK } },
+          { id: 'duct_drier1',      label: 'Drier 1',     type: 'status', hint: 'OK = no steaming',
+            default: { status: STATUS.OK } },
+          { id: 'duct_drier2',      label: 'Drier 2',     type: 'status', hint: 'OK = no steaming',
+            default: { status: STATUS.FAULT, note: 'Steaming' } },
+          { id: 'duct_drier3',      label: 'Drier 3',     type: 'status', hint: 'OK = no steaming',
+            default: { status: STATUS.OK } }
         ]
       },
       {
@@ -870,11 +892,13 @@ const CHECKLIST = [
         note: 'last check carries over automatically',
         items: [
           { id: 'boiler1_chem', label: 'Boiler 1 chemical', type: 'stock', unit: 'L',
-            hasBackup: false, topUp: 'litres', threshold: 'boilerChem' },
+            hasBackup: false, topUp: 'litres', threshold: 'boilerChem', compact: true },
           { id: 'boiler2_chem', label: 'Boiler 2 chemical', type: 'stock', unit: 'L',
-            hasBackup: false, topUp: 'litres', threshold: 'boilerChem' },
-          { id: 'blowdown',   label: 'Blowdown',      type: 'choice', options: DONE_OPTIONS },
-          { id: 'water_test', label: 'Water testing', type: 'choice', options: DONE_OPTIONS }
+            hasBackup: false, topUp: 'litres', threshold: 'boilerChem', compact: true },
+          { id: 'blowdown',   label: 'Blowdown',      type: 'choice', options: DONE_OPTIONS,
+            default: { choice: 'done' } },
+          { id: 'water_test', label: 'Water testing', type: 'choice', options: DONE_OPTIONS,
+            default: { choice: 'done' } }
         ]
       },
       {
@@ -884,7 +908,8 @@ const CHECKLIST = [
           { id: 'ovine_daily',  label: 'Ovine Daily',  type: 'date' },
           { id: 'mbm_weekly',   label: 'MBM Weekly',   type: 'date' },
           { id: 'ovine_weekly', label: 'Ovine Weekly', type: 'date' },
-          { id: 'ovine_bags',   label: 'Ovine bag paperwork', type: 'choice', options: PAPERWORK_OPTIONS },
+          { id: 'ovine_bags',   label: 'Ovine bag paperwork', type: 'choice', options: PAPERWORK_OPTIONS,
+            default: { choice: 'updated' } },
           {
             id: 'separators', label: 'Separator testing', type: 'multi',
             decimals: 0, display: 'labelled', unit: 'samples',
@@ -1001,13 +1026,14 @@ function gradeMulti(item, values, thresholds) {
   return grades.length ? worstOf(grades) : STATUS.OK;
 }
 
-/* Chemical tanks: an empty usage tank is always a fault, and the backup
-   stock is graded on its own trigger levels. */
+/* Chemical tanks are judged purely on their levels, using the trigger levels
+   in Settings. How many days of stock remain is reported as information but
+   never changes the status. */
 function gradeChemical(v, thresholds) {
   const inUse = num(v.inUse);
   const backup = num(v.backup);
   const grades = [];
-  if (inUse !== null && inUse <= EMPTY_TANK) grades.push(STATUS.FAULT);
+  if (inUse !== null) grades.push(gradeNumber(inUse, 'chemInUse', thresholds));
   if (backup !== null) grades.push(gradeNumber(backup, 'chemBackup', thresholds));
   return grades.length ? worstOf(grades) : STATUS.BLANK;
 }
@@ -1060,12 +1086,15 @@ function stockUsage(item, v, gapDays) {
   // Stock cannot rise on its own, so an unexplained rise means a delivery
   // was not recorded. Whole IBCs only, so the shortfall can be named.
   const rise = todayTotal - (prevTotal + topUp);
-  const missingIbcs = rise > 0 ? Math.ceil(rise / IBC_LITRES) : 0;
+  // Chemicals arrive as whole IBCs, so the shortfall can be named in IBCs.
+  // Boiler tanks are topped up by the litre, so it stays in litres.
+  const missingIbcs = rise > 0 && item.topUp === 'ibc' ? Math.ceil(rise / IBC_LITRES) : 0;
+  const missingLitres = rise > 0 ? rise : 0;
 
   return {
     used, topUp, ibcs, prevTotal, todayTotal, days,
     perDay: used > 0 ? used / days : 0,
-    missingIbcs,
+    missingIbcs, missingLitres,
     unconfirmed: !!v.unknownDelivery
   };
 }
@@ -1077,10 +1106,37 @@ function stockOnHand(item, v) {
   return (tIn || 0) + (tBack || 0);
 }
 
-/* Days of stock left, using the daily rate from the last gap. */
-function daysOfStock(usage) {
+/* Days of stock left at the current rate.
+
+   Reported for information only - it never sets a status. Tank levels alone
+   decide whether something is flagged. */
+function daysOfStock(item, usage) {
+  if (!item || item.topUp !== 'ibc') return null;
   if (!usage || usage.unconfirmed || usage.perDay <= 0) return null;
   return usage.todayTotal / usage.perDay;
+}
+
+/* Wording for the badge. "Fault" is right for a broken pump but not for a
+   tank that simply needs topping up or reordering. */
+function stockBadge(status, reason) {
+  if (!needsAction(status)) return STATUS_META[status].short;
+  // No backup left is the more serious problem, so it names the action.
+  if (/no backup stock/.test(reason)) return 'REORDER';
+  if (/usage tank/.test(reason)) return 'REFILL';
+  if (status === STATUS.FAULT) return 'REORDER';
+  if (status === STATUS.WATCH) return 'LOW';
+  return STATUS_META[status].short;
+}
+
+/* The starting point for a new report: the states that are true on a normal
+   day, so only the exceptions have to be touched. */
+function defaultValues() {
+  const out = {};
+  Object.values(ITEM_INDEX).forEach(item => {
+    if (!item.default) return;
+    out[item.id] = { ...item.default, photos: [] };
+  });
+  return out;
 }
 
 /* Copies the current readings into the "last check" boxes and clears the
@@ -1502,6 +1558,8 @@ const BRAND = {
   sumInk:   [23, 54, 93]
 };
 
+const GENERIC_REASONS = new Set(['fault reported', 'needs monitoring', 'not completed']);
+
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
@@ -1612,16 +1670,10 @@ function evaluate(state, previous) {
               : gradeNumber(v.inUse, item.threshold, thresholds);
 
           const usage = stockUsage(item, v, gapDays);
-          const left = daysOfStock(usage);
+          const left = daysOfStock(item, usage);
 
-          let runOutStatus = STATUS.OK;
-          if (left !== null) {
-            const t = thresholds.daysOfStock || DEFAULT_THRESHOLDS.daysOfStock;
-            if (left <= t.crit) runOutStatus = STATUS.FAULT;
-            else if (left <= t.warn) runOutStatus = STATUS.WATCH;
-          }
-
-          status = manual || (hasAny ? worstOf([levelStatus, runOutStatus]) : STATUS.BLANK);
+          // Levels alone decide the status. Days of stock is information.
+          status = manual || levelStatus;
           display = hasAny
             ? (item.hasBackup
                 ? `${fmtQty(inUse)} ${item.unit} in use / ${fmtQty(backup)} ${item.unit} backup`
@@ -1641,11 +1693,10 @@ function evaluate(state, previous) {
             }
           }
           if (usage && usage.unconfirmed) bits.push('usage not confirmed');
-          if (usage && usage.missingIbcs > 0) {
-            bits.push(`stock rose unexpectedly - at least ${plural(usage.missingIbcs, 'IBC')} not recorded`);
-          }
-          if (runOutStatus !== STATUS.OK && left !== null) {
-            bits.push(`about ${fmtDays(left)} of stock left`);
+          if (usage && usage.missingLitres > 0) {
+            bits.push(usage.missingIbcs > 0
+              ? `stock rose unexpectedly - at least ${plural(usage.missingIbcs, 'IBC')} not recorded`
+              : `stock rose unexpectedly - ${fmtQty(usage.missingLitres)} ${item.unit} not accounted for`);
           }
           reason = bits.join(', ');
 
@@ -1665,9 +1716,7 @@ function evaluate(state, previous) {
           const valid = !!iso && !isNaN(new Date(iso + 'T00:00:00').getTime());
           status = manual || (valid ? STATUS.OK : STATUS.BLANK);
           if (valid) {
-            const lag = daysBehind(iso, state.date);
             display = `sampled to ${shortDate(iso)}`;
-            if (lag !== null && lag > 1) display += ` (${lag} days ago)`;
           } else {
             display = manual ? 'No date recorded' : '-';
           }
@@ -1681,7 +1730,19 @@ function evaluate(state, previous) {
 
         result.counts[status] = (result.counts[status] || 0) + 1;
         const photos = (v.photos || []).filter(id => state.photos && state.photos[id]);
-        result.items[item.id] = { status, display, reason, extra, sum, note: v.note || '', photos };
+        const badge = item.type === 'stock'
+          ? stockBadge(status, reason)
+          : STATUS_META[status].short;
+        result.items[item.id] = {
+          status, badge, display, reason, extra, sum,
+          // A red badge should never be a mystery, so the explanation is
+          // printed - unless it is generic, or just repeats the value already
+          // shown on the row.
+          showReason: needsAction(status) && !!reason
+            && !GENERIC_REASONS.has(reason)
+            && reason.toLowerCase() !== String(display).toLowerCase(),
+          note: v.note || '', photos
+        };
 
         if (needsAction(status)) {
           result.actions[section.id].push({
@@ -1757,9 +1818,11 @@ function buildStockSum(item, v, usage, left, state) {
   if (usage.unconfirmed) {
     total = { label: 'Usage not confirmed', value: '-' };
     footer = 'Deliveries during this period are unknown, so usage cannot be worked out.';
-  } else if (usage.missingIbcs > 0) {
+  } else if (usage.missingLitres > 0) {
     total = { label: 'Usage not confirmed', value: '-' };
-    footer = `Stock is higher than it should be - at least ${plural(usage.missingIbcs, 'IBC')} arrived without being recorded.`;
+    footer = usage.missingIbcs > 0
+      ? `Stock is higher than it should be - at least ${plural(usage.missingIbcs, 'IBC')} arrived without being recorded.`
+      : `Stock is higher than it should be - ${fmtQty(usage.missingLitres)} ${item.unit} was added without being recorded.`;
   } else {
     total = { label: `Used${period}`, value: `${fmtQty(usage.used)} ${u}` };
     if (usage.days > 1 && usage.used > 0) {
@@ -1852,11 +1915,16 @@ function listOf(arr) {
 function chemicalReason(v, thresholds) {
   const bits = [];
   const inUse = num(v.inUse), backup = num(v.backup);
-  if (inUse !== null && inUse <= EMPTY_TANK) bits.push('usage tank empty');
+  // Backup first: with nothing in reserve, refilling is not an option.
   if (backup !== null) {
-    const t = thresholds.chemBackup;
-    if (backup <= t.crit) bits.push('no backup stock');
-    else if (backup <= t.warn) bits.push(`backup low (${fmtQty(backup)} L)`);
+    const tb = thresholds.chemBackup;
+    if (backup <= tb.crit) bits.push('no backup stock');
+    else if (tb.warn > tb.crit && backup <= tb.warn) bits.push(`backup low (${fmtQty(backup)} L)`);
+  }
+  if (inUse !== null) {
+    const ti = thresholds.chemInUse;
+    if (inUse <= ti.crit) bits.push('usage tank empty');
+    else if (inUse <= ti.warn) bits.push(`usage tank low (${fmtQty(inUse)} L)`);
   }
   return bits.join(', ');
 }
@@ -2013,17 +2081,30 @@ function buildPdf(state, evaluated, previous) {
     doc.y += 22 + 10;
 
     section.groups.forEach(group => {
-      doc.ensure(46);
       const heading = `${group.number}  ${group.title}` + (group.note ? `  (${group.note})` : '');
+      const compactItems = group.items.filter(i => i.compact && evaluated.items[i.id].sum);
+      const normalItems = group.items.filter(i => !compactItems.includes(i));
+
+      // A heading must never sit alone at the foot of a page, so the space for
+      // the heading plus whatever follows it first is reserved together.
+      const firstBlock = compactItems.length
+        ? 16 + compactItems.length * 18
+        : (normalItems.length ? itemHeight(doc, normalItems[0], evaluated.items[normalItems[0].id]) : 0);
+      doc.ensure(18 + 4 + firstBlock);
+
       doc.text(heading, L, doc.y + 9, { size: 9.2, bold: true, colour: BRAND.navy });
       doc.y += 14;
       doc.hline(L, R, doc.y, BRAND.navy, 0.9);
       doc.y += 4;
 
-      group.items.forEach((item, idx) => {
+      // Compact stock rows: everything on one line, in a small table.
+      if (compactItems.length) drawCompactStock(doc, compactItems, evaluated, L, R, W);
+
+      normalItems.forEach((item, idx) => {
         const ev = evaluated.items[item.id];
         const rowH = 19;
-        if (doc.ensure(rowH + 4)) {
+        // Keep the row together with its sum block and any reason line.
+        if (doc.ensure(itemHeight(doc, item, ev))) {
           doc.text(`${heading} (continued)`, L, doc.y + 9,
             { size: 8.4, bold: true, colour: BRAND.slate });
           doc.y += 16;
@@ -2031,13 +2112,24 @@ function buildPdf(state, evaluated, previous) {
         if (idx % 2 === 1) doc.rect(L, doc.y, W, rowH, { fill: BRAND.zebra });
 
         doc.text(item.label, L + 7, doc.y + 13, { size: 8.8, colour: BRAND.ink });
-        doc.pill(STATUS_META[ev.status].short, R - 6, doc.y + 4, STATUS_META[ev.status].colour);
+        doc.pill(ev.badge, R - 6, doc.y + 4, STATUS_META[ev.status].colour);
 
-        if (item.type !== 'status') {
-          doc.text(ev.display, R - 74, doc.y + 13,
+        // Skip the value when the badge beside it already says the same thing,
+        // e.g. an OK / Fault pick.
+        const badgeSaysIt = String(ev.display).toLowerCase()
+          === STATUS_META[ev.status].label.toLowerCase();
+        if (item.type !== 'status' && !badgeSaysIt) {
+          doc.text(ev.display, R - 84, doc.y + 13,
             { size: 8.6, colour: BRAND.slate, align: 'right' });
         }
         doc.y += rowH;
+
+        // Why it is flagged, so a coloured badge is never a mystery.
+        if (ev.showReason) {
+          const h = doc.paragraph(ev.reason, L + 16, doc.y, W - 40,
+            { size: 8, colour: STATUS_META[ev.status].colour, leading: 10.5 });
+          doc.y += h + 1;
+        }
 
         if (ev.sum) drawStockSum(doc, ev.sum, L, R, W);
 
@@ -2118,12 +2210,79 @@ function buildPdf(state, evaluated, previous) {
   return doc.build(footer);
 }
 
+/* How tall a detail row will be once its sum, reason and note are included.
+   Used to stop a row being split across a page break. */
+function itemHeight(doc, item, ev) {
+  let h = 19;
+  if (ev.showReason) h += wrapText(ev.reason, 8, false, doc.contentWidth - 40).length * 10.5 + 1;
+  if (ev.sum && !item.compact) h += sumHeight(sum_wrapWidth(doc), ev.sum) + 4;
+  if (ev.photos && ev.photos.length) h += 12;
+  if (ev.note) h += wrapText(`Note: ${ev.note}`, 8, false, doc.contentWidth - 32).length * 10.5 + 2;
+  return h;
+}
+
+function sum_wrapWidth(doc) { return doc.contentWidth; }
+
+function sumHeight(W, sum) {
+  const footerLines = sum.footer ? wrapText(sum.footer, 8, false, W - 60) : [];
+  return 8 + sum.rows.length * 14 + 20 + (footerLines.length * 10.5) + 6;
+}
+
+/* Boiler dose tanks, one line each with the whole movement on it. */
+function drawCompactStock(doc, items, evaluated, L, R, W) {
+  const rowH = 18;
+  const cols = {
+    label: L + 7,
+    last: L + W * 0.44,
+    added: L + W * 0.57,
+    now: L + W * 0.70,
+    used: L + W * 0.83
+  };
+
+  doc.rect(L, doc.y, W, 15, { fill: [241, 245, 249] });
+  doc.text('TANK', cols.label, doc.y + 10.5, { size: 6.8, bold: true, colour: BRAND.slate });
+  [['LAST CHECK', cols.last], ['ADDED', cols.added], ['NOW', cols.now], ['USED', cols.used]]
+    .forEach(([t, x]) => {
+      doc.text(t, x, doc.y + 10.5, { size: 6.8, bold: true, colour: BRAND.slate, align: 'right' });
+    });
+  doc.y += 15;
+
+  items.forEach((item, i) => {
+    const ev = evaluated.items[item.id];
+    const sum = ev.sum;
+    if (doc.ensure(rowH + 2)) doc.y += 2;
+    if (i % 2 === 1) doc.rect(L, doc.y, W, rowH, { fill: BRAND.zebra });
+    doc.rect(L, doc.y, 2.5, rowH, { fill: STATUS_META[ev.status].colour });
+
+    const base = { size: 8.6, colour: BRAND.ink };
+    doc.text(item.label, cols.label, doc.y + 12.5, base);
+    doc.text(sum.rows[0].value, cols.last, doc.y + 12.5, { ...base, align: 'right', colour: BRAND.slate });
+    doc.text(sum.rows[1].value, cols.added, doc.y + 12.5, { ...base, align: 'right', colour: BRAND.slate });
+    doc.text(sum.rows[2].value, cols.now, doc.y + 12.5, { ...base, align: 'right' });
+    doc.text(sum.total.value, cols.used, doc.y + 12.5, { ...base, align: 'right', bold: true });
+    doc.pill(ev.badge, R - 6, doc.y + 3.5, STATUS_META[ev.status].colour);
+    doc.y += rowH;
+
+    if (ev.showReason) {
+      const h = doc.paragraph(ev.reason, cols.label + 9, doc.y, W - 60,
+        { size: 7.8, colour: STATUS_META[ev.status].colour, leading: 10 });
+      doc.y += h + 1;
+    }
+    if (ev.note) {
+      const h = doc.paragraph(`Note: ${ev.note}`, cols.label + 9, doc.y, W - 60,
+        { size: 7.8, colour: BRAND.slate, leading: 10 });
+      doc.y += h + 1;
+    }
+  });
+  doc.y += 6;
+}
+
 /* The stock sum, printed as a proper bordered block. This is the number the
    managers act on, so it gets real size and contrast. */
 function drawStockSum(doc, sum, L, R, W) {
   const rowH = 14;
   const footerLines = sum.footer ? wrapText(sum.footer, 8, false, W - 60) : [];
-  const boxH = 8 + sum.rows.length * rowH + 20 + (footerLines.length * 10.5) + 6;
+  const boxH = sumHeight(W, sum);
   doc.ensure(boxH + 4);
 
   const x = L + 12;
@@ -2290,7 +2449,7 @@ function blankState() {
     logo: null,
     lastCheckDate: null,
     generalNote: '',
-    values: {},
+    values: defaultValues(),
     photos: {},
     thresholds: deepCopy(DEFAULT_THRESHOLDS)
   };
@@ -2507,7 +2666,8 @@ function bindChecklist() {
     if (sbtn) {
       const id = sbtn.dataset.status;
       const v = valueOf(id);
-      v.status = v.status === sbtn.dataset.value ? undefined : sbtn.dataset.value;
+      // Always select. Tapping the current choice must not clear the row.
+      v.status = sbtn.dataset.value;
       root.querySelectorAll(`[data-status="${id}"]`).forEach(b => {
         b.setAttribute('aria-pressed', b.dataset.value === v.status ? 'true' : 'false');
       });
@@ -2520,7 +2680,7 @@ function bindChecklist() {
     if (cbtn) {
       const id = cbtn.dataset.choice;
       const v = valueOf(id);
-      v.choice = v.choice === cbtn.dataset.value ? undefined : cbtn.dataset.value;
+      v.choice = cbtn.dataset.value;
       root.querySelectorAll(`[data-choice="${id}"]`).forEach(b => {
         b.setAttribute('aria-pressed', b.dataset.value === v.choice ? 'true' : 'false');
       });
@@ -2817,7 +2977,8 @@ async function startNewReport() {
   const previousDate = state.date;
   state = {
     ...blankState(), ...carriedSettings(),
-    values: carriedStock, lastCheckDate: previousDate, id: DRAFT_ID
+    values: { ...defaultValues(), ...carriedStock },
+    lastCheckDate: previousDate, id: DRAFT_ID
   };
 
   await store.put({ ...state, savedAt: Date.now() });
@@ -3214,9 +3375,10 @@ async function boot() {
       if (draft.date !== todayISO() && !location.search.includes('keep')) {
         const hadReadings = Object.values(state.values || {})
           .some(v => v && (v.inUse !== undefined && v.inUse !== ''));
-        const carriedStock = hadReadings ? carryStockForward(state.values) : (state.values || {});
+        const carriedStock = hadReadings ? carryStockForward(state.values) : {};
         state = {
-          ...blankState(), ...carriedSettings(), values: carriedStock,
+          ...blankState(), ...carriedSettings(),
+          values: { ...defaultValues(), ...carriedStock },
           lastCheckDate: hadReadings ? draft.date : (draft.lastCheckDate || null),
           id: DRAFT_ID
         };
