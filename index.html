@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1e3a5f">
-<meta name="build-id" content="082ee15ec511">
+<meta name="build-id" content="e1575164048c">
 <title>Daily Ops Report</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -624,10 +624,12 @@ body.no-scroll { overflow: hidden; }
     <hr>
     <h2>Average usage</h2>
     <p class="muted small">
-      How many days of submitted reports the average looks back over. Change it
-      any time &mdash; the next report uses the new number.
+      How far back to look when working out average daily use. Reports older than
+      this are ignored. Because a report can cover several days &mdash; a weekend
+      or a few days off &mdash; the average may end up covering slightly more days
+      than this number.
     </p>
-    <label>Days to average over
+    <label>Look back this many days
       <input type="number" id="fAvgWindow" inputmode="numeric" step="1" min="1" placeholder="14">
     </label>
 
@@ -807,7 +809,8 @@ const CLEANLINESS_OPTIONS = [
 
 const PAPERWORK_OPTIONS = [
   { value: 'updated', label: 'Updated',         status: STATUS.OK },
-  { value: 'prints',  label: 'Need new prints', status: STATUS.FAULT }
+  // "Fault" is wrong for a paperwork job, so this option names the action.
+  { value: 'prints',  label: 'Need new prints', status: STATUS.FAULT, badge: 'NEED PRINTS' }
 ];
 
 /* ------------------------------------------------------------------
@@ -1035,6 +1038,12 @@ function choiceLabel(item, value) {
   return opt ? opt.label : '';
 }
 
+/* Wording for the badge when an option overrides the plain status word. */
+function optionBadge(item, value) {
+  const opt = (item.options || []).find(o => o.value === value);
+  return opt && opt.badge ? opt.badge : null;
+}
+
 /* Each field may name its own threshold; the worst one wins for the row. */
 function gradeMulti(item, values, thresholds) {
   const grades = [];
@@ -1165,6 +1174,72 @@ function defaultValues() {
     out[item.id] = { ...item.default, photos: [] };
   });
   return out;
+}
+
+/* ------------------------------------------------------------------
+   Readings recorded by hand before the app existed
+   ------------------------------------------------------------------
+   Each entry is a morning reading: [usage tank level, backup level].
+   Loaded once on first run so the average usage is right from day one.
+   ------------------------------------------------------------------ */
+
+const HISTORIC_READINGS = [
+  { date: '2026-09-11', caustic: [1000, 500],  coagulant: [600, 2000],  flocculant: [950, 50], sulphuric: [700, 0] },
+  { date: '2026-09-14', caustic: [800, 500],   coagulant: [600, 2000],  flocculant: [950, 50], sulphuric: [600, 0] },
+  { date: '2026-09-15', caustic: [800, 500],   coagulant: [600, 2000],  flocculant: [950, 50], sulphuric: [600, 0] },
+  { date: '2026-09-16', caustic: [900, 2000],  coagulant: [400, 2000],  flocculant: [850, 50], sulphuric: [900, 1000] },
+  { date: '2026-09-17', caustic: [500, 1000],  coagulant: [400, 2000],  flocculant: [800, 50], sulphuric: [500, 1000] },
+  { date: '2026-09-21', caustic: [1000, 0],    coagulant: [150, 2000],  flocculant: [700, 50], sulphuric: [1000, 0] },
+  { date: '2026-09-22', caustic: [600, 0],     coagulant: [1000, 1000], flocculant: [600, 50], sulphuric: [400, 0] },
+  { date: '2026-09-23', caustic: [200, 0],     coagulant: [800, 1000],  flocculant: [600, 50], sulphuric: [50, 0] },
+  { date: '2026-09-24', caustic: [500, 200],   coagulant: [700, 1000],  flocculant: [550, 50], sulphuric: [500, 0] }
+];
+
+/* IBCs that moved in or out between readings. A negative figure is stock that
+   left the site - on 17 Sep one caustic IBC went to another department, which
+   is why that day looked like a 1,400 L usage day rather than 400 L. */
+const HISTORIC_MOVEMENTS = {
+  '2026-09-16': { caustic: 2, sulphuric: 2 },
+  '2026-09-17': { caustic: -1 },
+  '2026-09-24': { caustic: 1, sulphuric: 1 }
+};
+
+const HISTORIC_NOTE = {
+  '2026-09-17': 'One caustic IBC transferred to another department'
+};
+
+const HISTORIC_TAG = 'recorded-by-hand';
+
+/* Turns those readings into report records the average can read. */
+function buildHistoricReports() {
+  const chems = ['caustic', 'coagulant', 'flocculant', 'sulphuric'];
+  return HISTORIC_READINGS.map((row, i) => {
+    const prev = i > 0 ? HISTORIC_READINGS[i - 1] : null;
+    const moves = HISTORIC_MOVEMENTS[row.date] || {};
+    const values = {};
+
+    chems.forEach(id => {
+      const [inUse, backup] = row[id];
+      const v = { inUse: String(inUse), backup: String(backup), photos: [] };
+      if (prev) {
+        v.prevInUse = String(prev[id][0]);
+        v.prevBackup = String(prev[id][1]);
+      }
+      if (moves[id]) v.ibc = String(moves[id]);
+      values[id] = v;
+    });
+
+    return {
+      id: `report-${row.date}`,
+      date: row.date,
+      lastCheckDate: prev ? prev.date : null,
+      values,
+      photos: {},
+      generalNote: HISTORIC_NOTE[row.date] || '',
+      source: HISTORIC_TAG,
+      savedAt: new Date(row.date + 'T07:00:00').getTime()
+    };
+  });
 }
 
 /* ------------------------------------------------------------------
@@ -1923,9 +1998,10 @@ function evaluate(state, previous, history) {
 
         result.counts[status] = (result.counts[status] || 0) + 1;
         const photos = (v.photos || []).filter(id => state.photos && state.photos[id]);
+        const optBadge = item.type === 'choice' ? optionBadge(item, v.choice) : null;
         const badge = item.type === 'stock'
           ? stockBadge(item, status, reason)
-          : STATUS_META[status].short;
+          : (optBadge || STATUS_META[status].short);
         result.items[item.id] = {
           status, badge, display, reason, extra, sum,
           // A red badge should never be a mystery, so the explanation is
@@ -1934,6 +2010,9 @@ function evaluate(state, previous, history) {
           showReason: needsAction(status) && !!reason
             && !GENERIC_REASONS.has(reason)
             && reason.toLowerCase() !== String(display).toLowerCase(),
+          // When the badge spells out the action, repeating the value beside it
+          // is noise - and on a narrow row the two would collide.
+          hideDisplay: !!optBadge,
           note: v.note || '', photos
         };
 
@@ -2342,7 +2421,7 @@ function buildPdf(state, evaluated, previous) {
 
         // Skip the value when the badge beside it already says the same thing,
         // e.g. an OK / Fault pick.
-        const badgeSaysIt = String(ev.display).toLowerCase()
+        const badgeSaysIt = ev.hideDisplay || String(ev.display).toLowerCase()
           === STATUS_META[ev.status].label.toLowerCase();
         if (item.type !== 'status' && !badgeSaysIt) {
           doc.text(ev.display, R - 84, doc.y + 13,
@@ -2647,13 +2726,18 @@ async function dbTx(mode, fn) {
     const store = tx.objectStore(STORE);
     let out;
     try { out = fn(store); } catch (e) { reject(e); return; }
-    tx.oncomplete = () => resolve(out && out.result !== undefined ? out.result : out);
+    // A lookup that finds nothing still hands back a request object, whose
+    // result is undefined. Testing the property rather than its value is what
+    // makes "was this record already there?" answerable.
+    tx.oncomplete = () => resolve(
+      out && typeof out === 'object' && 'result' in out ? out.result : out);
     tx.onerror = () => reject(tx.error);
   });
 }
 
 const store = {
   put: (rec) => dbTx('readwrite', s => s.put(rec)),
+  putMany: (recs) => dbTx('readwrite', s => { recs.forEach(r => s.put(r)); }),
   get: (id) => dbTx('readonly', s => s.get(id)),
   del: (id) => dbTx('readwrite', s => s.delete(id)),
   all: () => dbTx('readonly', s => s.getAll())
@@ -3301,6 +3385,27 @@ async function pruneOldReports() {
   }
 }
 
+const SEED_MARKER = '__historic-seeded';
+
+/* Writes the hand-recorded September readings the first time the app runs.
+   Never overwrites a report that already exists, and never runs twice. */
+async function seedHistoricReports() {
+  try {
+    const marker = await store.get(SEED_MARKER);
+    if (marker && marker.done) return 0;
+
+    // One read of everything, then a single write, so first launch is quick.
+    const existing = new Set((await store.all()).map(r => r.id));
+    const fresh = buildHistoricReports().filter(r => !existing.has(r.id));
+    fresh.push({ id: SEED_MARKER, done: true, at: Date.now() });
+    await store.putMany(fresh);
+    return fresh.length - 1;
+  } catch (err) {
+    console.error('could not load the recorded readings', err);
+    return 0;
+  }
+}
+
 async function loadSubmittedReports() {
   try {
     const all = await store.all();
@@ -3431,7 +3536,9 @@ function renderThresholds() {
 
 async function renderHistory() {
   const all = await store.all();
-  const saved = all.filter(r => r.id !== DRAFT_ID).sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
+  const saved = all
+    .filter(r => r.id !== DRAFT_ID && r.date && r.values)
+    .sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
   const list = el('#historyList');
   if (!saved.length) {
     list.innerHTML = '<p class="muted small">No saved reports yet.</p>';
@@ -3440,7 +3547,7 @@ async function renderHistory() {
   list.innerHTML = saved.map(r => `
     <div class="history-row">
       <span>${esc(prettyDate(r.date))}
-        <span class="muted">submitted</span></span>
+        <span class="muted">${r.source === HISTORIC_TAG ? 'recorded by hand' : 'submitted'}</span></span>
       <span class="h-actions">
         <button type="button" class="tool-btn" data-load="${esc(r.id)}">Load</button>
         <button type="button" class="tool-btn" data-delete="${esc(r.id)}">Delete</button>
@@ -3685,6 +3792,7 @@ async function boot() {
   await seedYesterdayFromHistory();
 
   try {
+    await seedHistoricReports();
     await pruneOldReports();
     previousReport = await findPreviousReport();
     submittedReports = await loadSubmittedReports();
