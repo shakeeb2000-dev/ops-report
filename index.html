@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1e3a5f">
-<meta name="build-id" content="e1575164048c">
+<meta name="build-id" content="abf4efc07429">
 <title>Daily Ops Report</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -338,6 +338,27 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
 .note-input { margin-top: 8px; }
 .note-input input { margin-top: 0; }
 
+/* ---------------- DAF running log ---------------- */
+.daf-card { border-left: 4px solid var(--line); }
+.daf-card.running { border-left-color: var(--ok); }
+.daf-card.stopped { border-left-color: var(--todo); }
+.daf-state { display: flex; gap: 11px; align-items: flex-start; margin-bottom: 11px; }
+.daf-dot { width: 13px; height: 13px; border-radius: 50%; background: #c4cad2; margin-top: 3px; flex: 0 0 13px; }
+.daf-card.running .daf-dot { background: var(--ok); box-shadow: 0 0 0 3px rgba(34,139,79,.18); }
+.daf-card.stopped .daf-dot { background: var(--todo); }
+.daf-now { font-weight: 700; font-size: .95rem; letter-spacing: .02em; }
+.daf-since { font-size: .78rem; }
+.daf-entry { margin-top: 11px; padding-top: 11px; border-top: 1px dashed var(--line); }
+.daf-list { margin-top: 11px; }
+.daf-row { display: flex; justify-content: space-between; gap: 10px; align-items: center;
+  border-top: 1px solid var(--line); padding: 8px 0; font-size: .8rem; }
+.daf-row:first-child { border-top: 0; }
+.daf-row .daf-when { color: var(--ink); }
+.daf-row .daf-what { font-weight: 700; font-size: .72rem; letter-spacing: .04em; text-transform: uppercase; }
+.daf-row .daf-what.on { color: var(--ok); }
+.daf-row .daf-what.off { color: var(--todo); }
+.daf-del { border: 0; background: none; color: var(--fault); font-size: .74rem; cursor: pointer; padding: 6px; }
+
 /* ---------------- summary ---------------- */
 .summary-empty { font-size: .85rem; color: var(--slate); }
 .sum-item { display: flex; gap: 9px; align-items: flex-start; padding: 7px 0; border-top: 1px dashed var(--line); font-size: .86rem; }
@@ -567,6 +588,38 @@ body.no-scroll { overflow: hidden; }
         <input type="text" id="fReporter" autocomplete="name">
       </label>
     </div>
+    <label>Time you took the readings
+      <input type="time" id="fReadingTime">
+    </label>
+  </section>
+
+  <!-- ---------- DAF running log ---------- -->
+  <section class="card daf-card" id="dafCard">
+    <h2>DAF plant</h2>
+    <div class="daf-state">
+      <span class="daf-dot" id="dafDot"></span>
+      <div>
+        <div class="daf-now" id="dafNow">Not logged yet</div>
+        <div class="daf-since muted" id="dafSince">&nbsp;</div>
+      </div>
+    </div>
+    <button type="button" id="btnDafToggle" class="btn btn-ghost full">Record DAF started</button>
+    <div class="daf-entry" id="dafEntry" hidden>
+      <div class="field-grid">
+        <label>Date
+          <input type="date" id="dafDate">
+        </label>
+        <label>Time
+          <input type="time" id="dafTime">
+        </label>
+      </div>
+      <p class="muted small" id="dafHint">&nbsp;</p>
+      <div class="sheet-foot">
+        <button type="button" id="btnDafCancel" class="tool-btn">Cancel</button>
+        <button type="button" id="btnDafSave" class="btn btn-primary">Save</button>
+      </div>
+    </div>
+    <div class="daf-list" id="dafList"></div>
   </section>
 
   <!-- ---------- live action summary ---------- -->
@@ -723,6 +776,9 @@ const DEFAULT_PREFIX = 'ATP-DOR';
 /* How many days of submitted reports the average usage looks back over.
    Adjustable in Settings. */
 const DEFAULT_AVG_WINDOW = 14;
+
+/* The time of the morning walk, used when a report does not carry one. */
+const DEFAULT_READING_TIME = '08:00';
 
 /* A chemical's usage tank being completely empty is always a fault, whatever
    the backup situation, so it needs no adjustable trigger. */
@@ -1177,6 +1233,77 @@ function defaultValues() {
 }
 
 /* ------------------------------------------------------------------
+   DAF running log
+   ------------------------------------------------------------------
+   The plant does not run around the clock: it starts Monday afternoon and
+   stops Friday evening, with the odd shutdown in between. Chemical use
+   therefore has to be measured per hour the DAF actually ran, not per
+   calendar day - otherwise a weekend makes it look as though usage halved.
+
+   Each event is { at: 'YYYY-MM-DDTHH:MM', on: true|false }.
+   ------------------------------------------------------------------ */
+
+function readingStamp(dateISO, time) {
+  return `${dateISO}T${time || DEFAULT_READING_TIME}`;
+}
+
+function toMs(stamp) {
+  if (!stamp) return null;
+  const t = new Date(stamp.length <= 10 ? stamp + 'T' + DEFAULT_READING_TIME : stamp).getTime();
+  return isFinite(t) ? t : null;
+}
+
+/* Turns the event list into the periods the DAF was actually on. */
+function dafIntervals(events) {
+  const list = (events || [])
+    .filter(e => e && e.at)
+    .slice()
+    .sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+  if (!list.length) return [];
+
+  const out = [];
+  // If the first thing recorded is a shutdown, it must have been running before.
+  let openedAt = list[0].on === false ? -Infinity : null;
+
+  list.forEach(e => {
+    const t = toMs(e.at);
+    if (t === null) return;
+    if (e.on) {
+      if (openedAt === null) openedAt = t;        // ignore a second "started"
+    } else if (openedAt !== null) {
+      out.push([openedAt, t]);
+      openedAt = null;
+    }
+  });
+  if (openedAt !== null) out.push([openedAt, Infinity]);
+  return out;
+}
+
+/* Hours the DAF ran between two moments. */
+function dafHoursBetween(events, fromStamp, toStamp) {
+  const a = toMs(fromStamp), b = toMs(toStamp);
+  if (a === null || b === null || b <= a) return 0;
+  let total = 0;
+  dafIntervals(events).forEach(([s, e]) => {
+    const lo = Math.max(s, a), hi = Math.min(e, b);
+    if (hi > lo) total += (hi - lo) / 3600000;
+  });
+  return Math.round(total * 100) / 100;
+}
+
+/* Is the DAF running as things stand? */
+function dafRunningNow(events, nowStamp) {
+  const now = nowStamp ? toMs(nowStamp) : Date.now();
+  return dafIntervals(events).some(([s, e]) => now >= s && now < e);
+}
+
+function dafLastEvent(events) {
+  const list = (events || []).filter(e => e && e.at).slice()
+    .sort((a, b) => (a.at < b.at ? -1 : 1));
+  return list.length ? list[list.length - 1] : null;
+}
+
+/* ------------------------------------------------------------------
    Readings recorded by hand before the app existed
    ------------------------------------------------------------------
    Each entry is a morning reading: [usage tank level, backup level].
@@ -1210,6 +1337,18 @@ const HISTORIC_NOTE = {
 
 const HISTORIC_TAG = 'recorded-by-hand';
 
+/* The DAF times for those weeks, as recorded on paper.
+   Note: the shutdown was given as "19 Sep Friday", but 19 Sep is a Saturday.
+   Friday 18 Sep is the reading that makes every day's rate consistent, so that
+   is what is used here. */
+const HISTORIC_DAF_LOG = [
+  { at: '2026-09-11T16:00', on: false },
+  { at: '2026-09-15T11:00', on: true },
+  { at: '2026-09-18T16:00', on: false },
+  { at: '2026-09-21T14:00', on: true },
+  { at: '2026-09-24T16:00', on: false }
+];
+
 /* Turns those readings into report records the average can read. */
 function buildHistoricReports() {
   const chems = ['caustic', 'coagulant', 'flocculant', 'sulphuric'];
@@ -1235,6 +1374,7 @@ function buildHistoricReports() {
       lastCheckDate: prev ? prev.date : null,
       values,
       photos: {},
+      readingTime: DEFAULT_READING_TIME,
       generalNote: HISTORIC_NOTE[row.date] || '',
       source: HISTORIC_TAG,
       savedAt: new Date(row.date + 'T07:00:00').getTime()
@@ -1253,7 +1393,7 @@ function buildHistoricReports() {
    that rose with nothing recorded - so they cannot distort the average.
    ------------------------------------------------------------------ */
 
-function usageFromReport(item, report) {
+function usageFromReport(item, report, dafEvents) {
   if (!report || !report.values) return null;
   const v = report.values[item.id];
   if (!v) return null;
@@ -1262,32 +1402,57 @@ function usageFromReport(item, report) {
   if (!u) return null;
   if (u.unconfirmed || u.missingLitres > 0) return null;
   if (u.used < 0) return null;
-  return { date: report.date, used: u.used, days: u.days, perDay: u.used / u.days };
+
+  // Chemicals are measured per DAF running hour; the boiler tanks stay on days.
+  // With no running log at all there are no hours to divide by, so it falls
+  // back to calendar days rather than reporting nothing.
+  let hours = null;
+  if (item.topUp === 'ibc' && report.lastCheckDate && (dafEvents || []).length) {
+    hours = dafHoursBetween(dafEvents,
+      readingStamp(report.lastCheckDate, report.lastReadingTime || DEFAULT_READING_TIME),
+      readingStamp(report.date, report.readingTime || DEFAULT_READING_TIME));
+  }
+
+  return {
+    date: report.date, used: u.used, days: u.days,
+    hours, perDay: u.used / u.days,
+    perHour: hours && hours > 0 ? u.used / hours : null
+  };
 }
 
 /* Average usage per day across the window, weighted by days rather than by
    report, so a three-day gap counts for three days. */
-function usageStats(item, reports, windowDays, today) {
+function usageStats(item, reports, windowDays, today, dafEvents) {
   const window = windowDays > 0 ? windowDays : DEFAULT_AVG_WINDOW;
   const series = [];
-  let totalUsed = 0;
-  let totalDays = 0;
+  let totalUsed = 0, totalDays = 0, totalHours = 0;
+  let hourUsed = 0;          // only the periods with real running hours
 
   (reports || []).forEach(r => {
     const age = daysBetween(r.date, today);
     if (age !== null && age > window) return;      // older than the window
-    const u = usageFromReport(item, r);
+    const u = usageFromReport(item, r, dafEvents);
     if (!u) return;
+    // A period with no running hours means the plant never ran - nothing to
+    // learn from it, and it would only drag the figure down.
+    if (u.hours !== null && u.hours <= 0) return;
     series.push(u);
     totalUsed += u.used;
     totalDays += u.days;
+    if (u.hours) { totalHours += u.hours; hourUsed += u.used; }
   });
 
   series.sort((a, b) => (a.date < b.date ? -1 : 1));
+  const perHour = totalHours > 0 ? hourUsed / totalHours : null;
   return {
     series,
     avgPerDay: totalDays > 0 ? totalUsed / totalDays : null,
+    avgPerHour: perHour,
+    hoursCovered: totalHours,
     daysCovered: totalDays,
+    // Observed running hours per calendar day, so "days left" comes from the
+    // plant's actual pattern rather than an assumption.
+    hoursPerDay: totalDays > 0 && totalHours > 0 ? totalHours / totalDays : null,
     window
   };
 }
@@ -1296,6 +1461,12 @@ function usageStats(item, reports, windowDays, today) {
 function daysLeftFromAverage(onHand, avgPerDay) {
   if (onHand === null || !avgPerDay || avgPerDay <= 0) return null;
   return onHand / avgPerDay;
+}
+
+/* Running hours of stock left, for the chemicals. */
+function hoursLeftFromAverage(onHand, avgPerHour) {
+  if (onHand === null || !avgPerHour || avgPerHour <= 0) return null;
+  return onHand / avgPerHour;
 }
 
 /* Copies the current readings into the "last check" boxes and clears the
@@ -1801,6 +1972,8 @@ const BRAND = {
   ink:       [26, 32, 44],
   navy:      [13, 105, 56],   // headers follow the brand green
   slate:     [104, 114, 126],
+  // Readings and values: near-black so they are easy to read at a glance.
+  value:     [32, 38, 48],
   hairline:  [226, 230, 235],
   zebra:     [248, 250, 249],
   ok:        [13, 105, 56],
@@ -1860,17 +2033,22 @@ function plural(n, word) {
    Evaluation
    ------------------------------------------------------------------ */
 
-function evaluate(state, previous, history) {
+function evaluate(state, previous, history, dafEvents) {
   // Always work from a complete set of thresholds, so a report saved by an
   // older version cannot bring the calculation down with a missing limit.
   const thresholds = mergeThresholds(state.thresholds);
   const gapDays = daysBetween(state.lastCheckDate, state.date);
   const submitted = history || [];
   const avgWindow = state.avgWindowDays || DEFAULT_AVG_WINDOW;
+  const daf = dafEvents || [];
+  const dafHours = daf.length ? dafHoursBetween(daf,
+    readingStamp(state.lastCheckDate, state.lastReadingTime),
+    readingStamp(state.date, state.readingTime)) : null;
 
   const result = {
     items: {}, counts: { ok: 0, watch: 0, fault: 0, todo: 0, blank: 0 },
-    actions: {}, gapDays, lastCheckDate: state.lastCheckDate || null, stock: []
+    actions: {}, gapDays, dafHours,
+    lastCheckDate: state.lastCheckDate || null, stock: []
   };
 
   CHECKLIST.forEach(section => {
@@ -1937,9 +2115,19 @@ function evaluate(state, previous, history) {
 
           // Average across the window, including today's own figure.
           const stats = usageStats(item,
-            submitted.concat([{ date: state.date, lastCheckDate: state.lastCheckDate, values: state.values }]),
-            avgWindow, state.date);
-          const left = daysLeftFromAverage(onHand, stats.avgPerDay);
+            submitted.concat([{
+              date: state.date, lastCheckDate: state.lastCheckDate,
+              readingTime: state.readingTime, lastReadingTime: state.lastReadingTime,
+              values: state.values
+            }]),
+            avgWindow, state.date, daf);
+
+          // Chemicals run on DAF hours; the boiler tanks stay on days.
+          const byHour = item.topUp === 'ibc' && stats.avgPerHour;
+          const hoursLeft = byHour ? hoursLeftFromAverage(onHand, stats.avgPerHour) : null;
+          const left = byHour
+            ? (stats.hoursPerDay ? hoursLeft / stats.hoursPerDay : null)
+            : daysLeftFromAverage(onHand, stats.avgPerDay);
 
           // Levels alone decide the status. Usage and days left are information.
           status = manual || levelStatus;
@@ -1949,7 +2137,7 @@ function evaluate(state, previous, history) {
                 : `${fmtQty(inUse)} ${item.unit}`)
             : (manual ? 'Not measured' : '-');
 
-          if (usage) sum = buildStockSum(item, v, usage, left, state, stats);
+          if (usage) sum = buildStockSum(item, v, usage, left, state, stats, dafHours, hoursLeft);
 
           const bits = [];
           if (hasAny) {
@@ -1972,8 +2160,10 @@ function evaluate(state, previous, history) {
           result.stock.push({
             id: item.id, label: item.label, unit: item.unit, onHand,
             kind: item.topUp === 'ibc' ? 'chemical' : 'boiler',
-            avgPerDay: stats.avgPerDay, daysCovered: stats.daysCovered,
-            daysLeft: left, unconfirmed: !!(usage && usage.unconfirmed),
+            avgPerDay: stats.avgPerDay, avgPerHour: stats.avgPerHour,
+            daysCovered: stats.daysCovered, hoursCovered: stats.hoursCovered,
+            hoursLeft, daysLeft: left,
+            unconfirmed: !!(usage && usage.unconfirmed),
             status
           });
 
@@ -2045,7 +2235,7 @@ function evaluate(state, previous, history) {
 }
 
 /* The lines of the stock sum, ready to print as a block. */
-function buildStockSum(item, v, usage, left, state, stats) {
+function buildStockSum(item, v, usage, left, state, stats, dafHours, hoursLeft) {
   const u = item.unit;
   const lastLabel = state.lastCheckDate
     ? `Last check (${shortDate(state.lastCheckDate)})`
@@ -2096,9 +2286,23 @@ function buildStockSum(item, v, usage, left, state, stats) {
       ? `Stock is higher than it should be - at least ${plural(usage.missingIbcs, 'IBC')} arrived without being recorded.`
       : `Stock is higher than it should be - ${fmtQty(usage.missingLitres)} ${item.unit} was added without being recorded.`;
   } else {
+    // Chemicals are reported per DAF running hour, which is the only figure
+    // that stays comparable across weekends and shutdowns.
+    if (item.topUp === 'ibc' && dafHours !== null && dafHours > 0) {
+      rows.push({ label: 'DAF ran', detail: '', value: `${fmtQty(dafHours, 1)} hrs` });
+    }
     total = { label: `Used${period}`, value: `${fmtQty(usage.used)} ${u}` };
+
     const parts = [];
-    if (stats && stats.avgPerDay && stats.daysCovered >= 2) {
+    if (item.topUp === 'ibc' && stats && stats.avgPerHour) {
+      parts.push(`Average ${fmtQty(stats.avgPerHour, 1)} ${u} per running hour`);
+      if (hoursLeft !== null) {
+        let bit = `about ${fmtQty(hoursLeft, 0)} running hours left`;
+        if (left !== null) bit += ` (roughly ${fmtDays(left)})`;
+        parts.push(bit);
+      }
+      parts.push(`measured over ${fmtQty(stats.hoursCovered, 0)} DAF hours`);
+    } else if (stats && stats.avgPerDay && stats.daysCovered >= 2) {
       parts.push(`Average use ${fmtQty(stats.avgPerDay)} ${u}/day over ${plural(stats.daysCovered, 'day')}`);
       if (left !== null) parts.push(`about ${fmtDays(left)} left`);
     } else if (usage.days > 1 && usage.used > 0) {
@@ -2340,16 +2544,16 @@ function buildPdf(state, evaluated, previous) {
 
     const cols = {
       label: L + 8,
-      onSite: L + W * 0.54,
-      avg: L + W * 0.74,
+      onSite: L + W * 0.42,
+      avg: L + W * 0.62,
       days: R - 8
     };
 
     doc.roundRect(L, doc.y, W, 16, 3, { fill: [240, 246, 242] });
     doc.text('CHEMICAL', cols.label, doc.y + 11, { size: 6.6, bold: true, colour: BRAND.slate, tracking: 0.6 });
     doc.text('ON SITE', cols.onSite, doc.y + 11, { size: 6.6, bold: true, colour: BRAND.slate, align: 'right', tracking: 0.6 });
-    doc.text('AVG / DAY', cols.avg, doc.y + 11, { size: 6.6, bold: true, colour: BRAND.slate, align: 'right', tracking: 0.6 });
-    doc.text('DAYS LEFT', cols.days, doc.y + 11, { size: 6.6, bold: true, colour: BRAND.slate, align: 'right', tracking: 0.6 });
+    doc.text('PER DAF HOUR', cols.avg, doc.y + 11, { size: 6.6, bold: true, colour: BRAND.slate, align: 'right', tracking: 0.6 });
+    doc.text('RUNNING HOURS LEFT', cols.days, doc.y + 11, { size: 6.6, bold: true, colour: BRAND.slate, align: 'right', tracking: 0.6 });
     doc.y += 16;
 
     chemStock.forEach((s, i) => {
@@ -2358,13 +2562,17 @@ function buildPdf(state, evaluated, previous) {
       const mid = doc.y + 13.5;
       doc.text(s.label, cols.label, mid, { size: 8.6, colour: BRAND.ink });
       doc.text(`${fmtQty(s.onHand)} ${s.unit}`, cols.onSite, mid,
-        { size: 8.6, bold: true, colour: BRAND.ink, align: 'right' });
-      doc.text(s.unconfirmed ? 'n/a' : (s.avgPerDay ? `${fmtQty(s.avgPerDay)} ${s.unit}` : '-'),
-        cols.avg, mid, { size: 8.6, colour: BRAND.slate, align: 'right' });
-      const daysTxt = s.daysLeft === null ? '-' : fmtDays(s.daysLeft);
+        { size: 9.2, bold: true, colour: BRAND.ink, align: 'right' });
+      doc.text(s.unconfirmed ? 'n/a' : (s.avgPerHour ? `${fmtQty(s.avgPerHour, 1)} ${s.unit}` : '-'),
+        cols.avg, mid, { size: 9.2, colour: BRAND.value, align: 'right' });
+      let leftTxt = '-';
+      if (s.hoursLeft !== null && s.hoursLeft !== undefined) {
+        leftTxt = `${fmtQty(s.hoursLeft, 0)} hrs`;
+        if (s.daysLeft !== null) leftTxt += ` (~${fmtDays(s.daysLeft)})`;
+      }
       const strong = s.status === STATUS.FAULT || s.status === STATUS.WATCH;
-      doc.text(daysTxt, cols.days, mid, {
-        size: 8.6, bold: strong, align: 'right',
+      doc.text(leftTxt, cols.days, mid, {
+        size: 9.2, bold: strong, align: 'right',
         colour: strong ? STATUS_META[s.status].colour : BRAND.ink
       });
       doc.y += rowH;
@@ -2425,7 +2633,7 @@ function buildPdf(state, evaluated, previous) {
           === STATUS_META[ev.status].label.toLowerCase();
         if (item.type !== 'status' && !badgeSaysIt) {
           doc.text(ev.display, R - 84, doc.y + 13,
-            { size: 8.6, colour: BRAND.slate, align: 'right' });
+            { size: 9.2, colour: BRAND.value, align: 'right' });
         }
         doc.y += rowH;
 
@@ -2445,12 +2653,12 @@ function buildPdf(state, evaluated, previous) {
           const refs = ev.photos.map((_, i) =>
             `Photo ${photoOrder.length - ev.photos.length + i + 1}`).join(', ');
           doc.ensure(13);
-          doc.text(`see ${refs}`, L + 16, doc.y + 9, { size: 7.8, colour: [90, 120, 170] });
+          doc.text(`see ${refs}`, L + 16, doc.y + 9, { size: 8.2, colour: [52, 92, 150] });
           doc.y += 12;
         }
         if (ev.note) {
           const h = doc.paragraph(`Note: ${ev.note}`, L + 16, doc.y, W - 32,
-            { size: 8, colour: BRAND.slate, leading: 10.5, italic: true });
+            { size: 8.4, colour: BRAND.value, leading: 11, italic: true });
           doc.y += h + 2;
         }
       });
@@ -2499,7 +2707,7 @@ function buildPdf(state, evaluated, previous) {
       doc.text(`Photo ${i + 1} \u00B7 ${entry.label}`, x, rowTop + dh + 15,
         { size: 8, bold: true, colour: BRAND.ink });
       doc.text(`${entry.owner} \u00B7 ${entry.group}`, x, rowTop + dh + 26,
-        { size: 7.2, colour: BRAND.slate });
+        { size: 7.8, colour: BRAND.value });
 
       if (col === 1) {
         rowTop += blockH + 14;
@@ -2529,8 +2737,8 @@ function itemHeight(doc, item, ev) {
 function sum_wrapWidth(doc) { return doc.contentWidth; }
 
 function sumHeight(W, sum) {
-  const footerLines = sum.footer ? wrapText(sum.footer, 8, false, W - 60) : [];
-  return 8 + sum.rows.length * 14 + 20 + (footerLines.length * 10.5) + 6;
+  const footerLines = sum.footer ? wrapText(sum.footer, 8.6, false, W - 60) : [];
+  return 8 + sum.rows.length * 14 + 20 + (footerLines.length * 11) + 8;
 }
 
 /* Boiler dose tanks, one line each with the whole movement on it. */
@@ -2562,15 +2770,15 @@ function drawCompactStock(doc, items, evaluated, L, R, W) {
     if (i % 2 === 1) doc.rect(L, doc.y, W, rowH, { fill: BRAND.zebra });
     doc.rect(L, doc.y, 2.5, rowH, { fill: STATUS_META[ev.status].colour });
 
-    const base = { size: 8.6, colour: BRAND.ink };
+    const base = { size: 8.8, colour: BRAND.ink };
     doc.text(item.label, cols.label, doc.y + 12.5, base);
-    doc.text(sum.rows[0].value, cols.last, doc.y + 12.5, { ...base, align: 'right', colour: BRAND.slate });
-    doc.text(sum.rows[1].value, cols.added, doc.y + 12.5, { ...base, align: 'right', colour: BRAND.slate });
+    doc.text(sum.rows[0].value, cols.last, doc.y + 12.5, { ...base, align: 'right', colour: BRAND.value });
+    doc.text(sum.rows[1].value, cols.added, doc.y + 12.5, { ...base, align: 'right', colour: BRAND.value });
     doc.text(sum.rows[2].value, cols.now, doc.y + 12.5, { ...base, align: 'right' });
     doc.text(sum.total.value, cols.used, doc.y + 12.5, { ...base, align: 'right', bold: true });
     const st = (evaluated.stock || []).find(x => x.id === item.id);
     doc.text(st && st.avgPerDay ? `${fmtQty(st.avgPerDay)} ${item.unit}` : '-',
-      cols.avg, doc.y + 12.5, { ...base, align: 'right', colour: BRAND.slate });
+      cols.avg, doc.y + 12.5, { ...base, align: 'right', colour: BRAND.value });
     doc.badge(ev.badge, STATUS_ICON[ev.status], R - 6, doc.y + 2.5, STATUS_META[ev.status].colour);
     doc.y += rowH;
 
@@ -2592,7 +2800,7 @@ function drawCompactStock(doc, items, evaluated, L, R, W) {
    managers act on, so it gets real size and contrast. */
 function drawStockSum(doc, sum, L, R, W) {
   const rowH = 14;
-  const footerLines = sum.footer ? wrapText(sum.footer, 8, false, W - 60) : [];
+  const footerLines = sum.footer ? wrapText(sum.footer, 8.6, false, W - 60) : [];
   const boxH = sumHeight(W, sum);
   doc.ensure(boxH + 4);
 
@@ -2608,21 +2816,23 @@ function drawStockSum(doc, sum, L, R, W) {
   sum.rows.forEach(row => {
     doc.text(row.label, labelX, y + 10, { size: 8.6, colour: BRAND.sumInk });
     if (row.detail) {
-      doc.text(row.detail, detailX, y + 10, { size: 8.2, colour: [92, 122, 158], align: 'right' });
+      doc.text(row.detail, detailX, y + 10,
+        { size: 8.8, colour: BRAND.sumInk, align: 'right' });
     }
-    doc.text(row.value, valueX, y + 10, { size: 8.8, colour: BRAND.sumInk, align: 'right' });
+    doc.text(row.value, valueX, y + 10,
+      { size: 9.2, bold: true, colour: BRAND.sumInk, align: 'right' });
     y += rowH;
   });
 
   doc.hline(labelX, valueX, y + 2, BRAND.sumEdge, 0.8);
   y += 4;
-  doc.text(sum.total.label, labelX, y + 12, { size: 10, bold: true, colour: BRAND.sumInk });
+  doc.text(sum.total.label, labelX, y + 12, { size: 10.5, bold: true, colour: BRAND.sumInk });
   doc.text(sum.total.value, valueX, y + 12,
-    { size: 11, bold: true, colour: BRAND.sumInk, align: 'right' });
+    { size: 11.5, bold: true, colour: BRAND.sumInk, align: 'right' });
   y += 18;
 
   footerLines.forEach((line, i) => {
-    doc.text(line, labelX, y + 9 + i * 10.5, { size: 8, colour: [76, 106, 142] });
+    doc.text(line, labelX, y + 9.5 + i * 11, { size: 8.6, colour: BRAND.sumInk });
   });
 
   doc.y += boxH + 4;
@@ -2745,6 +2955,11 @@ const store = {
 
 /* ---------------- state ---------------- */
 
+function nowHHMM() {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
 function todayISO() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -2756,6 +2971,9 @@ let saveTimer = null;
 let previousReport = null;
 /* Submitted reports, newest last. Feeds the average usage figures. */
 let submittedReports = [];
+/* DAF start/stop events. Shared by every report, so adding a past event
+   corrects the figures for earlier days too. */
+let dafEvents = [];
 
 function blankState() {
   return {
@@ -2765,6 +2983,8 @@ function blankState() {
     site: DEFAULT_SITE,
     reportPrefix: DEFAULT_PREFIX,
     avgWindowDays: DEFAULT_AVG_WINDOW,
+    readingTime: nowHHMM(),
+    lastReadingTime: DEFAULT_READING_TIME,
     logo: null,
     lastCheckDate: null,
     generalNote: '',
@@ -3152,7 +3372,7 @@ function dataUrlToBytes(dataUrl) {
 /* ---------------- refresh (pills, dots, summary, progress) ---------------- */
 
 function refresh() {
-  const ev = evaluate(state, previousReport, submittedReports);
+  const ev = evaluate(state, previousReport, submittedReports, dafEvents);
 
   Object.keys(ev.items).forEach(id => {
     const pill = document.querySelector(`[data-pill="${id}"]`);
@@ -3295,10 +3515,11 @@ async function startNewReport() {
   // Today's levels become the next report's starting point.
   const carriedStock = carryStockForward(state.values);
   const previousDate = state.date;
+  const previousTime = state.readingTime || DEFAULT_READING_TIME;
   state = {
     ...blankState(), ...carriedSettings(),
     values: { ...defaultValues(), ...carriedStock },
-    lastCheckDate: previousDate, id: DRAFT_ID
+    lastCheckDate: previousDate, lastReadingTime: previousTime, id: DRAFT_ID
   };
 
   await store.put({ ...state, savedAt: Date.now() });
@@ -3385,6 +3606,23 @@ async function pruneOldReports() {
   }
 }
 
+const DAF_KEY = '__daf-log';
+
+async function loadDafLog() {
+  try {
+    const rec = await store.get(DAF_KEY);
+    dafEvents = (rec && Array.isArray(rec.events)) ? rec.events : [];
+  } catch (err) {
+    console.error('could not load the DAF log', err);
+    dafEvents = [];
+  }
+}
+
+async function saveDafLog() {
+  dafEvents.sort((a, b) => (a.at < b.at ? -1 : 1));
+  await store.put({ id: DAF_KEY, events: dafEvents, savedAt: Date.now() });
+}
+
 const SEED_MARKER = '__historic-seeded';
 
 /* Writes the hand-recorded September readings the first time the app runs.
@@ -3444,7 +3682,10 @@ async function seedYesterdayFromHistory() {
         if (num(from.backup) !== null) { target.prevBackup = String(num(from.backup)); seeded = true; }
       }
     });
-    if (seeded && !state.lastCheckDate) state.lastCheckDate = source.date || null;
+    if (seeded && !state.lastCheckDate) {
+      state.lastCheckDate = source.date || null;
+      state.lastReadingTime = source.readingTime || DEFAULT_READING_TIME;
+    }
   } catch (err) {
     console.error('could not seed yesterday figures', err);
   }
@@ -3463,7 +3704,7 @@ async function findPreviousReport() {
 /* ---------------- WhatsApp sheet ---------------- */
 
 function showWhatsApp() {
-  const ev = evaluate(state, previousReport, submittedReports);
+  const ev = evaluate(state, previousReport, submittedReports, dafEvents);
   const messages = buildWhatsApp(state, ev);
   el('#waBody').innerHTML = messages.map((m, i) => `
     <div class="wa-block">
@@ -3624,6 +3865,90 @@ function toast(msg) {
 
 /* ---------------- wiring ---------------- */
 
+/* ---------------- DAF running log ---------------- */
+
+function renderDaf() {
+  const card = el('#dafCard');
+  const running = dafRunningNow(dafEvents);
+  const last = dafLastEvent(dafEvents);
+
+  card.classList.remove('running', 'stopped');
+  if (last) card.classList.add(running ? 'running' : 'stopped');
+
+  el('#dafNow').textContent = !last ? 'Not logged yet'
+    : (running ? 'DAF RUNNING' : 'DAF STOPPED');
+  el('#dafSince').textContent = last
+    ? `since ${prettyStamp(last.at)}`
+    : 'Record when the plant starts or stops';
+  el('#btnDafToggle').textContent = running ? 'Record DAF stopped' : 'Record DAF started';
+
+  // last few entries, newest first
+  const recent = dafEvents.slice().sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, 6);
+  el('#dafList').innerHTML = recent.length ? recent.map(e => `
+    <div class="daf-row">
+      <span class="daf-when">${esc(prettyStamp(e.at))}</span>
+      <span>
+        <span class="daf-what ${e.on ? 'on' : 'off'}">${e.on ? 'Started' : 'Stopped'}</span>
+        <button type="button" class="daf-del" data-dafdel="${esc(e.at)}">remove</button>
+      </span>
+    </div>`).join('') : '';
+}
+
+function prettyStamp(stamp) {
+  if (!stamp) return '';
+  const [d, t] = String(stamp).split('T');
+  return `${prettyDate(d)}, ${t || ''}`.trim();
+}
+
+function openDafEntry() {
+  const running = dafRunningNow(dafEvents);
+  el('#dafDate').value = todayISO();
+  el('#dafTime').value = nowHHMM();
+  el('#dafHint').textContent = running
+    ? 'When did the DAF stop? Change the date and time if it was earlier.'
+    : 'When did the DAF start? Change the date and time if it was earlier.';
+  el('#dafEntry').hidden = false;
+}
+
+async function saveDafEntry() {
+  const date = el('#dafDate').value;
+  const time = el('#dafTime').value;
+  if (!date || !time) { toast('Pick a date and a time'); return; }
+
+  const at = `${date}T${time}`;
+  const on = !dafRunningNow(dafEvents);
+
+  // Two of the same in a row cannot be right.
+  const before = dafEvents.filter(e => e.at <= at).sort((a, b) => (a.at < b.at ? -1 : 1));
+  const prev = before.length ? before[before.length - 1] : null;
+  if (prev && prev.on === on) {
+    toast(`Already ${on ? 'started' : 'stopped'} at that point - check the time`);
+    return;
+  }
+
+  dafEvents.push({ at, on });
+  await saveDafLog();
+  el('#dafEntry').hidden = true;
+  renderDaf();
+  refresh();
+  toast(on ? 'DAF start recorded' : 'DAF stop recorded');
+}
+
+function bindDaf() {
+  el('#btnDafToggle').addEventListener('click', openDafEntry);
+  el('#btnDafCancel').addEventListener('click', () => { el('#dafEntry').hidden = true; });
+  el('#btnDafSave').addEventListener('click', saveDafEntry);
+  el('#dafList').addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-dafdel]');
+    if (!btn) return;
+    dafEvents = dafEvents.filter(x => x.at !== btn.dataset.dafdel);
+    await saveDafLog();
+    renderDaf();
+    refresh();
+    toast('Entry removed');
+  });
+}
+
 /* ---------------- company logo ---------------- */
 
 const LOGO_MAX_EDGE = 420;
@@ -3680,6 +4005,7 @@ function showBuildId() {
 function hydrateFields() {
   el('#fDate').value = state.date;
   el('#fReporter').value = state.reporter || '';
+  el('#fReadingTime').value = state.readingTime || DEFAULT_READING_TIME;
   el('#fSite').value = state.site || '';
   el('#fPrefix').value = state.reportPrefix || DEFAULT_PREFIX;
   el('#fAvgWindow').value = state.avgWindowDays || DEFAULT_AVG_WINDOW;
@@ -3695,6 +4021,11 @@ function bindShell() {
     refresh();
   });
   el('#fReporter').addEventListener('input', e => { state.reporter = e.target.value; queueSave(); refresh(); });
+  el('#fReadingTime').addEventListener('change', e => {
+    state.readingTime = e.target.value || DEFAULT_READING_TIME;
+    queueSave();
+    refresh();
+  });
   el('#fSite').addEventListener('input', e => { state.site = e.target.value; queueSave(); });
   el('#fAvgWindow').addEventListener('input', e => {
     const n = Math.round(Number(e.target.value));
@@ -3777,6 +4108,10 @@ async function boot() {
           ...blankState(), ...carriedSettings(),
           values: { ...defaultValues(), ...carriedStock },
           lastCheckDate: hadReadings ? draft.date : (draft.lastCheckDate || null),
+          lastReadingTime: hadReadings
+            ? (draft.readingTime || DEFAULT_READING_TIME)
+            : (draft.lastReadingTime || DEFAULT_READING_TIME),
+          readingTime: nowHHMM(),
           id: DRAFT_ID
         };
       }
@@ -3793,6 +4128,12 @@ async function boot() {
 
   try {
     await seedHistoricReports();
+    await loadDafLog();
+    if (!dafEvents.length) {
+      // The times recorded on paper for those first weeks.
+      dafEvents = HISTORIC_DAF_LOG.slice();
+      await saveDafLog();
+    }
     await pruneOldReports();
     previousReport = await findPreviousReport();
     submittedReports = await loadSubmittedReports();
@@ -3807,6 +4148,8 @@ async function boot() {
   bindThresholds();  // delegated, attached once
   bindLogo();
   renderLogo();
+  bindDaf();
+  renderDaf();
   render();
   renderThresholds();
 
