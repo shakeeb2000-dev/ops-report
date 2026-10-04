@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1e3a5f">
-<meta name="build-id" content="0ca259b51213">
+<meta name="build-id" content="947e3ecffca8">
 <title>Daily Ops Report</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -728,6 +728,34 @@ body.no-scroll { overflow: hidden; }
     <label>Look back this many days
       <input type="number" id="fAvgWindow" inputmode="numeric" step="1" min="1" placeholder="14">
     </label>
+
+    <hr>
+    <h2>Backup &amp; moving between devices</h2>
+    <p class="muted small">
+      Each device keeps its own copy &mdash; your phone and your PC do not talk to
+      each other. Save a backup file here and load it on the other device to bring
+      them together. Readings and dosing times from both are combined; where the
+      same morning exists on both, the one saved later is kept. Photos are not
+      included.
+    </p>
+    <p class="muted small">
+      <strong>This is also your only backup.</strong> Save one now and again &mdash;
+      if the phone is lost or cleared, everything goes with it.
+    </p>
+    <div class="sheet-foot">
+      <button id="btnBackupExport" class="btn btn-ghost">Save a backup</button>
+      <button id="btnBackupImport" class="btn btn-ghost">Load a backup</button>
+    </div>
+    <input type="file" id="backupInput" accept=".json,application/json" hidden>
+
+    <hr>
+    <h2>App version</h2>
+    <p class="muted small">
+      Running version <span id="buildId">dev</span>. If the version here does not
+      match what you uploaded, tap below &mdash; the phone can hold on to the old
+      copy otherwise.
+    </p>
+    <button id="btnCheckUpdate" class="btn btn-ghost full">&#10227; Check for an update</button>
 
     <hr>
     <h2>Where the water speed comes from</h2>
@@ -3665,6 +3693,10 @@ function todayISO() {
 let state = blankState();
 let saveTimer = null;
 let meterSaveTimer = null;
+/* The service worker registration, kept so Settings can ask for an update on
+   demand rather than leaving it to chance. */
+let swReg = null;
+let swReloading = false;
 /* The most recent saved report before today's, used for chemical usage. */
 let previousReport = null;
 /* Submitted reports, newest last. Feeds the average usage figures. */
@@ -5029,6 +5061,216 @@ function renderDosingAudit() {
     : '<p class="muted small">No dosing entries recorded.</p>';
 }
 
+/* ---------------- backup, and moving data between devices ----------------
+
+   There is no server behind this app: every phone and PC keeps its own copy in
+   its own browser, which is why two devices show different figures. Proper
+   live sync would need a database and an account somewhere.
+
+   This is the offline equivalent - one file holding everything, which can be
+   sent by WhatsApp or email and loaded on the other device. It doubles as the
+   only backup there is: lose the phone today and the lot goes with it. */
+
+const BACKUP_VERSION = 1;
+
+/* Records that must not travel. The draft is whatever that device happens to
+   have half-finished, and the seed markers have to be judged locally. */
+const BACKUP_SKIP = new Set([DRAFT_ID, SEED_MARKER]);
+
+async function buildBackup() {
+  const all = await store.all();
+  const records = all
+    .filter(r => r && r.id && !BACKUP_SKIP.has(r.id))
+    .map(r => {
+      // Photos are stripped: they are already sent out with the report and
+      // would make the file far too big to pass between devices.
+      const copy = { ...r, photos: {} };
+      if (copy.values) {
+        copy.values = {};
+        Object.entries(r.values).forEach(([k, v]) => { copy.values[k] = { ...v, photos: [] }; });
+      }
+      return copy;
+    });
+  return {
+    app: 'ops-report', version: BACKUP_VERSION,
+    exportedAt: new Date().toISOString(),
+    site: state.site || DEFAULT_SITE,
+    records
+  };
+}
+
+async function exportBackup() {
+  try {
+    const payload = await buildBackup();
+    const text = JSON.stringify(payload);
+    const name = `ops-report-backup-${todayISO()}.json`;
+    const blob = new Blob([text], { type: 'application/json' });
+    const file = new File([blob], name, { type: 'application/json' });
+
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: name });
+        toast('Backup shared');
+        return;
+      } catch (err) {
+        if (err && err.name === 'AbortError') return;
+      }
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    toast(`Backup saved - ${payload.records.length} records`);
+  } catch (err) {
+    console.error('could not build the backup', err);
+    toast('Could not make the backup');
+  }
+}
+
+/* Folds an incoming record into what is already here.
+
+   Reports: the one saved later wins, so the device used most recently for a
+   given morning is the one that counts.
+
+   The two logs are different - they are not one record per day but a list of
+   moments, and each device may hold moments the other has never seen. Letting
+   the later save win would throw away whichever list was written first, so the
+   entries are merged by their timestamp instead. */
+function mergeBackupRecord(mine, theirs) {
+  if (!mine) return theirs;
+
+  if (theirs.id === METER_KEY) {
+    const by = new Map((mine.readings || []).map(e => [e.at, e]));
+    (theirs.readings || []).forEach(e => { if (e && e.at) by.set(e.at, e); });
+    return {
+      ...mine,
+      readings: Array.from(by.values()).sort((a, b) => (a.at < b.at ? -1 : 1)),
+      savedAt: Date.now()
+    };
+  }
+
+  if (theirs.id === DOSING_KEY) {
+    const by = new Map((mine.events || []).map(e => [e.at, e]));
+    (theirs.events || []).forEach(e => { if (e && e.at) by.set(e.at, e); });
+    return {
+      ...mine,
+      events: Array.from(by.values()).sort((a, b) => (a.at < b.at ? -1 : 1)),
+      savedAt: Date.now()
+    };
+  }
+
+  // A report the operator submitted always beats a recorded-by-hand copy,
+  // whichever was saved later.
+  const mineReal = mine.source !== HISTORIC_TAG;
+  const theirsReal = theirs.source !== HISTORIC_TAG;
+  if (mineReal !== theirsReal) return mineReal ? mine : theirs;
+
+  return (Number(theirs.savedAt) || 0) > (Number(mine.savedAt) || 0) ? theirs : mine;
+}
+
+async function importBackup(text) {
+  let payload;
+  try {
+    payload = JSON.parse(text);
+  } catch {
+    toast('That file could not be read');
+    return;
+  }
+  if (!payload || payload.app !== 'ops-report' || !Array.isArray(payload.records)) {
+    toast('That is not an ops report backup');
+    return;
+  }
+  if (Number(payload.version) > BACKUP_VERSION) {
+    toast('That backup came from a newer version of the app');
+    return;
+  }
+
+  const when = payload.exportedAt ? payload.exportedAt.slice(0, 10) : 'an unknown date';
+  const ok = confirm(
+    `Load ${payload.records.length} records from ${when}?\n\n`
+    + 'Readings and dosing times from both devices are combined. Where the same '
+    + 'morning exists on both, the one saved later is kept.\n\n'
+    + 'The report on screen is not touched.'
+  );
+  if (!ok) return;
+
+  try {
+    const byId = new Map((await store.all()).map(r => [r.id, r]));
+    const merged = [];
+    payload.records.forEach(rec => {
+      if (!rec || !rec.id || BACKUP_SKIP.has(rec.id)) return;
+      merged.push(mergeBackupRecord(byId.get(rec.id), rec));
+    });
+    if (merged.length) await store.putMany(merged);
+
+    await loadDosingLog();
+    await loadMeterLog();
+    await pruneOldReports();
+    previousReport = await findPreviousReport();
+    submittedReports = await loadSubmittedReports();
+
+    hydrateFields();
+    renderDosing();
+    renderMeterLog();
+    renderFlowDetail(refresh());
+    renderDosingAudit();
+    renderHistory();
+    toast(`Loaded ${merged.length} records`);
+  } catch (err) {
+    console.error('could not load the backup', err);
+    toast('Could not load that backup');
+  }
+}
+
+function bindBackup() {
+  el('#btnBackupExport').addEventListener('click', exportBackup);
+  el('#btnBackupImport').addEventListener('click', () => el('#backupInput').click());
+  el('#backupInput').addEventListener('change', async (e) => {
+    const file = (e.target.files || [])[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const text = typeof file.text === 'function'
+        ? await file.text()
+        : await new Promise((res, rej) => {
+          const fr = new FileReader();
+          fr.onload = () => res(String(fr.result));
+          fr.onerror = () => rej(fr.error);
+          fr.readAsText(file);
+        });
+      await importBackup(text);
+    } catch (err) {
+      console.error(err);
+      toast('That file could not be read');
+    }
+  });
+
+  el('#btnCheckUpdate').addEventListener('click', async () => {
+    if (!swReg) { toast('Updates only work when opened from the web address'); return; }
+    toast('Checking for an update...');
+    try {
+      await swReg.update();
+      // A waiting worker means new files are ready but held back until the old
+      // one lets go, which is why closing the app has not always been enough.
+      if (swReg.waiting) {
+        swReg.waiting.postMessage({ type: 'SKIP_WAITING' });
+        toast('Update found - restarting');
+      } else if (swReg.installing) {
+        toast('Update downloading - it will restart on its own');
+      } else {
+        toast('Already on the latest version');
+      }
+    } catch (err) {
+      console.error('update check failed', err);
+      toast('Could not check - no connection?');
+    }
+  });
+}
+
 /* ---------------- company logo ---------------- */
 
 const LOGO_MAX_EDGE = 420;
@@ -5274,11 +5516,29 @@ async function boot() {
   renderDosing();
   bindMeterLog();
   renderMeterLog();
+  bindBackup();
   render();
   renderThresholds();
 
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+    navigator.serviceWorker.register('sw.js').then(reg => {
+      swReg = reg;
+      // Ask the server on every start. Closing and reopening the app is not
+      // enough on its own: without this the worker already on the phone keeps
+      // serving its cached copy and a new upload can go unnoticed for hours.
+      reg.update().catch(() => {});
+    }).catch(() => {});
+
+    // A new worker taking over means new files. Reload once so the screen and
+    // the code it is running cannot disagree. Guarded because not every
+    // environment that exposes `serviceWorker` exposes the event target.
+    if (typeof navigator.serviceWorker.addEventListener === 'function') {
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (swReloading) return;
+        swReloading = true;
+        if (typeof location.reload === 'function') location.reload();
+      });
+    }
   }
 }
 
