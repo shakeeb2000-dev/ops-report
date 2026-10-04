@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1e3a5f">
-<meta name="build-id" content="e7458f215af3">
+<meta name="build-id" content="89fa24c3fd19">
 <title>Daily Ops Report</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -752,14 +752,15 @@ body.no-scroll { overflow: hidden; }
     </p>
 
     <hr>
-    <h2>Recorded meter readings</h2>
+    <h2>Recorded readings and reports</h2>
     <p class="muted small">
-      Puts back any of the readings written down before the app existed that
-      have since been deleted. Readings you entered yourself are left alone.
-      Worth doing if the water speed looks wrong &mdash; it is measured from
-      those earlier days.
+      Puts back everything written down before the app existed &mdash; the meter
+      readings <em>and</em> the reports for 11 Sep to 2 Oct 2026. Use this if the
+      water speed looks wrong, or if the panel above says
+      <strong>meter reading missing</strong> for any of those days. Anything
+      saved for those dates is replaced; other dates are untouched.
     </p>
-    <button id="btnMeterRestore" class="btn btn-ghost full">&#10227; Put back the recorded readings</button>
+    <button id="btnMeterRestore" class="btn btn-ghost full">&#10227; Put back the recorded readings and reports</button>
 
     <hr>
     <h2>Saved reports</h2>
@@ -4381,17 +4382,22 @@ const SEED_VERSION = 2;
 
    Runs again whenever SEED_VERSION changes, and when it does it replaces its
    own earlier copies. A report the operator actually submitted is never
-   touched, whatever its date. */
-async function seedHistoricReports() {
+   touched, whatever its date.
+
+   `force` lifts that last rule, which is the only way back from submitting a
+   report over one of the recorded dates. Doing so replaces the recorded
+   figures with the new report's, and those carry no meter readings, so the
+   water speed silently loses the days it was measured from. */
+async function seedHistoricReports(force) {
   try {
     const marker = await store.get(SEED_MARKER);
-    if (marker && marker.version === SEED_VERSION) return 0;
+    if (marker && marker.version === SEED_VERSION && !force) return 0;
 
     const byId = new Map((await store.all()).map(r => [r.id, r]));
     const fresh = [];
     buildHistoricReports().forEach(rec => {
       const prior = byId.get(rec.id);
-      if (prior && prior.source !== HISTORIC_TAG) return;   // a real report wins
+      if (prior && prior.source !== HISTORIC_TAG && !force) return;   // a real report wins
       fresh.push(rec);
     });
     fresh.push({ id: SEED_MARKER, version: SEED_VERSION, done: true, at: Date.now() });
@@ -4852,12 +4858,28 @@ async function saveMeterEntry() {
 function bindMeterLog() {
   el('#btnMeterAdd').addEventListener('click', openMeterEntry);
   el('#btnMeterRestore').addEventListener('click', async () => {
-    const added = await seedMeterLog(true);
+    /* Restores the readings and the reports together. Separating them was a
+       trap: the readings alone look restored while the reports they are
+       measured against are still missing their meter figures. */
+    const ok = confirm(
+      'Put back the readings and reports recorded on paper?\n\n'
+      + 'This replaces anything saved for 11 Sep to 2 Oct 2026 with the '
+      + 'original figures. Reports for any other date are untouched.'
+    );
+    if (!ok) return;
+
+    const readings = await seedMeterLog(true);
+    const reports = await seedHistoricReports(true);
+    previousReport = await findPreviousReport();
+    submittedReports = await loadSubmittedReports();
+    await seedYesterdayFromHistory();
+
+    hydrateFields();
     renderFlowDetail(refresh());
     renderMeterLog();
-    toast(added
-      ? `${added} recorded reading${added === 1 ? '' : 's'} put back`
-      : 'All the recorded readings are already there');
+    renderHistory();
+    toast(`Put back ${readings} reading${readings === 1 ? '' : 's'} `
+      + `and ${reports} report${reports === 1 ? '' : 's'}`);
   });
   el('#btnMeterCancel').addEventListener('click', () => { el('#meterEntry').hidden = true; });
   el('#btnMeterSave').addEventListener('click', saveMeterEntry);
