@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1e3a5f">
-<meta name="build-id" content="89fa24c3fd19">
+<meta name="build-id" content="81b21483c250">
 <title>Daily Ops Report</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -2405,6 +2405,19 @@ function shortDate(iso) {
   return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
+/* "7:30pm" from a 'YYYY-MM-DDTHH:MM' stamp. The switch times are read as
+   times of day, and a 24-hour clock is slower to take in on a printed page. */
+function clockTime(stamp) {
+  const t = String(stamp || '').split('T')[1];
+  if (!t) return '';
+  const [hRaw, m] = t.split(':');
+  const h = Number(hRaw);
+  if (!isFinite(h)) return t;
+  const suffix = h < 12 ? 'am' : 'pm';
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${m}${suffix}`;
+}
+
 /* "2 Oct". Used where a date is read as prose rather than scanned in a table,
    because "02/10" has to be decoded and can be read the American way round. */
 function dayMonth(iso) {
@@ -2512,6 +2525,23 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
   // Both ends must be known. Half a period cannot be reported honestly, and
   // reporting it anyway is what produced the block that made no sense.
   const spanWhole = !!(spanFrom && spanTo && meterFrom !== null && meterTo !== null);
+  /* The on/off switches inside the period, with the meter reading at each.
+
+     Without these the report shows only the two period readings, so the
+     reading the dosed volume is actually measured from never appears anywhere
+     - which makes the dosed figure look as though it came from the wrong
+     number. */
+  const switches = spanFrom
+    ? daf
+      .filter(e => e && e.at && e.at >= spanFrom && e.at <= spanTo)
+      .slice()
+      .sort((a, b) => (a.at < b.at ? -1 : 1))
+      .map(e => {
+        const logged = meterAtStamp(log, e.at);
+        return { at: e.at, on: !!e.on, meter: logged !== null ? logged : num(e.meter) };
+      })
+    : [];
+
   const dosingHours = (daf.length && spanWhole)
     ? dosingHoursBetween(daf, spanFrom, spanTo) : null;
   const waterNow = (daf.length && spanWhole)
@@ -2522,7 +2552,7 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
     actions: {}, gapDays, dosingHours,
     waterNow, flowRate,
     // The two moments the water figures cover, so the report can label them.
-    spanFrom, spanTo, spanHours,
+    spanFrom, spanTo, spanHours, switches,
     // Which reading is missing, so the report can ask for it by name instead
     // of printing a block with holes in it.
     meterMissing: meterTo === null ? 'today' : (meterFrom === null ? 'earlier' : null),
@@ -3102,6 +3132,17 @@ function buildPdf(state, evaluated, previous) {
       evaluated.spanHours
         ? `${fmtQty(evaluated.dosingHours, 1)} of those ${fmtQty(evaluated.spanHours, 1)} hrs`
         : `${fmtQty(evaluated.dosingHours, 1)} hrs`, false]);
+
+    /* Each switch inside the period, naming the reading the dosed volume is
+       measured from. This is the line whose absence made the dosed figure look
+       as though it had been worked out from the wrong reading. */
+    (evaluated.switches || []).slice(0, 3).forEach(s => {
+      const when = clockTime(s.at);
+      lines.push([`Dosing switched ${s.on ? 'on' : 'off'}`,
+        s.meter !== null && s.meter !== undefined
+          ? `${when}, meter ${fmtQty(s.meter, 1)} m\u00B3`
+          : `${when}, meter not noted`, false]);
+    });
     if (dosed !== null) {
       lines.push(['Water that got chemical',
         `${fmtQty(dosed, 0)} m\u00B3${evaluated.waterNow.exact ? '' : '  (estimated)'}`, true]);
