@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1e3a5f">
-<meta name="build-id" content="27061fa91ae0">
+<meta name="build-id" content="4167dfa0c872">
 <title>Daily Ops Report</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -650,10 +650,11 @@ body.no-scroll { overflow: hidden; }
           <input type="time" id="dosingTime">
         </label>
       </div>
-      <label>DAF meter reading <span class="muted">(optional)</span>
+      <label>Meter reading at that moment <span class="muted">(optional)</span>
         <input type="number" inputmode="decimal" step="any" id="dosingMeter"
                placeholder="leave blank if you did not note it">
       </label>
+      <p class="muted small">If you fill this in it is saved into your meter list above.</p>
       <p class="muted small" id="dosingHint">&nbsp;</p>
       <div class="sheet-foot">
         <button type="button" id="btnDosingCancel" class="tool-btn">Cancel</button>
@@ -1574,6 +1575,27 @@ function meterLatest(log, stamp) {
   return list.length ? list[list.length - 1] : null;
 }
 
+/* Checks a reading against the ones either side of it.
+
+   The meter only ever counts up, so a reading below the one before it or above
+   the one after it is a typing slip. Returns the message to show, or null when
+   the reading sits correctly between its neighbours. Shared by every place a
+   reading can be entered, so none of them can accept a figure the others
+   would have refused. */
+function meterConflict(log, at, value) {
+  const v = num(value);
+  if (v === null) return 'Type the meter reading';
+  const before = meterBefore(log, at);
+  const after = meterSorted(log).find(e => e.at > at);
+  if (before && v < num(before.value)) {
+    return `Lower than the ${fmtQty(num(before.value), 1)} reading before it - check the number`;
+  }
+  if (after && v > num(after.value)) {
+    return `Higher than the ${fmtQty(num(after.value), 1)} reading after it - check the number`;
+  }
+  return null;
+}
+
 /* The pair of readings that bracket a report's period.
 
    The log wins wherever it has a reading, so correcting the log corrects every
@@ -2302,6 +2324,15 @@ function shortDate(iso) {
   return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
+/* "2 Oct". Used where a date is read as prose rather than scanned in a table,
+   because "02/10" has to be decoded and can be read the American way round. */
+function dayMonth(iso) {
+  if (!iso) return '-';
+  const d = new Date(iso + 'T00:00:00');
+  if (isNaN(d.getTime())) return iso;
+  return `${d.getDate()} ${MONTHS[d.getMonth()]}`;
+}
+
 function reportNumber(state) {
   return `${state.reportPrefix || DEFAULT_PREFIX}-${state.date || ''}`;
 }
@@ -2331,9 +2362,6 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
   const submitted = history || [];
   const avgWindow = state.avgWindowDays || DEFAULT_AVG_WINDOW;
   const daf = dosingEvents || [];
-  const dosingHours = daf.length ? dosingHoursBetween(daf,
-    readingStamp(state.lastCheckDate, state.lastReadingTime),
-    readingStamp(state.date, state.readingTime)) : null;
 
   // Flow rate while dosing, measured only from exact periods. Used to fill in
   // any stretch where the meter was not noted at the switch.
@@ -2365,14 +2393,28 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
     }]);
 
   const flowRate = daf.length ? dosingFlowRate(periods, daf, log) : null;
-  const waterNow = daf.length ? dosedWater(
-    readingStamp(state.lastCheckDate, state.lastReadingTime),
-    nowStamp, meterFrom, meterTo, daf, flowRate, log) : null;
+
+  /* The stretch the water figures describe: between the two meter readings
+     actually being shown.
+
+     This used to run from the last *stock* check instead, which is a different
+     date. When the two disagreed the report printed a water figure next to
+     "dosing was on 0.0 hrs", which reads as nonsense - the water came from the
+     meter readings while the hours came from a period that was empty or
+     backwards. Both now come from the same two moments. */
+  const spanFrom = loggedPrev ? loggedPrev.at
+    : (state.lastCheckDate ? readingStamp(state.lastCheckDate, state.lastReadingTime) : null);
+  const dosingHours = (daf.length && spanFrom)
+    ? dosingHoursBetween(daf, spanFrom, nowStamp) : null;
+  const waterNow = (daf.length && spanFrom)
+    ? dosedWater(spanFrom, nowStamp, meterFrom, meterTo, daf, flowRate, log) : null;
 
   const result = {
     items: {}, counts: { ok: 0, watch: 0, fault: 0, todo: 0, blank: 0 },
     actions: {}, gapDays, dosingHours,
     waterNow, flowRate,
+    // The two moments the water figures cover, so the report can label them.
+    spanFrom, spanTo: nowStamp,
     meterFrom, meterTo,
     // When the earlier reading was actually taken. The last stock check and
     // the last meter reading are not always the same morning, so the label has
@@ -2570,6 +2612,19 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
   return result;
 }
 
+/* Joins the footer parts as sentences.
+
+   They are written as fragments so they can be assembled in whatever
+   combination the day calls for, which is why the first letter is raised here
+   rather than in each one. Separating with full stops rather than dots reads
+   as English instead of a list of readings. */
+function sentences(parts) {
+  return parts
+    .filter(Boolean)
+    .map(p => p.charAt(0).toUpperCase() + p.slice(1))
+    .join('. ') + '.';
+}
+
 /* The lines of the stock sum, ready to print as a block. */
 function buildStockSum(item, v, usage, left, state, stats, dosingHours, hoursLeft, waterNow, waterLeft) {
   const u = item.unit;
@@ -2633,18 +2688,23 @@ function buildStockSum(item, v, usage, left, state, stats, dosingHours, hoursLef
     }
     total = { label: `Used${period}`, value: `${fmtQty(usage.used)} ${u}` };
 
+    /* Said in plain words, in the order a reader needs them: what it used
+       today, what it normally uses, and how long the stock will last. The old
+       wording ("average 1.45 L/m3 over 3196 m3") packed three different ideas
+       into one line of shorthand and read as jargon. */
     const parts = [];
     if (item.topUp === 'ibc' && waterNow && waterNow.volume > 0) {
-      parts.push(`Dose ${fmtQty(usage.used / waterNow.volume, 2)} ${u}/m\u00B3`);
+      parts.push(`That is ${fmtQty(usage.used / waterNow.volume, 2)} ${u} of chemical `
+        + `for every 1 m\u00B3 of water treated`);
     }
     if (item.topUp === 'ibc' && stats && stats.avgDose) {
-      parts.push(`average ${fmtQty(stats.avgDose, 2)} ${u}/m\u00B3 over ${fmtQty(stats.waterCovered, 0)} m\u00B3`);
+      parts.push(`Normally ${fmtQty(stats.avgDose, 2)} ${u} per m\u00B3`);
       if (waterLeft !== null) {
-        let bit = `stock treats about ${fmtQty(waterLeft, 0)} m\u00B3 more`;
-        if (left !== null) bit += ` (roughly ${fmtDays(left)})`;
+        let bit = `the stock on site will treat about ${fmtQty(waterLeft, 0)} m\u00B3 more water`;
+        if (left !== null) bit += `, roughly ${fmtDays(left)}`;
         parts.push(bit);
       }
-      if (!stats.waterExact) parts.push('some water volumes estimated');
+      if (!stats.waterExact) parts.push('some water amounts are estimates');
     } else if (stats && stats.avgPerDay && stats.daysCovered >= 2) {
       parts.push(`Average use ${fmtQty(stats.avgPerDay)} ${u}/day over ${plural(stats.daysCovered, 'day')}`);
       if (left !== null) parts.push(`about ${fmtDays(left)} left`);
@@ -2654,7 +2714,7 @@ function buildStockSum(item, v, usage, left, state, stats, dosingHours, hoursLef
     } else {
       parts.push('Not enough history yet for an average');
     }
-    footer = parts.join(' \u00B7 ') + '.';
+    footer = sentences(parts);
   }
   return { rows, total, footer };
 }
@@ -2873,37 +2933,64 @@ function buildPdf(state, evaluated, previous) {
     doc.y += boxH + 12;
   });
 
-  /* ---- 4b. DAF water and dosing, so the dose figures can be checked ---- */
+  /* ---- 4b. DAF water, told in the order it happens ---- */
   if (evaluated.dosingHours !== null && evaluated.dosingHours !== undefined) {
+    const fromDate = evaluated.spanFrom
+      ? String(evaluated.spanFrom).split('T')[0]
+      : evaluated.lastCheckDate;
+    const toDate = String(evaluated.spanTo || state.date).split('T')[0];
+    const dosed = evaluated.waterNow && evaluated.waterNow.volume > 0
+      ? evaluated.waterNow.volume : null;
+
     const lines = [];
     if (evaluated.meterFrom !== null) {
-      const fromDate = evaluated.meterFromAt
-        ? String(evaluated.meterFromAt).split('T')[0]
-        : evaluated.lastCheckDate;
-      lines.push([`Meter at last check (${shortDate(fromDate)})`,
+      lines.push([`Meter reading on ${dayMonth(fromDate)}`,
         `${fmtQty(evaluated.meterFrom, 1)} m\u00B3`, false]);
     }
     if (evaluated.meterTo !== null) {
-      lines.push([`Meter this morning (${shortDate(state.date)})`,
+      lines.push([`Meter reading on ${dayMonth(toDate)}`,
         `${fmtQty(evaluated.meterTo, 1)} m\u00B3`, false]);
     }
     if (evaluated.totalWater !== null) {
-      lines.push(['Water through the DAF', `${fmtQty(evaluated.totalWater, 1)} m\u00B3`, false]);
+      lines.push(['Water through the plant', `${fmtQty(evaluated.totalWater, 1)} m\u00B3`, false]);
     }
-    lines.push(['Chemical dosing was on', `${fmtQty(evaluated.dosingHours, 1)} hrs`, false]);
-    if (evaluated.waterNow && evaluated.waterNow.volume > 0) {
-      lines.push(['Water actually dosed',
-        `${fmtQty(evaluated.waterNow.volume, 0)} m\u00B3${evaluated.waterNow.exact ? '' : '  (estimated)'}`, true]);
+    lines.push(['Chemical was dosing for', `${fmtQty(evaluated.dosingHours, 1)} hrs of that`, false]);
+    if (dosed !== null) {
+      lines.push(['Water that got chemical',
+        `${fmtQty(dosed, 0)} m\u00B3${evaluated.waterNow.exact ? '' : '  (estimated)'}`, true]);
     }
-    if (evaluated.flowRate) {
-      lines.push(['Flow while dosing', `${fmtQty(evaluated.flowRate, 1)} m\u00B3/h`, false]);
+    // Only worth printing when something was actually dosed. "Speed while
+    // dosing" sitting under "dosing for 0.0 hrs" invites the question of which
+    // of the two is wrong, when neither is.
+    if (evaluated.flowRate && evaluated.dosingHours > 0) {
+      lines.push(['Water speed while dosing', `${fmtQty(evaluated.flowRate, 1)} m\u00B3 per hour`, false]);
     }
+
+    /* The closing sentence has to make sense of whatever the figures say,
+       including the awkward cases - dosing switched off for the whole period
+       used to print a bare "0.0 hrs" with no hint of what that meant. */
+    let note;
+    if (evaluated.dosingHours <= 0) {
+      note = 'The chemical dosing was switched off for this whole period, so no '
+        + 'water was dosed and there are no dose figures below.';
+    } else if (dosed !== null) {
+      note = `Each "Dose" figure below is the litres of chemical used for every `
+        + `1 m\u00B3 of that ${fmtQty(dosed, 0)} m\u00B3.`;
+      if (!evaluated.waterNow.exact) {
+        note += ' Where the meter was not noted at the switch, the water is '
+          + 'worked out from the speed above.';
+      }
+    } else {
+      note = 'Add a meter reading for each morning and the water dosed can be '
+        + 'worked out.';
+    }
+    const noteLines = wrapText(note, 7.8, false, W - 4);
 
     const rowH = 14;
     const boxH = 10 + lines.length * rowH + 8;
-    doc.ensure(20 + boxH + 14);
+    doc.ensure(20 + boxH + 10 + noteLines.length * 10 + 10);
 
-    doc.text('DAF WATER & CHEMICAL DOSING', L, doc.y + 10,
+    doc.text('WATER TREATED SINCE THE LAST REPORT', L, doc.y + 10,
       { size: 8.6, bold: true, colour: BRAND.green, tracking: 0.9 });
     doc.y += 15;
     doc.rect(L, doc.y, 26, 2, { fill: BRAND.gold });
@@ -2919,9 +3006,10 @@ function buildPdf(state, evaluated, previous) {
       wy += rowH;
     });
     doc.y += boxH + 8;
-    doc.text('Dose figures below are the chemical used divided by the water actually dosed.',
-      L, doc.y + 8, { size: 7.6, colour: BRAND.slate, italic: true });
-    doc.y += 18;
+    noteLines.forEach((t, i) => {
+      doc.text(t, L, doc.y + 8 + i * 10, { size: 7.8, colour: BRAND.slate, italic: true });
+    });
+    doc.y += 10 + noteLines.length * 10;
   }
 
   /* ---- 5. stock at a glance, with a daily-usage chart ---- */
@@ -4480,14 +4568,28 @@ async function saveDosingEntry() {
     return;
   }
 
-  const meter = num(el('#dosingMeter').value);
-  const entry = { at, on };
-  if (meter !== null) entry.meter = meter;
-  dosingEvents.push(entry);
+  /* A reading noted at the switch goes into the meter list, not onto the event.
+     One list for every meter reading means one place to look when a figure
+     needs correcting, and the same out-of-order check applies here as there. */
+  const raw = el('#dosingMeter').value;
+  const meter = num(raw);
+  if (String(raw).trim() !== '' && meter === null) {
+    toast('That meter reading could not be read');
+    return;
+  }
+  if (meter !== null) {
+    const clash = meterConflict(meterReadings, at, meter);
+    if (clash) { toast(clash); return; }
+  }
+
+  dosingEvents.push({ at, on });
   await saveDosingLog();
+  if (meter !== null) await recordMeterReading(at, meter);
+
   el('#dosingEntry').hidden = true;
   renderDosing();
   refresh();
+  renderMeterLog();
   toast(on ? 'DAF dosage start recorded' : 'DAF dosage stop recorded');
 }
 
@@ -4562,18 +4664,8 @@ async function saveMeterEntry() {
 
   const at = `${date}T${time}`;
 
-  // The meter only counts up, so a reading that sits below an earlier one or
-  // above a later one is a typing slip worth catching now.
-  const before = meterBefore(meterReadings, at);
-  const after = meterSorted(meterReadings).find(e => e.at > at);
-  if (before && value < num(before.value)) {
-    toast(`Lower than the ${fmtQty(num(before.value), 1)} reading before it - check the number`);
-    return;
-  }
-  if (after && value > num(after.value)) {
-    toast(`Higher than the ${fmtQty(num(after.value), 1)} reading after it - check the number`);
-    return;
-  }
+  const clash = meterConflict(meterReadings, at, value);
+  if (clash) { toast(clash); return; }
 
   await recordMeterReading(at, value);
   el('#meterEntry').hidden = true;
@@ -4803,9 +4895,12 @@ async function boot() {
   // Takes new shipped limits, repairs any that an older version never saved,
   // and leaves hand-typed numbers untouched.
   applyThresholdRefresh();
-  await seedYesterdayFromHistory();
 
   try {
+    // The recorded readings have to be in storage before anything reads back
+    // from it. Seeding used to run after, so on a first launch there was
+    // nothing to find: the Yesterday boxes stayed blank and the last-check
+    // date stayed unset, which left the dosing period empty.
     await seedHistoricReports();
     await loadDosingLog();
     if (!dosingEvents.length) {
@@ -4816,6 +4911,7 @@ async function boot() {
     await loadMeterLog();
     await seedMeterLog();
     await pruneOldReports();
+    await seedYesterdayFromHistory();
     previousReport = await findPreviousReport();
     submittedReports = await loadSubmittedReports();
   } catch (err) {
