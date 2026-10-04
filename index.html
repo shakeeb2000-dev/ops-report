@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1e3a5f">
-<meta name="build-id" content="e0840a529c58">
+<meta name="build-id" content="9ce0501d494d">
 <title>Daily Ops Report</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -2393,12 +2393,19 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
   // any stretch where the meter was not noted at the switch.
   const log = meterLog || [];
 
-  /* This morning's reading, from the log whenever it holds one. Deriving it
-     here rather than trusting the caller to have lined it up first means no
-     screen can quietly lose its meter figures. */
+  /* This morning's reading: the newest one up to the reading time.
+
+     An exact timestamp match is too brittle. The reading is filed under the
+     time the round was done, so editing that time afterwards left the reading
+     stranded at the old moment and the report found nothing for today - which
+     printed an opening meter line with no closing one, no water total, and an
+     estimated volume over a period of an hour and a half. */
   const nowStamp = readingStamp(state.date, state.readingTime);
-  const loggedNow = meterAtStamp(log, nowStamp);
-  const meterTo = loggedNow !== null ? loggedNow : num(state.meter);
+  const sameDay = meterSorted(log)
+    .filter(e => e.at <= nowStamp && String(e.at).split('T')[0] === state.date);
+  const toEntry = sameDay.length ? sameDay[sameDay.length - 1] : null;
+  const meterTo = toEntry ? num(toEntry.value) : num(state.meter);
+  const meterToAt = toEntry ? toEntry.at : (num(state.meter) !== null ? nowStamp : null);
 
   /* The reading this report measures from.
 
@@ -2409,7 +2416,13 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
      the morning check and 6pm would fall into no report at all. Readings
      inside the period still count, as anchors that make the dosed volume
      exact rather than estimated. */
-  const openedBy = meterOpening(log, state.lastCheckDate, state.lastReadingTime, nowStamp);
+  let openedBy = meterOpening(log, state.lastCheckDate, state.lastReadingTime, nowStamp);
+  // One reading cannot be both ends of the period. That happens when the
+  // round's own reading is missing and the opening falls through to the same
+  // entry, so the period steps back to the one before it.
+  if (openedBy && meterToAt && openedBy.at === meterToAt) {
+    openedBy = meterBefore(log, meterToAt);
+  }
   const meterFrom = openedBy ? num(openedBy.value) : num(state.prevMeter);
 
   /* One record per morning, today's being whatever is on screen.
@@ -2437,20 +2450,27 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
      next to "dosing was on 0.0 hrs", which reads as nonsense. */
   const spanFrom = openedBy ? openedBy.at
     : (state.lastCheckDate ? readingStamp(state.lastCheckDate, state.lastReadingTime) : null);
-  const spanHours = (spanFrom && toMs(spanFrom) !== null)
-    ? Math.round(((toMs(nowStamp) - toMs(spanFrom)) / 3600000) * 100) / 100
+  const spanTo = meterToAt || nowStamp;
+  const spanHours = (spanFrom && toMs(spanFrom) !== null && toMs(spanTo) !== null)
+    ? Math.round(((toMs(spanTo) - toMs(spanFrom)) / 3600000) * 100) / 100
     : null;
-  const dosingHours = (daf.length && spanFrom)
-    ? dosingHoursBetween(daf, spanFrom, nowStamp) : null;
-  const waterNow = (daf.length && spanFrom)
-    ? dosedWater(spanFrom, nowStamp, meterFrom, meterTo, daf, flowRate, log) : null;
+  // Both ends must be known. Half a period cannot be reported honestly, and
+  // reporting it anyway is what produced the block that made no sense.
+  const spanWhole = !!(spanFrom && spanTo && meterFrom !== null && meterTo !== null);
+  const dosingHours = (daf.length && spanWhole)
+    ? dosingHoursBetween(daf, spanFrom, spanTo) : null;
+  const waterNow = (daf.length && spanWhole)
+    ? dosedWater(spanFrom, spanTo, meterFrom, meterTo, daf, flowRate, log) : null;
 
   const result = {
     items: {}, counts: { ok: 0, watch: 0, fault: 0, todo: 0, blank: 0 },
     actions: {}, gapDays, dosingHours,
     waterNow, flowRate,
     // The two moments the water figures cover, so the report can label them.
-    spanFrom, spanTo: nowStamp, spanHours,
+    spanFrom, spanTo, spanHours,
+    // Which reading is missing, so the report can ask for it by name instead
+    // of printing a block with holes in it.
+    meterMissing: meterTo === null ? 'today' : (meterFrom === null ? 'earlier' : null),
     // How many earlier days the water speed was measured from, so a reader can
     // see why it is the figure it is.
     flowDays: daf.length ? dosingFlowDays(periods, daf, log) : 0,
@@ -2973,23 +2993,45 @@ function buildPdf(state, evaluated, previous) {
   });
 
   /* ---- 4b. DAF water, told in the order it happens ---- */
-  if (evaluated.dosingHours !== null && evaluated.dosingHours !== undefined) {
-    const fromDate = evaluated.spanFrom
-      ? String(evaluated.spanFrom).split('T')[0]
-      : evaluated.lastCheckDate;
+  if (evaluated.meterMissing) {
+    /* Nothing can be worked out from one reading, so the block says which one
+       is missing rather than printing the few figures it does have. Half a
+       period reads as though the plant did something odd, when in fact a
+       reading simply has not been entered. */
+    const ask = evaluated.meterMissing === 'today'
+      ? 'No DAF meter reading has been entered for this report, so the water '
+        + 'treated and the chemical doses cannot be worked out. Enter this '
+        + "morning's reading in the app and the figures will appear."
+      : 'Only one DAF meter reading is on record, so there is nothing to '
+        + 'measure the water against yet. From the next report on, the water '
+        + 'treated and the chemical doses will be worked out.';
+    const askLines = wrapText(ask, 8.4, false, W - 28);
+    const boxH = 12 + askLines.length * 12 + 6;
+    doc.ensure(20 + boxH + 14);
+
+    doc.text('WATER TREATED SINCE THE LAST REPORT', L, doc.y + 10,
+      { size: 8.6, bold: true, colour: BRAND.green, tracking: 0.9 });
+    doc.y += 15;
+    doc.rect(L, doc.y, 26, 2, { fill: BRAND.gold });
+    doc.y += 6;
+    doc.roundRect(L, doc.y, W, boxH, 6,
+      { fill: BRAND.amberBg, stroke: BRAND.watch, lineWidth: 0.7 });
+    askLines.forEach((t, i) => {
+      doc.text(t, L + 14, doc.y + 18 + i * 12, { size: 8.4, colour: BRAND.ink });
+    });
+    doc.y += boxH + 14;
+
+  } else if (evaluated.dosingHours !== null && evaluated.dosingHours !== undefined) {
+    const fromDate = String(evaluated.spanFrom).split('T')[0];
     const toDate = String(evaluated.spanTo || state.date).split('T')[0];
     const dosed = evaluated.waterNow && evaluated.waterNow.volume > 0
       ? evaluated.waterNow.volume : null;
 
     const lines = [];
-    if (evaluated.meterFrom !== null) {
-      lines.push([`Meter reading on ${dayMonth(fromDate)}`,
-        `${fmtQty(evaluated.meterFrom, 1)} m\u00B3`, false]);
-    }
-    if (evaluated.meterTo !== null) {
-      lines.push([`Meter reading on ${dayMonth(toDate)}`,
-        `${fmtQty(evaluated.meterTo, 1)} m\u00B3`, false]);
-    }
+    lines.push([`Meter reading on ${dayMonth(fromDate)}`,
+      `${fmtQty(evaluated.meterFrom, 1)} m\u00B3`, false]);
+    lines.push([`Meter reading on ${dayMonth(toDate)}`,
+      `${fmtQty(evaluated.meterTo, 1)} m\u00B3`, false]);
     if (evaluated.totalWater !== null) {
       lines.push(['Water through the plant', `${fmtQty(evaluated.totalWater, 1)} m\u00B3`, false]);
     }
@@ -4321,17 +4363,16 @@ async function seedYesterdayFromHistory() {
     if (!saved.length) return;
     const source = saved[0];
 
-    let seeded = false;
     Object.values(ITEM_INDEX).forEach(item => {
       if (item.type !== 'stock') return;
       const from = source.values[item.id];
       if (!from) return;
       const target = valueOf(item.id);
       if (target.prevInUse === undefined || target.prevInUse === '') {
-        if (num(from.inUse) !== null) { target.prevInUse = String(num(from.inUse)); seeded = true; }
+        if (num(from.inUse) !== null) target.prevInUse = String(num(from.inUse));
       }
       if (item.hasBackup && (target.prevBackup === undefined || target.prevBackup === '')) {
-        if (num(from.backup) !== null) { target.prevBackup = String(num(from.backup)); seeded = true; }
+        if (num(from.backup) !== null) target.prevBackup = String(num(from.backup));
       }
     });
     // The sampling dates stand for days at a time, so the last ones recorded
@@ -4344,7 +4385,12 @@ async function seedYesterdayFromHistory() {
       if (!target.date) target.date = from.date;
     });
 
-    if (seeded && !state.lastCheckDate) {
+    /* The period has to be known even when every box was already filled in,
+       because the water and dosing figures are measured over it. This used to
+       be set only when a blank was filled, so a report whose boxes happened to
+       be complete had no period at all - and with no period the water figures
+       fall back to whatever reading happened to be newest. */
+    if (!state.lastCheckDate) {
       state.lastCheckDate = source.date || null;
       state.lastReadingTime = source.readingTime || DEFAULT_READING_TIME;
     }
