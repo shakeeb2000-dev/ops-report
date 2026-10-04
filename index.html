@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1e3a5f">
-<meta name="build-id" content="ffcb2976fad6">
+<meta name="build-id" content="27061fa91ae0">
 <title>Daily Ops Report</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -592,21 +592,23 @@ body.no-scroll { overflow: hidden; }
       <label>Time you took the readings
         <input type="time" id="fReadingTime">
       </label>
-      <label>DAF meter now (m&sup3;)
+      <label>DAF meter this morning (m&sup3;)
         <input type="number" inputmode="decimal" step="any" id="fMeter" placeholder="e.g. 224994.2">
       </label>
     </div>
     <p class="muted small" id="prevMeterNote">&nbsp;</p>
+    <p class="muted small">This is the box to use on your morning round.</p>
   </section>
 
   <!-- ---------- DAF water meter log ---------- -->
   <section class="card dosing-card" id="meterCard">
-    <h2>DAF water meter readings</h2>
+    <h2>Past meter readings</h2>
     <p class="muted small">
-      Every reading you have recorded. Remove a wrong one and enter it again -
-      the dose figures are worked out from this list.
+      This is the history, not today. Today's reading goes in the box above and
+      appears here on its own. Use this list to fix a wrong reading, or to fill
+      in a day you missed.
     </p>
-    <button type="button" id="btnMeterAdd" class="btn btn-ghost full">+ Add a meter reading</button>
+    <button type="button" id="btnMeterAdd" class="btn btn-ghost full">+ Add a reading for another day</button>
     <div class="dosing-entry" id="meterEntry" hidden>
       <div class="field-grid">
         <label>Date
@@ -619,6 +621,7 @@ body.no-scroll { overflow: hidden; }
       <label>Meter reading (m&sup3;)
         <input type="number" inputmode="decimal" step="any" id="meterValue" placeholder="e.g. 224994.2">
       </label>
+      <p class="muted small" id="meterHint">Pick the day the reading was taken.</p>
       <div class="sheet-foot">
         <button type="button" id="btnMeterCancel" class="tool-btn">Cancel</button>
         <button type="button" id="btnMeterSave" class="btn btn-primary">Save</button>
@@ -4541,8 +4544,11 @@ function renderMeterLog(opts) {
 }
 
 function openMeterEntry() {
-  el('#meterDate').value = todayISO();
-  el('#meterTime').value = state.readingTime || DEFAULT_READING_TIME;
+  // Deliberately left empty. This panel is for a day other than today, and
+  // pre-filling today is what made it look like a second box for the morning
+  // reading. An empty date forces the day to be chosen on purpose.
+  el('#meterDate').value = '';
+  el('#meterTime').value = DEFAULT_READING_TIME;
   el('#meterValue').value = '';
   el('#meterEntry').hidden = false;
 }
