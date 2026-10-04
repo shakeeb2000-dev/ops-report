@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1e3a5f">
-<meta name="build-id" content="3059023cbfcf">
+<meta name="build-id" content="09c337abb170">
 <title>Daily Ops Report</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -728,6 +728,15 @@ body.no-scroll { overflow: hidden; }
     <label>Look back this many days
       <input type="number" id="fAvgWindow" inputmode="numeric" step="1" min="1" placeholder="14">
     </label>
+
+    <hr>
+    <h2>Where the water speed comes from</h2>
+    <p class="muted small">
+      The speed is averaged over past days where the dosing ran right through
+      the whole period between two meter readings. Only those days can be
+      measured exactly, so only those are used.
+    </p>
+    <div id="flowDetail"></div>
 
     <hr>
     <h2>Recorded meter readings</h2>
@@ -2482,8 +2491,13 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
     // Which reading is missing, so the report can ask for it by name instead
     // of printing a block with holes in it.
     meterMissing: meterTo === null ? 'today' : (meterFrom === null ? 'earlier' : null),
-    // How many earlier days the water speed was measured from, so a reader can
-    // see why it is the figure it is.
+    /* The days the water speed is measured from, with their figures.
+
+       Carried out of here so the app can show the working. The speed is an
+       average over past days and there is no way to tell from the number alone
+       which days went into it, which makes a surprising value impossible to
+       account for without reading the stored data by hand. */
+    flowDetail: daf.length ? flowRateDays(periods, daf, log) : [],
     flowDays: daf.length ? dosingFlowDays(periods, daf, log) : 0,
     meterFrom, meterTo,
     // When the earlier reading was actually taken. The last stock check and
@@ -4804,7 +4818,7 @@ function bindMeterLog() {
   el('#btnMeterAdd').addEventListener('click', openMeterEntry);
   el('#btnMeterRestore').addEventListener('click', async () => {
     const added = await seedMeterLog(true);
-    refresh();
+    renderFlowDetail(refresh());
     renderMeterLog();
     toast(added
       ? `${added} recorded reading${added === 1 ? '' : 's'} put back`
@@ -4821,6 +4835,50 @@ function bindMeterLog() {
     renderMeterLog();
     toast('Reading removed');
   });
+}
+
+/* Shows the working behind the water speed.
+
+   Without this the speed is a bare number averaged over days the operator
+   cannot see, so a value that looks wrong can only be explained by reading the
+   stored data by hand. */
+function renderFlowDetail(ev) {
+  const box = el('#flowDetail');
+  if (!box) return;
+
+  const days = (ev && ev.flowDetail) || [];
+  const counts = `<p class="muted small">`
+    + `${meterSorted(meterReadings).length} meter readings &middot; `
+    + `${dosingEvents.length} dosing entries &middot; `
+    + `${submittedReports.length} saved reports</p>`;
+
+  if (!days.length) {
+    box.innerHTML = counts
+      + '<p class="muted small">No day yet has the dosing running right through '
+      + 'between two meter readings, so there is no measured speed. Until there '
+      + 'is, dosed water can only be worked out when the meter was noted at the '
+      + 'switch.</p>';
+    return;
+  }
+
+  let water = 0, hours = 0;
+  days.forEach(d => { water += d.water; hours += d.hours; });
+
+  box.innerHTML = counts + days
+    .slice()
+    .sort((a, b) => (a.date < b.date ? 1 : -1))
+    .map(d => `
+      <div class="dosing-row">
+        <span class="dosing-when">${esc(prettyDate(d.date))}</span>
+        <span>
+          <span class="muted">${esc(fmtQty(d.water, 1))} m\u00B3 in ${esc(fmtQty(d.hours, 1))} h</span>
+          <strong>&nbsp;${esc(fmtQty(d.water / d.hours, 1))}</strong>
+        </span>
+      </div>`).join('')
+    + `<div class="dosing-row"><span class="dosing-when"><strong>`
+    + `${days.length} day${days.length === 1 ? '' : 's'} together</strong></span>`
+    + `<span><span class="muted">${esc(fmtQty(water, 1))} m\u00B3 in ${esc(fmtQty(hours, 1))} h</span>`
+    + `<strong>&nbsp;${esc(fmtQty(water / hours, 1))} m\u00B3/h</strong></span></div>`;
 }
 
 /* ---------------- company logo ---------------- */
@@ -4941,7 +4999,11 @@ function bindShell() {
 
   el('#btnPdf').addEventListener('click', generatePdf);
   el('#btnWhatsApp').addEventListener('click', showWhatsApp);
-  el('#btnSettings').addEventListener('click', () => { renderHistory(); openSheet('#settingsSheet'); });
+  el('#btnSettings').addEventListener('click', () => {
+    renderHistory();
+    renderFlowDetail(refresh());
+    openSheet('#settingsSheet');
+  });
   el('#btnNewReport').addEventListener('click', startNewReport);
   el('#btnResetThresholds').addEventListener('click', () => {
     state.thresholds = deepCopy(DEFAULT_THRESHOLDS);
