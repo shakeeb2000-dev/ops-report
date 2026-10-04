@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1e3a5f">
-<meta name="build-id" content="81b21483c250">
+<meta name="build-id" content="0ca259b51213">
 <title>Daily Ops Report</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -2483,12 +2483,16 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
      on would open the next report at 6pm, and the water that passed between
      the morning check and 6pm would fall into no report at all. Readings
      inside the period still count, as anchors that make the dosed volume
-     exact rather than estimated. */
+     exact rather than estimated.
+
+     It must also genuinely come first. The last-check date and time are
+     carried over from the previous report, so editing this report's date or
+     reading time can leave that moment at or after this one - which printed
+     the two readings in reverse, water of -400 m3, and "0.0 of those
+     -11.5 hrs". When that happens the newest reading before this report's own
+     moment is used instead. */
   let openedBy = meterOpening(log, state.lastCheckDate, state.lastReadingTime, nowStamp);
-  // One reading cannot be both ends of the period. That happens when the
-  // round's own reading is missing and the opening falls through to the same
-  // entry, so the period steps back to the one before it.
-  if (openedBy && meterToAt && openedBy.at === meterToAt) {
+  if (openedBy && meterToAt && openedBy.at >= meterToAt) {
     openedBy = meterBefore(log, meterToAt);
   }
   const meterFrom = openedBy ? num(openedBy.value) : num(state.prevMeter);
@@ -2522,9 +2526,11 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
   const spanHours = (spanFrom && toMs(spanFrom) !== null && toMs(spanTo) !== null)
     ? Math.round(((toMs(spanTo) - toMs(spanFrom)) / 3600000) * 100) / 100
     : null;
-  // Both ends must be known. Half a period cannot be reported honestly, and
-  // reporting it anyway is what produced the block that made no sense.
-  const spanWhole = !!(spanFrom && spanTo && meterFrom !== null && meterTo !== null);
+  /* Both ends must be known, the period must run forwards, and the meter must
+     not have gone backwards across it. Reporting any of those anyway is what
+     produced blocks that made no sense. */
+  const spanWhole = !!(spanFrom && spanTo && meterFrom !== null && meterTo !== null
+    && spanHours !== null && spanHours > 0 && meterTo >= meterFrom);
   /* The on/off switches inside the period, with the meter reading at each.
 
      Without these the report shows only the two period readings, so the
@@ -2553,9 +2559,11 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
     waterNow, flowRate,
     // The two moments the water figures cover, so the report can label them.
     spanFrom, spanTo, spanHours, switches,
-    // Which reading is missing, so the report can ask for it by name instead
-    // of printing a block with holes in it.
-    meterMissing: meterTo === null ? 'today' : (meterFrom === null ? 'earlier' : null),
+    /* What stops the water being worked out, so the report can say so instead
+       of printing a block with holes in it - or nothing at all, which is what
+       a period that did not make sense used to produce. */
+    meterMissing: meterTo === null ? 'today'
+      : (meterFrom === null ? 'earlier' : (spanWhole ? null : 'period')),
     /* The days the water speed is measured from, with their figures.
 
        Carried out of here so the app can show the working. The speed is an
@@ -2570,7 +2578,9 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
     // the last meter reading are not always the same morning, so the label has
     // to come from the reading itself rather than from the stock date.
     meterFromAt: openedBy ? openedBy.at : (state.prevMeterAt || null),
-    totalWater: (meterTo !== null && meterFrom !== null) ? meterTo - meterFrom : null,
+    // Only a period that makes sense gets a water figure. A negative one is
+    // never a real reading of the plant, only a sign of muddled dates.
+    totalWater: spanWhole ? meterTo - meterFrom : null,
     lastCheckDate: state.lastCheckDate || null, stock: []
   };
 
@@ -3089,13 +3099,22 @@ function buildPdf(state, evaluated, previous) {
        is missing rather than printing the few figures it does have. Half a
        period reads as though the plant did something odd, when in fact a
        reading simply has not been entered. */
-    const ask = evaluated.meterMissing === 'today'
-      ? 'No DAF meter reading has been entered for this report, so the water '
+    let ask;
+    if (evaluated.meterMissing === 'today') {
+      ask = 'No DAF meter reading has been entered for this report, so the water '
         + 'treated and the chemical doses cannot be worked out. Enter this '
-        + "morning's reading in the app and the figures will appear."
-      : 'Only one DAF meter reading is on record, so there is nothing to '
-        + 'measure the water against yet. From the next report on, the water '
-        + 'treated and the chemical doses will be worked out.';
+        + "morning's reading in the app and the figures will appear.";
+    } else if (evaluated.meterMissing === 'earlier') {
+      // Accurate whether no reading exists at all or none falls before this
+      // report's own moment, which are both this case.
+      ask = 'There is no earlier DAF meter reading to measure this report '
+        + 'against, so the water treated and the chemical doses cannot be '
+        + 'worked out yet. From the next report on they will be.';
+    } else {
+      ask = 'The meter readings for this report do not make a period that can '
+        + 'be measured - check the report date and the time the readings were '
+        + 'taken, and that each reading is higher than the one before it.';
+    }
     const askLines = wrapText(ask, 8.4, false, W - 28);
     const boxH = 12 + askLines.length * 12 + 6;
     doc.ensure(20 + boxH + 14);
