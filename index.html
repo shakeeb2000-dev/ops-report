@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1e3a5f">
-<meta name="build-id" content="88539c189e28">
+<meta name="build-id" content="e2f8350392ff">
 <title>Daily Ops Report</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -3180,10 +3180,17 @@ function buildPdf(state, evaluated, previous) {
     const dosed = evaluated.waterNow && evaluated.waterNow.volume > 0
       ? evaluated.waterNow.volume : null;
 
+    /* Every moment carries its date as well as its time.
+
+       A report can span two days, so a bare "7:30pm" does not say which one -
+       and when both meter readings fall on the same date, two rows both
+       labelled "4 Oct" are impossible to tell apart. */
+    const stamp = (s) => `${dayMonth(String(s).split('T')[0])} ${clockTime(s)}`;
+
     const lines = [];
-    lines.push([`Meter reading on ${dayMonth(fromDate)}`,
+    lines.push([`Meter at ${stamp(evaluated.spanFrom)}`,
       `${fmtQty(evaluated.meterFrom, 1)} m\u00B3`, false]);
-    lines.push([`Meter reading on ${dayMonth(toDate)}`,
+    lines.push([`Meter at ${stamp(evaluated.spanTo)}`,
       `${fmtQty(evaluated.meterTo, 1)} m\u00B3`, false]);
     if (evaluated.totalWater !== null) {
       lines.push(['Water through the plant', `${fmtQty(evaluated.totalWater, 1)} m\u00B3`, false]);
@@ -3197,13 +3204,13 @@ function buildPdf(state, evaluated, previous) {
 
     /* Each switch inside the period, naming the reading the dosed volume is
        measured from. This is the line whose absence made the dosed figure look
-       as though it had been worked out from the wrong reading. */
+       as though it had been worked out from the wrong reading. The moment goes
+       in the label so the reading itself lines up with the other figures. */
     (evaluated.switches || []).slice(0, 3).forEach(s => {
-      const when = clockTime(s.at);
-      lines.push([`Dosing switched ${s.on ? 'on' : 'off'}`,
+      lines.push([`Dosing ${s.on ? 'on' : 'off'} at ${stamp(s.at)}`,
         s.meter !== null && s.meter !== undefined
-          ? `${when}, meter ${fmtQty(s.meter, 1)} m\u00B3`
-          : `${when}, meter not noted`, false]);
+          ? `${fmtQty(s.meter, 1)} m\u00B3`
+          : 'meter not noted', false]);
     });
     if (dosed !== null) {
       lines.push(['Water that got chemical',
@@ -3250,8 +3257,14 @@ function buildPdf(state, evaluated, previous) {
     }
     const noteLines = wrapText(note, 7.8, false, W - 4);
 
+    /* Two columns rather than one long list.
+
+       Seven stacked rows took up as much of the page as a whole checklist
+       section, which pushed the figures a reader actually compares far apart.
+       Side by side they fit in half the height and stay on one screen. */
     const rowH = 14;
-    const boxH = 10 + lines.length * rowH + 8;
+    const half = Math.ceil(lines.length / 2);
+    const boxH = 10 + half * rowH + 8;
     doc.ensure(20 + boxH + 10 + noteLines.length * 10 + 10);
 
     doc.text('WATER TREATED SINCE THE LAST REPORT', L, doc.y + 10,
@@ -3262,12 +3275,22 @@ function buildPdf(state, evaluated, previous) {
 
     doc.roundRect(L, doc.y, W, boxH, 6,
       { fill: BRAND.sumBg, stroke: BRAND.sumEdge, lineWidth: 0.7 });
-    let wy = doc.y + 10;
-    lines.forEach(([label, value, strong]) => {
-      doc.text(label, L + 14, wy, { size: 8.8, bold: strong, colour: BRAND.sumInk });
-      doc.text(value, R - 14, wy,
-        { size: strong ? 9.6 : 9, bold: strong, colour: BRAND.sumInk, align: 'right' });
-      wy += rowH;
+
+    const colW = W / 2;
+    const mid = L + colW;
+    // A hairline keeps the eye from reading across the two columns as one row.
+    if (lines.length > half) {
+      doc.rect(mid, doc.y + 7, 0.6, boxH - 14, { fill: BRAND.sumEdge });
+    }
+
+    lines.forEach(([label, value, strong], i) => {
+      const col = i < half ? 0 : 1;
+      const row = i < half ? i : i - half;
+      const x = L + col * colW;
+      const y = doc.y + 10 + row * rowH;
+      doc.text(label, x + 13, y, { size: 8.2, bold: strong, colour: BRAND.sumInk });
+      doc.text(value, x + colW - 13, y,
+        { size: strong ? 9 : 8.6, bold: strong, colour: BRAND.sumInk, align: 'right' });
     });
     doc.y += boxH + 8;
     noteLines.forEach((t, i) => {
