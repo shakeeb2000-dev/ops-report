@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1e3a5f">
-<meta name="build-id" content="9ce0501d494d">
+<meta name="build-id" content="3059023cbfcf">
 <title>Daily Ops Report</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -608,6 +608,7 @@ body.no-scroll { overflow: hidden; }
       appears here on its own. Use this list to fix a wrong reading, or to fill
       in a day you missed.
     </p>
+    <p class="muted small" id="meterCount">&nbsp;</p>
     <button type="button" id="btnMeterAdd" class="btn btn-ghost full">+ Add a reading for another day</button>
     <div class="dosing-entry" id="meterEntry" hidden>
       <div class="field-grid">
@@ -727,6 +728,16 @@ body.no-scroll { overflow: hidden; }
     <label>Look back this many days
       <input type="number" id="fAvgWindow" inputmode="numeric" step="1" min="1" placeholder="14">
     </label>
+
+    <hr>
+    <h2>Recorded meter readings</h2>
+    <p class="muted small">
+      Puts back any of the readings written down before the app existed that
+      have since been deleted. Readings you entered yourself are left alone.
+      Worth doing if the water speed looks wrong &mdash; it is measured from
+      those earlier days.
+    </p>
+    <button id="btnMeterRestore" class="btn btn-ghost full">&#10227; Put back the recorded readings</button>
 
     <hr>
     <h2>Saved reports</h2>
@@ -4262,12 +4273,17 @@ async function saveMeterLog() {
 /* Loads the hand-recorded meter readings.
 
    Only ever adds: a reading already in the log keeps whatever value it has, so
-   a correction typed on the phone is never undone by an update. */
-async function seedMeterLog() {
+   a correction typed on the phone is never undone by an update.
+
+   `force` ignores the "already loaded" stamp, which is how a reading deleted
+   by mistake can be put back. Without it there is no way back: the recorded
+   readings are what the water speed is measured from, so deleting a few of
+   them quietly changes every dose figure with nothing on screen to say why. */
+async function seedMeterLog(force) {
   try {
     const rec = await store.get(METER_KEY);
     const already = rec && rec.seedVersion === METER_SEED_VERSION;
-    if (already) return 0;
+    if (already && !force) return 0;
 
     const have = new Set(meterReadings.map(e => e.at));
     let added = 0;
@@ -4729,6 +4745,14 @@ function renderMeterLog(opts) {
       : 'No earlier meter reading yet';
   }
 
+  // The count is what tells the operator at a glance whether the history the
+  // water speed rests on is still all there.
+  const count = el('#meterCount');
+  if (count) {
+    const n = meterSorted(meterReadings).length;
+    count.textContent = n ? `${n} reading${n === 1 ? '' : 's'} recorded` : '';
+  }
+
   const list = el('#meterList');
   if (!list) return;
   const recent = meterSorted(meterReadings).slice().reverse().slice(0, 8);
@@ -4778,6 +4802,14 @@ async function saveMeterEntry() {
 
 function bindMeterLog() {
   el('#btnMeterAdd').addEventListener('click', openMeterEntry);
+  el('#btnMeterRestore').addEventListener('click', async () => {
+    const added = await seedMeterLog(true);
+    refresh();
+    renderMeterLog();
+    toast(added
+      ? `${added} recorded reading${added === 1 ? '' : 's'} put back`
+      : 'All the recorded readings are already there');
+  });
   el('#btnMeterCancel').addEventListener('click', () => { el('#meterEntry').hidden = true; });
   el('#btnMeterSave').addEventListener('click', saveMeterEntry);
   el('#meterList').addEventListener('click', async (e) => {
