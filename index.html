@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1e3a5f">
-<meta name="build-id" content="947e3ecffca8">
+<meta name="build-id" content="88539c189e28">
 <title>Daily Ops Report</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -679,7 +679,7 @@ body.no-scroll { overflow: hidden; }
     <textarea id="fGeneralNote" rows="3" placeholder="Anything else your managers should know"></textarea>
   </section>
 
-  <p class="version-line">Version <span id="buildIdMain">dev</span></p>
+  <p class="version-line">Version <span class="js-build-id">dev</span></p>
 
   <div class="spacer"></div>
 </main>
@@ -751,7 +751,7 @@ body.no-scroll { overflow: hidden; }
     <hr>
     <h2>App version</h2>
     <p class="muted small">
-      Running version <span id="buildId">dev</span>. If the version here does not
+      Running version <span class="js-build-id">dev</span>. If the version here does not
       match what you uploaded, tap below &mdash; the phone can hold on to the old
       copy otherwise.
     </p>
@@ -817,9 +817,9 @@ body.no-scroll { overflow: hidden; }
     <hr>
     <h2>About</h2>
     <p class="muted small">
-      Version <strong id="buildId">dev</strong><br>
-      If you have just uploaded an update and this number has not changed,
-      close the app completely and open it again.
+      Version <strong class="js-build-id">dev</strong><br>
+      If you have just uploaded an update and this number has not changed, use
+      <strong>Check for an update</strong> above.
     </p>
   </div>
 </div>
@@ -1616,6 +1616,11 @@ const HISTORIC_NOTE = {
 };
 
 const HISTORIC_TAG = 'recorded-by-hand';
+
+/* The span the recorded readings cover. Saving a report inside it replaces
+   recorded figures, so the date field warns before letting that happen. */
+const RECORDED_FROM = HISTORIC_READINGS[0].date;
+const RECORDED_TO = HISTORIC_READINGS[HISTORIC_READINGS.length - 1].date;
 
 /* When the chemical dosing was switched on and off, as recorded on paper.
    The DAF water itself is never switched off, so it is not tracked - the meter
@@ -2565,9 +2570,13 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
      reading the dosed volume is actually measured from never appears anywhere
      - which makes the dosed figure look as though it came from the wrong
      number. */
+  /* Strictly before the closing moment. A switch at the exact end of a period
+     starts or stops the dosing for the *next* one and contributes nothing
+     here, so listing it put "Dosing switched on 7:30pm" directly above
+     "0.0 hrs dosing" and read as a contradiction. */
   const switches = spanFrom
     ? daf
-      .filter(e => e && e.at && e.at >= spanFrom && e.at <= spanTo)
+      .filter(e => e && e.at && e.at >= spanFrom && e.at < spanTo)
       .slice()
       .sort((a, b) => (a.at < b.at ? -1 : 1))
       .map(e => {
@@ -2587,6 +2596,12 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
     waterNow, flowRate,
     // The two moments the water figures cover, so the report can label them.
     spanFrom, spanTo, spanHours, switches,
+    /* Including the one at the closing moment, so the report can explain that
+       the dosing started right at the end rather than leave a bare zero. */
+    allSwitches: spanFrom
+      ? daf.filter(e => e && e.at && e.at >= spanFrom && e.at <= spanTo)
+        .map(e => ({ at: e.at, on: !!e.on }))
+      : [],
     /* What stops the water being worked out, so the report can say so instead
        of printing a block with holes in it - or nothing at all, which is what
        a period that did not make sense used to produce. */
@@ -3207,8 +3222,16 @@ function buildPdf(state, evaluated, previous) {
        used to print a bare "0.0 hrs" with no hint of what that meant. */
     let note;
     if (evaluated.dosingHours <= 0) {
-      note = 'The chemical dosing was switched off for this whole period, so no '
+      note = 'The chemical dosing was off for this whole period, so none of this '
         + 'water was dosed and there are no dose figures below.';
+      // Said plainly, because "off all period" next to a dosing start earlier
+      // the same day is otherwise read as a contradiction.
+      const startsNext = (evaluated.allSwitches || [])
+        .find(s => s.on && s.at >= evaluated.spanTo);
+      if (startsNext) {
+        note += ` The dosing was switched on at ${clockTime(startsNext.at)}, at the`
+          + ' very end of this period, so it counts towards the next report.';
+      }
     } else if (dosed !== null) {
       note = `Each "Dose" figure below is the litres of chemical used for every `
         + `1 m\u00B3 of that ${fmtQty(dosed, 0)} m\u00B3.`;
@@ -5316,11 +5339,14 @@ function showBuildId() {
   const raw = meta ? meta.getAttribute('content') : '';
   // Still the literal placeholder when running straight from www/ in development.
   const label = (!raw || raw.indexOf('BUILD_ID') !== -1) ? 'development build' : raw;
-  // Shown in Settings and at the foot of the main screen, so which build is
-  // actually running is never a guess.
-  ['#buildId', '#buildIdMain'].forEach(sel => {
-    const target = el(sel);
-    if (target) target.textContent = label;
+  /* Every place the version is shown, found by class rather than by id.
+
+     These used to be separate ids, and when a third was added it reused one of
+     them. Duplicate ids are legal HTML but querySelector only ever returns the
+     first, so the other quietly kept saying "dev" - which is exactly the kind
+     of thing that makes an update look as though it has not landed. */
+  document.querySelectorAll('.js-build-id').forEach(target => {
+    target.textContent = label;
   });
 }
 
@@ -5339,7 +5365,31 @@ function hydrateFields() {
 
 function bindShell() {
   el('#fDate').addEventListener('change', async e => {
-    state.date = e.target.value || todayISO();
+    const picked = e.target.value || todayISO();
+
+    /* Those dates hold the readings and reports recorded on paper before the
+       app existed. Submitting over one of them replaces the recorded figures,
+       and a submitted report carries no meter readings - so the days the water
+       speed is measured from disappear, the speed moves, and nothing on screen
+       says why. That happened in testing and took a long time to track down.
+
+       A warning rather than a block: a real report might genuinely need one of
+       these dates, and Settings can put the recorded data back either way. */
+    if (picked >= RECORDED_FROM && picked <= RECORDED_TO && picked !== state.date) {
+      const ok = confirm(
+        `${prettyDate(RECORDED_FROM)} to ${prettyDate(RECORDED_TO)} hold the `
+        + 'readings recorded on paper.\n\n'
+        + 'Saving a report for this date replaces them, which changes the '
+        + 'measured water speed and the dose figures.\n\n'
+        + 'Use today\'s date for a test report. Carry on anyway?'
+      );
+      if (!ok) {
+        e.target.value = state.date;
+        return;
+      }
+    }
+
+    state.date = picked;
     // A different date means a different report to compare against.
     previousReport = await findPreviousReport();
     queueSave();
