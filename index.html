@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1e3a5f">
-<meta name="build-id" content="e2f8350392ff">
+<meta name="build-id" content="5343be13dc3e">
 <title>Daily Ops Report</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -642,6 +642,11 @@ body.no-scroll { overflow: hidden; }
       </div>
     </div>
     <button type="button" id="btnDosingToggle" class="btn btn-ghost full">Record DAF dosage started</button>
+    <p class="muted small">
+      Recording a switch does not start or save a report &mdash; it just adds to
+      the list, and the meter reading goes into your meter list. Carry on with
+      the same report tomorrow morning.
+    </p>
     <div class="dosing-entry" id="dosingEntry" hidden>
       <div class="field-grid">
         <label>Date
@@ -3763,7 +3768,12 @@ function blankState() {
     site: DEFAULT_SITE,
     reportPrefix: DEFAULT_PREFIX,
     avgWindowDays: DEFAULT_AVG_WINDOW,
-    readingTime: nowHHMM(),
+    /* The time of the morning round, not the time the app happened to be
+       opened. Using the clock meant that calling in at 7:30pm to log a dosing
+       switch retitled the whole report as a 7:30pm round, which moved the
+       period every figure is measured over. The round time barely changes, so
+       it is carried from one report to the next instead. */
+    readingTime: DEFAULT_READING_TIME,
     lastReadingTime: DEFAULT_READING_TIME,
     meter: '',
     prevMeter: null,
@@ -4273,6 +4283,27 @@ async function generatePdf() {
     return;
   }
 
+  /* A report is filed under its date, so saving a second one for the same day
+     replaces the first. The period it covered then exists nowhere, while the
+     next report carries on from the later reading - so that water is simply
+     gone from the record. Worth a word before it happens. */
+  try {
+    const existing = await store.get(`report-${state.date}`);
+    if (existing && existing.source !== HISTORIC_TAG && existing.values) {
+      const ok = confirm(
+        `A report for ${prettyDate(state.date)} is already saved.\n\n`
+        + 'Saving again replaces it, and the period it covered will no longer '
+        + 'be recorded anywhere.\n\n'
+        + 'If you only came to log a meter reading or a dosing switch, those '
+        + 'are already saved - you do not need to make a report.\n\n'
+        + 'Replace it?'
+      );
+      if (!ok) return;
+    }
+  } catch (err) {
+    console.error('could not check for an existing report', err);
+  }
+
   const ev = refresh();
   toast('Building PDF...');
 
@@ -4326,6 +4357,9 @@ async function startNewReport() {
     ...blankState(), ...carriedSettings(),
     values: { ...defaultValues(), ...carriedStock, ...carriedDates },
     lastCheckDate: previousDate, lastReadingTime: previousTime,
+    // The round happens at much the same time each day, so last time's is a
+    // far better guess than the clock.
+    readingTime: previousTime,
     id: DRAFT_ID
   };
   // Meter readings live in their own log, so the previous reading is still
@@ -5541,7 +5575,7 @@ async function boot() {
           lastReadingTime: hadReadings
             ? (draft.readingTime || DEFAULT_READING_TIME)
             : (draft.lastReadingTime || DEFAULT_READING_TIME),
-          readingTime: nowHHMM(),
+          readingTime: draft.readingTime || DEFAULT_READING_TIME,
           id: DRAFT_ID
         };
       }
