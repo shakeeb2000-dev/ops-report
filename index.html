@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1e3a5f">
-<meta name="build-id" content="4167dfa0c872">
+<meta name="build-id" content="e0840a529c58">
 <title>Daily Ops Report</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -1455,7 +1455,18 @@ function dosedWater(fromStamp, toStamp, fromMeter, toMeter, events, flowRate, me
    whole gap and both meter readings are known. Those are exact, so they are
    the only trustworthy basis for filling in the gaps. */
 function dosingFlowRate(reports, events, meterLog) {
+  const days = flowRateDays(reports, events, meterLog);
   let water = 0, hours = 0;
+  days.forEach(d => { water += d.water; hours += d.hours; });
+  return hours > 0 ? water / hours : null;
+}
+
+/* The days the flow rate is measured from: those where dosing covered the
+   whole period between two readings, so the meter difference is exactly the
+   water that was dosed. Split out so the report can say how many days the
+   figure rests on, which is otherwise impossible to guess from the number. */
+function flowRateDays(reports, events, meterLog) {
+  const out = [];
   (reports || []).forEach(r => {
     if (!r.lastCheckDate) return;
     const { meter, prevMeter } = meterForReport(r, meterLog);
@@ -1465,10 +1476,14 @@ function dosingFlowRate(reports, events, meterLog) {
     const gapH = (toMs(to) - toMs(from)) / 3600000;
     const onH = dosingHoursBetween(events, from, to);
     if (gapH <= 0 || Math.abs(onH - gapH) > 0.02) return;   // not a full-dosing period
-    water += meter - prevMeter;
-    hours += onH;
+    if (meter - prevMeter < 0) return;
+    out.push({ date: r.date, water: meter - prevMeter, hours: onH });
   });
-  return hours > 0 ? water / hours : null;
+  return out;
+}
+
+function dosingFlowDays(reports, events, meterLog) {
+  return flowRateDays(reports, events, meterLog).length;
 }
 
 function dosingLastEvent(events) {
@@ -1573,6 +1588,17 @@ function meterBefore(log, stamp) {
 function meterLatest(log, stamp) {
   const list = stamp ? meterSorted(log).filter(e => e.at <= stamp) : meterSorted(log);
   return list.length ? list[list.length - 1] : null;
+}
+
+/* The reading a report measures its water from.
+
+   That is the one taken at the last tank check, because the chemical usage
+   covers the same period - or the newest reading before it when none was taken
+   that morning. Shared by the screen and the report so the two can never
+   disagree about which reading is the basis. */
+function meterOpening(log, lastCheckDate, lastReadingTime, nowStamp) {
+  const checkStamp = lastCheckDate ? readingStamp(lastCheckDate, lastReadingTime) : null;
+  return checkStamp ? meterLatest(log, checkStamp) : meterBefore(log, nowStamp);
 }
 
 /* Checks a reading against the ones either side of it.
@@ -2367,15 +2393,24 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
   // any stretch where the meter was not noted at the switch.
   const log = meterLog || [];
 
-  /* This morning's reading and the one before it, taken from the log whenever
-     it holds them. Deriving them here rather than trusting the caller to have
-     lined them up first means no screen can quietly lose its meter figures.
-     A report saved before the log existed still falls back to its own pair. */
+  /* This morning's reading, from the log whenever it holds one. Deriving it
+     here rather than trusting the caller to have lined it up first means no
+     screen can quietly lose its meter figures. */
   const nowStamp = readingStamp(state.date, state.readingTime);
   const loggedNow = meterAtStamp(log, nowStamp);
-  const loggedPrev = meterBefore(log, nowStamp);
   const meterTo = loggedNow !== null ? loggedNow : num(state.meter);
-  const meterFrom = loggedPrev ? num(loggedPrev.value) : num(state.prevMeter);
+
+  /* The reading this report measures from.
+
+     It has to be the one taken at the last tank check, because that is the
+     period the chemical usage covers. Taking the newest earlier reading
+     instead loses water: a reading noted at 6pm when the dosing was switched
+     on would open the next report at 6pm, and the water that passed between
+     the morning check and 6pm would fall into no report at all. Readings
+     inside the period still count, as anchors that make the dosed volume
+     exact rather than estimated. */
+  const openedBy = meterOpening(log, state.lastCheckDate, state.lastReadingTime, nowStamp);
+  const meterFrom = openedBy ? num(openedBy.value) : num(state.prevMeter);
 
   /* One record per morning, today's being whatever is on screen.
 
@@ -2394,16 +2429,17 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
 
   const flowRate = daf.length ? dosingFlowRate(periods, daf, log) : null;
 
-  /* The stretch the water figures describe: between the two meter readings
-     actually being shown.
+  /* The stretch the water figures describe: exactly the two readings shown.
 
-     This used to run from the last *stock* check instead, which is a different
-     date. When the two disagreed the report printed a water figure next to
-     "dosing was on 0.0 hrs", which reads as nonsense - the water came from the
-     meter readings while the hours came from a period that was empty or
-     backwards. Both now come from the same two moments. */
-  const spanFrom = loggedPrev ? loggedPrev.at
+     Hours and water must come from the same two moments. They used to be
+     measured over different periods - the water from the meter readings, the
+     hours from the tank-check date - so the report could print a water figure
+     next to "dosing was on 0.0 hrs", which reads as nonsense. */
+  const spanFrom = openedBy ? openedBy.at
     : (state.lastCheckDate ? readingStamp(state.lastCheckDate, state.lastReadingTime) : null);
+  const spanHours = (spanFrom && toMs(spanFrom) !== null)
+    ? Math.round(((toMs(nowStamp) - toMs(spanFrom)) / 3600000) * 100) / 100
+    : null;
   const dosingHours = (daf.length && spanFrom)
     ? dosingHoursBetween(daf, spanFrom, nowStamp) : null;
   const waterNow = (daf.length && spanFrom)
@@ -2414,12 +2450,15 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
     actions: {}, gapDays, dosingHours,
     waterNow, flowRate,
     // The two moments the water figures cover, so the report can label them.
-    spanFrom, spanTo: nowStamp,
+    spanFrom, spanTo: nowStamp, spanHours,
+    // How many earlier days the water speed was measured from, so a reader can
+    // see why it is the figure it is.
+    flowDays: daf.length ? dosingFlowDays(periods, daf, log) : 0,
     meterFrom, meterTo,
     // When the earlier reading was actually taken. The last stock check and
     // the last meter reading are not always the same morning, so the label has
     // to come from the reading itself rather than from the stock date.
-    meterFromAt: loggedPrev ? loggedPrev.at : (state.prevMeterAt || null),
+    meterFromAt: openedBy ? openedBy.at : (state.prevMeterAt || null),
     totalWater: (meterTo !== null && meterFrom !== null) ? meterTo - meterFrom : null,
     lastCheckDate: state.lastCheckDate || null, stock: []
   };
@@ -2954,7 +2993,12 @@ function buildPdf(state, evaluated, previous) {
     if (evaluated.totalWater !== null) {
       lines.push(['Water through the plant', `${fmtQty(evaluated.totalWater, 1)} m\u00B3`, false]);
     }
-    lines.push(['Chemical was dosing for', `${fmtQty(evaluated.dosingHours, 1)} hrs of that`, false]);
+    // Spelling out the whole period makes the dosing hours readable: "14 hrs"
+    // means nothing until you know the period was 24.
+    lines.push(['Chemical was dosing for',
+      evaluated.spanHours
+        ? `${fmtQty(evaluated.dosingHours, 1)} of those ${fmtQty(evaluated.spanHours, 1)} hrs`
+        : `${fmtQty(evaluated.dosingHours, 1)} hrs`, false]);
     if (dosed !== null) {
       lines.push(['Water that got chemical',
         `${fmtQty(dosed, 0)} m\u00B3${evaluated.waterNow.exact ? '' : '  (estimated)'}`, true]);
@@ -2963,7 +3007,8 @@ function buildPdf(state, evaluated, previous) {
     // dosing" sitting under "dosing for 0.0 hrs" invites the question of which
     // of the two is wrong, when neither is.
     if (evaluated.flowRate && evaluated.dosingHours > 0) {
-      lines.push(['Water speed while dosing', `${fmtQty(evaluated.flowRate, 1)} m\u00B3 per hour`, false]);
+      lines.push(['Water speed while dosing',
+        `${fmtQty(evaluated.flowRate, 1)} m\u00B3 per hour`, false]);
     }
 
     /* The closing sentence has to make sense of whatever the figures say,
@@ -2977,8 +3022,13 @@ function buildPdf(state, evaluated, previous) {
       note = `Each "Dose" figure below is the litres of chemical used for every `
         + `1 m\u00B3 of that ${fmtQty(dosed, 0)} m\u00B3.`;
       if (!evaluated.waterNow.exact) {
-        note += ' Where the meter was not noted at the switch, the water is '
-          + 'worked out from the speed above.';
+        note += ' The meter was not noted when the dosing was switched, so this'
+          + ' volume is the dosing hours times the speed above';
+        note += evaluated.flowDays
+          ? `, which is measured from ${plural(evaluated.flowDays, 'earlier day')} `
+            + 'when the dosing ran right through.'
+          : '.';
+        note += ' Noting the meter at the switch makes it exact.';
       }
     } else {
       note = 'Add a meter reading for each morning and the water dosed can be '
@@ -4614,16 +4664,22 @@ function renderMeterLog(opts) {
   const keepInput = !!(opts && opts.keepInput);
   const nowStamp = readingStamp(state.date, state.readingTime);
   const mine = meterAtStamp(meterReadings, nowStamp);
-  const before = meterBefore(meterReadings, nowStamp);
 
   // While the operator is typing, leaving the box alone avoids fighting the
   // caret. Every other path rewrites it from the log.
   if (!keepInput) el('#fMeter').value = mine === null ? '' : String(mine);
 
+  /* Says which reading this report is measured from, not simply the newest one
+     in the log. Those are different as soon as a reading is noted mid-period:
+     a 6pm reading is the newest, but the report still measures from the
+     morning tank check. Calling the newest one "last reading" made the line
+     look wrong whenever both existed. */
   const pm = el('#prevMeterNote');
   if (pm) {
-    pm.textContent = before
-      ? `Last reading was ${fmtQty(num(before.value), 1)} m\u00B3 on ${prettyStamp(before.at)}`
+    const from = meterOpening(meterReadings, state.lastCheckDate, state.lastReadingTime, nowStamp);
+    pm.textContent = from
+      ? `This report measures water from ${fmtQty(num(from.value), 1)} m\u00B3, `
+        + `taken ${prettyStamp(from.at)}`
       : 'No earlier meter reading yet';
   }
 
