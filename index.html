@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1e3a5f">
-<meta name="build-id" content="45c42810b7e1">
+<meta name="build-id" content="ffcb2976fad6">
 <title>Daily Ops Report</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -599,6 +599,34 @@ body.no-scroll { overflow: hidden; }
     <p class="muted small" id="prevMeterNote">&nbsp;</p>
   </section>
 
+  <!-- ---------- DAF water meter log ---------- -->
+  <section class="card dosing-card" id="meterCard">
+    <h2>DAF water meter readings</h2>
+    <p class="muted small">
+      Every reading you have recorded. Remove a wrong one and enter it again -
+      the dose figures are worked out from this list.
+    </p>
+    <button type="button" id="btnMeterAdd" class="btn btn-ghost full">+ Add a meter reading</button>
+    <div class="dosing-entry" id="meterEntry" hidden>
+      <div class="field-grid">
+        <label>Date
+          <input type="date" id="meterDate">
+        </label>
+        <label>Time
+          <input type="time" id="meterTime">
+        </label>
+      </div>
+      <label>Meter reading (m&sup3;)
+        <input type="number" inputmode="decimal" step="any" id="meterValue" placeholder="e.g. 224994.2">
+      </label>
+      <div class="sheet-foot">
+        <button type="button" id="btnMeterCancel" class="tool-btn">Cancel</button>
+        <button type="button" id="btnMeterSave" class="btn btn-primary">Save</button>
+      </div>
+    </div>
+    <div class="dosing-list" id="meterList"></div>
+  </section>
+
   <!-- ---------- DAF running log ---------- -->
   <section class="card dosing-card" id="dosingCard">
     <h2>Chemical dosing</h2>
@@ -609,7 +637,7 @@ body.no-scroll { overflow: hidden; }
         <div class="dosing-since muted" id="dosingSince">&nbsp;</div>
       </div>
     </div>
-    <button type="button" id="btnDosingToggle" class="btn btn-ghost full">Record dosing ON</button>
+    <button type="button" id="btnDosingToggle" class="btn btn-ghost full">Record DAF dosage started</button>
     <div class="dosing-entry" id="dosingEntry" hidden>
       <div class="field-grid">
         <label>Date
@@ -909,9 +937,30 @@ const CLEANLINESS_OPTIONS = [
 ];
 
 const PAPERWORK_OPTIONS = [
-  { value: 'updated', label: 'Updated',         status: STATUS.OK },
   // "Fault" is wrong for a paperwork job, so this option names the action.
+  { value: 'updated', label: 'Updated',         status: STATUS.OK },
   { value: 'prints',  label: 'Need new prints', status: STATUS.FAULT, badge: 'NEED PRINTS' }
+];
+
+/* Is the plant turning over? "Not running" is kept apart from "Fault" because
+   the two call for different replies: one may be a planned stop, the other is
+   a breakdown. Both still need reporting, so both come out red. */
+const RUNNING_OPTIONS = [
+  { value: 'running',    label: 'Running',     status: STATUS.OK },
+  { value: 'notrunning', label: 'Not running', status: STATUS.FAULT, badge: 'NOT RUNNING' },
+  { value: 'fault',      label: 'Fault',       status: STATUS.FAULT },
+  // "Not done" reads oddly for a reading, so this says what actually happened.
+  { value: 'notchecked', label: 'Not checked', status: STATUS.TODO }
+];
+
+/* Is the reading where it should be? Drifting either way is worth watching
+   rather than treating as a breakdown, so those two are amber. */
+const TARGET_OPTIONS = [
+  { value: 'within',     label: 'Within target', status: STATUS.OK },
+  { value: 'above',      label: 'Above target',  status: STATUS.WATCH, badge: 'ABOVE TARGET' },
+  { value: 'below',      label: 'Below target',  status: STATUS.WATCH, badge: 'BELOW TARGET' },
+  { value: 'fault',      label: 'Fault',         status: STATUS.FAULT },
+  { value: 'notchecked', label: 'Not checked',   status: STATUS.TODO }
 ];
 
 /* ------------------------------------------------------------------
@@ -926,8 +975,10 @@ const CHECKLIST = [
         id: 'biofilters',
         title: 'Biofilters',
         items: [
-          { id: 'bio_running', label: 'System running', type: 'status', default: { status: STATUS.OK } },
-          { id: 'bio_target',  label: 'Within target',  type: 'status', default: { status: STATUS.OK } },
+          { id: 'bio_running', label: 'System running', type: 'choice', options: RUNNING_OPTIONS,
+            default: { choice: 'running' } },
+          { id: 'bio_target',  label: 'Within target',  type: 'choice', options: TARGET_OPTIONS,
+            default: { choice: 'within' } },
           { id: 'bio_vacuum',  label: 'Vacuum gauge',   type: 'status', default: { status: STATUS.OK } },
           { id: 'bio1_rh',     label: 'Bio 1 humidity', type: 'choice', options: OK_FAULT_OPTIONS,
             default: { choice: 'fault' } },
@@ -1009,7 +1060,7 @@ const CHECKLIST = [
           { id: 'duct_drier1',      label: 'Drier 1',     type: 'status', hint: 'OK = no steaming',
             default: { status: STATUS.OK } },
           { id: 'duct_drier2',      label: 'Drier 2',     type: 'status', hint: 'OK = no steaming',
-            default: { status: STATUS.FAULT, note: 'Steaming' } },
+            default: { status: STATUS.OK } },
           { id: 'duct_drier3',      label: 'Drier 3',     type: 'status', hint: 'OK = no steaming',
             default: { status: STATUS.OK } }
         ]
@@ -1348,7 +1399,7 @@ function dosingOnNow(events, nowStamp) {
    is automatic when dosing ran for the whole period between two readings.
    Otherwise the dosing hours are multiplied by the flow rate measured from
    those exact periods, and the result is marked as an estimate. */
-function dosedWater(fromStamp, toStamp, fromMeter, toMeter, events, flowRate) {
+function dosedWater(fromStamp, toStamp, fromMeter, toMeter, events, flowRate, meterLog) {
   const a = toMs(fromStamp), b = toMs(toStamp);
   if (a === null || b === null || b <= a) return null;
 
@@ -1361,6 +1412,12 @@ function dosedWater(fromStamp, toStamp, fromMeter, toMeter, events, flowRate) {
     if (t !== null && num(e.meter) !== null && t >= a && t <= b) {
       known.push({ t, m: num(e.meter) });
     }
+  });
+  // A reading noted in the meter log counts the same as one noted at a switch,
+  // so a mid-period reading makes that stretch exact rather than estimated.
+  meterSorted(meterLog).forEach(e => {
+    const t = toMs(e.at);
+    if (t !== null && t >= a && t <= b) known.push({ t, m: num(e.value) });
   });
   const meterAt = (t) => {
     const hit = known.find(k => k.t === t);
@@ -1393,16 +1450,18 @@ function dosedWater(fromStamp, toStamp, fromMeter, toMeter, events, flowRate) {
 /* Flow rate while dosing, measured only from periods where dosing covered the
    whole gap and both meter readings are known. Those are exact, so they are
    the only trustworthy basis for filling in the gaps. */
-function dosingFlowRate(reports, events) {
+function dosingFlowRate(reports, events, meterLog) {
   let water = 0, hours = 0;
   (reports || []).forEach(r => {
-    if (!r.lastCheckDate || num(r.meter) === null || num(r.prevMeter) === null) return;
+    if (!r.lastCheckDate) return;
+    const { meter, prevMeter } = meterForReport(r, meterLog);
+    if (meter === null || prevMeter === null) return;
     const from = readingStamp(r.lastCheckDate, r.lastReadingTime || DEFAULT_READING_TIME);
     const to = readingStamp(r.date, r.readingTime || DEFAULT_READING_TIME);
     const gapH = (toMs(to) - toMs(from)) / 3600000;
     const onH = dosingHoursBetween(events, from, to);
     if (gapH <= 0 || Math.abs(onH - gapH) > 0.02) return;   // not a full-dosing period
-    water += num(r.meter) - num(r.prevMeter);
+    water += meter - prevMeter;
     hours += onH;
   });
   return hours > 0 ? water / hours : null;
@@ -1473,6 +1532,72 @@ const HISTORIC_DOSING_LOG = [
   { at: '2026-10-02T16:00', on: false }
 ];
 
+/* The meter readings on their own, as an editable log.
+
+   The readings above are tied to the reports they were taken with, which makes
+   a wrong one awkward to correct. This log is the editable copy and the one
+   the figures are read from, so a reading typed by mistake can simply be
+   removed and entered again. */
+function buildHistoricMeterLog() {
+  return HISTORIC_READINGS
+    .filter(r => num(r.meter) !== null)
+    .map(r => ({ at: readingStamp(r.date, DEFAULT_READING_TIME), value: num(r.meter) }));
+}
+
+/* Readings sorted oldest first, with anything unusable dropped. */
+function meterSorted(log) {
+  return (log || [])
+    .filter(e => e && e.at && num(e.value) !== null)
+    .slice()
+    .sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+}
+
+/* The reading taken at exactly this moment, if there is one. */
+function meterAtStamp(log, stamp) {
+  const hit = meterSorted(log).find(e => e.at === stamp);
+  return hit ? num(hit.value) : null;
+}
+
+/* The newest reading strictly before this moment. Returns the whole entry, so
+   the caller can say when it was taken. */
+function meterBefore(log, stamp) {
+  const list = meterSorted(log).filter(e => e.at < stamp);
+  return list.length ? list[list.length - 1] : null;
+}
+
+/* The newest reading at or before this moment. */
+function meterLatest(log, stamp) {
+  const list = stamp ? meterSorted(log).filter(e => e.at <= stamp) : meterSorted(log);
+  return list.length ? list[list.length - 1] : null;
+}
+
+/* The pair of readings that bracket a report's period.
+
+   The log wins wherever it has a reading, so correcting the log corrects every
+   figure that was ever worked out from it. A report saved before the log
+   existed still has its own readings, and those are used as the fallback. */
+function meterForReport(report, log) {
+  if (!report) return { meter: null, prevMeter: null };
+  const to = readingStamp(report.date, report.readingTime || DEFAULT_READING_TIME);
+  const fromDate = report.lastCheckDate;
+  const from = fromDate
+    ? readingStamp(fromDate, report.lastReadingTime || DEFAULT_READING_TIME)
+    : null;
+
+  let meter = meterAtStamp(log, to);
+  if (meter === null) meter = num(report.meter);
+
+  let prevMeter = from ? meterAtStamp(log, from) : null;
+  if (prevMeter === null && from) {
+    const before = meterBefore(log, to);
+    // Only trust a nearby reading if it is the one that opens this period.
+    if (before && before.at === from) prevMeter = num(before.value);
+  }
+  if (prevMeter === null) prevMeter = num(report.prevMeter);
+
+  return { meter, prevMeter };
+}
+
 /* Turns those readings into report records the average can read. */
 function buildHistoricReports() {
   const chems = ['caustic', 'coagulant', 'flocculant', 'sulphuric'];
@@ -1520,7 +1645,7 @@ function buildHistoricReports() {
    that rose with nothing recorded - so they cannot distort the average.
    ------------------------------------------------------------------ */
 
-function usageFromReport(item, report, dosingEvents, flowRate) {
+function usageFromReport(item, report, dosingEvents, flowRate, meterLog) {
   if (!report || !report.values) return null;
   const v = report.values[item.id];
   if (!v) return null;
@@ -1537,7 +1662,8 @@ function usageFromReport(item, report, dosingEvents, flowRate) {
     const from = readingStamp(report.lastCheckDate, report.lastReadingTime || DEFAULT_READING_TIME);
     const to = readingStamp(report.date, report.readingTime || DEFAULT_READING_TIME);
     hours = dosingHoursBetween(dosingEvents, from, to);
-    const w = dosedWater(from, to, report.prevMeter, report.meter, dosingEvents, flowRate);
+    const m = meterForReport(report, meterLog);
+    const w = dosedWater(from, to, m.prevMeter, m.meter, dosingEvents, flowRate, meterLog);
     if (w) { water = w.volume; exactWater = w.exact; }
   }
 
@@ -1552,7 +1678,7 @@ function usageFromReport(item, report, dosingEvents, flowRate) {
 
 /* Average usage per day across the window, weighted by days rather than by
    report, so a three-day gap counts for three days. */
-function usageStats(item, reports, windowDays, today, dosingEvents, flowRate) {
+function usageStats(item, reports, windowDays, today, dosingEvents, flowRate, meterLog) {
   const window = windowDays > 0 ? windowDays : DEFAULT_AVG_WINDOW;
   const series = [];
   let totalUsed = 0, totalDays = 0, totalHours = 0;
@@ -1562,7 +1688,7 @@ function usageStats(item, reports, windowDays, today, dosingEvents, flowRate) {
   (reports || []).forEach(r => {
     const age = daysBetween(r.date, today);
     if (age !== null && age > window) return;      // older than the window
-    const u = usageFromReport(item, r, dosingEvents, flowRate);
+    const u = usageFromReport(item, r, dosingEvents, flowRate, meterLog);
     if (!u) return;
     // Nothing was dosed in that period, so there is nothing to learn from it
     // and it would only drag the figures down.
@@ -1629,6 +1755,23 @@ function carryStockForward(values) {
       carried.photos = [];
       out[item.id] = carried;
     }
+  });
+  return out;
+}
+
+/* Carries the "sampled up to" dates into the next report.
+
+   These move on their own schedule - a weekly sample does not change for days
+   at a time - so repeating yesterday's date is almost always right, and when
+   it is not it only takes one tap to correct. */
+function carryDatesForward(values) {
+  const out = {};
+  if (!values) return out;
+  Object.values(ITEM_INDEX).forEach(item => {
+    if (item.type !== 'date') return;
+    const v = values[item.id];
+    if (!v || !v.date) return;
+    out[item.id] = { date: v.date, photos: [] };
   });
   return out;
 }
@@ -2177,7 +2320,7 @@ function plural(n, word) {
    Evaluation
    ------------------------------------------------------------------ */
 
-function evaluate(state, previous, history, dosingEvents) {
+function evaluate(state, previous, history, dosingEvents, meterLog) {
   // Always work from a complete set of thresholds, so a report saved by an
   // older version cannot bring the calculation down with a missing limit.
   const thresholds = mergeThresholds(state.thresholds);
@@ -2191,19 +2334,48 @@ function evaluate(state, previous, history, dosingEvents) {
 
   // Flow rate while dosing, measured only from exact periods. Used to fill in
   // any stretch where the meter was not noted at the switch.
-  const flowRate = daf.length ? dosingFlowRate(submitted, daf) : null;
+  const log = meterLog || [];
+
+  /* This morning's reading and the one before it, taken from the log whenever
+     it holds them. Deriving them here rather than trusting the caller to have
+     lined them up first means no screen can quietly lose its meter figures.
+     A report saved before the log existed still falls back to its own pair. */
+  const nowStamp = readingStamp(state.date, state.readingTime);
+  const loggedNow = meterAtStamp(log, nowStamp);
+  const loggedPrev = meterBefore(log, nowStamp);
+  const meterTo = loggedNow !== null ? loggedNow : num(state.meter);
+  const meterFrom = loggedPrev ? num(loggedPrev.value) : num(state.prevMeter);
+
+  /* One record per morning, today's being whatever is on screen.
+
+     Submitting a report archives it, so from that moment the same morning
+     exists both in storage and on screen. Counting both would weight that day
+     twice - in the averages and in the measured flow rate alike - so the saved
+     copy of today is dropped and the live one used in its place. */
+  const periods = submitted
+    .filter(r => r.date !== state.date)
+    .concat([{
+      date: state.date, lastCheckDate: state.lastCheckDate,
+      readingTime: state.readingTime, lastReadingTime: state.lastReadingTime,
+      meter: meterTo, prevMeter: meterFrom,
+      values: state.values
+    }]);
+
+  const flowRate = daf.length ? dosingFlowRate(periods, daf, log) : null;
   const waterNow = daf.length ? dosedWater(
     readingStamp(state.lastCheckDate, state.lastReadingTime),
-    readingStamp(state.date, state.readingTime),
-    state.prevMeter, state.meter, daf, flowRate) : null;
+    nowStamp, meterFrom, meterTo, daf, flowRate, log) : null;
 
   const result = {
     items: {}, counts: { ok: 0, watch: 0, fault: 0, todo: 0, blank: 0 },
     actions: {}, gapDays, dosingHours,
     waterNow, flowRate,
-    meterFrom: num(state.prevMeter), meterTo: num(state.meter),
-    totalWater: (num(state.meter) !== null && num(state.prevMeter) !== null)
-      ? num(state.meter) - num(state.prevMeter) : null,
+    meterFrom, meterTo,
+    // When the earlier reading was actually taken. The last stock check and
+    // the last meter reading are not always the same morning, so the label has
+    // to come from the reading itself rather than from the stock date.
+    meterFromAt: loggedPrev ? loggedPrev.at : (state.prevMeterAt || null),
+    totalWater: (meterTo !== null && meterFrom !== null) ? meterTo - meterFrom : null,
     lastCheckDate: state.lastCheckDate || null, stock: []
   };
 
@@ -2269,15 +2441,9 @@ function evaluate(state, previous, history, dosingEvents) {
 
           const usage = stockUsage(item, v, gapDays);
 
-          // Average across the window, including today's own figure.
-          const stats = usageStats(item,
-            submitted.concat([{
-              date: state.date, lastCheckDate: state.lastCheckDate,
-              readingTime: state.readingTime, lastReadingTime: state.lastReadingTime,
-              meter: state.meter, prevMeter: state.prevMeter,
-              values: state.values
-            }]),
-            avgWindow, state.date, daf, flowRate);
+          // Average across the window, over one record per morning.
+          const stats = usageStats(item, periods,
+            avgWindow, state.date, daf, flowRate, log);
 
           // Chemicals are judged on litres per cubic metre treated; the boiler
           // tanks stay on calendar days.
@@ -2708,7 +2874,10 @@ function buildPdf(state, evaluated, previous) {
   if (evaluated.dosingHours !== null && evaluated.dosingHours !== undefined) {
     const lines = [];
     if (evaluated.meterFrom !== null) {
-      lines.push([`Meter at last check (${shortDate(evaluated.lastCheckDate)})`,
+      const fromDate = evaluated.meterFromAt
+        ? String(evaluated.meterFromAt).split('T')[0]
+        : evaluated.lastCheckDate;
+      lines.push([`Meter at last check (${shortDate(fromDate)})`,
         `${fmtQty(evaluated.meterFrom, 1)} m\u00B3`, false]);
     }
     if (evaluated.meterTo !== null) {
@@ -3191,6 +3360,7 @@ function todayISO() {
 
 let state = blankState();
 let saveTimer = null;
+let meterSaveTimer = null;
 /* The most recent saved report before today's, used for chemical usage. */
 let previousReport = null;
 /* Submitted reports, newest last. Feeds the average usage figures. */
@@ -3198,6 +3368,10 @@ let submittedReports = [];
 /* DAF start/stop events. Shared by every report, so adding a past event
    corrects the figures for earlier days too. */
 let dosingEvents = [];
+/* DAF water meter readings, { at, value }. Shared the same way, and the figure
+   every dose calculation is read from, so correcting a reading here corrects
+   every day it ever affected. */
+let meterReadings = [];
 
 function blankState() {
   return {
@@ -3253,6 +3427,18 @@ function queueSave() {
     store.put({ ...state, id: DRAFT_ID, savedAt: Date.now() }).catch(err => {
       console.error('autosave failed', err);
       toast('Could not autosave - storage may be full');
+    });
+  }, 400);
+}
+
+/* The meter log is edited a digit at a time while typing, so the write is
+   debounced the same way the draft is. */
+function queueMeterSave() {
+  clearTimeout(meterSaveTimer);
+  meterSaveTimer = setTimeout(() => {
+    saveMeterLog().catch(err => {
+      console.error('could not save the meter log', err);
+      toast('Could not save the meter reading');
     });
   }, 400);
 }
@@ -3605,7 +3791,10 @@ function dataUrlToBytes(dataUrl) {
 /* ---------------- refresh (pills, dots, summary, progress) ---------------- */
 
 function refresh() {
-  const ev = evaluate(state, previousReport, submittedReports, dosingEvents);
+  // The log decides what today's and the previous reading are, so it is read
+  // first and every figure below follows from it.
+  syncMeterFromLog();
+  const ev = evaluate(state, previousReport, submittedReports, dosingEvents, meterReadings);
 
   Object.keys(ev.items).forEach(id => {
     const pill = document.querySelector(`[data-pill="${id}"]`);
@@ -3747,15 +3936,19 @@ async function startNewReport() {
 
   // Today's levels become the next report's starting point.
   const carriedStock = carryStockForward(state.values);
+  // Sampling dates move on their own schedule, so yesterday's are repeated.
+  const carriedDates = carryDatesForward(state.values);
   const previousDate = state.date;
   const previousTime = state.readingTime || DEFAULT_READING_TIME;
-  const previousMeter = num(state.meter);
   state = {
     ...blankState(), ...carriedSettings(),
-    values: { ...defaultValues(), ...carriedStock },
+    values: { ...defaultValues(), ...carriedStock, ...carriedDates },
     lastCheckDate: previousDate, lastReadingTime: previousTime,
-    prevMeter: previousMeter, id: DRAFT_ID
+    id: DRAFT_ID
   };
+  // Meter readings live in their own log, so the previous reading is still
+  // there to be found rather than being carried across by hand.
+  syncMeterFromLog();
 
   await store.put({ ...state, savedAt: Date.now() });
   previousReport = await findPreviousReport();
@@ -3860,6 +4053,77 @@ async function saveDosingLog() {
   await store.put({ id: DOSING_KEY, events: dosingEvents, savedAt: Date.now() });
 }
 
+const METER_KEY = '__meter-log';
+/* Bumped when the embedded readings change, so corrections reach a phone that
+   already loaded an earlier set. Readings added by hand are always kept. */
+const METER_SEED_VERSION = 1;
+
+async function loadMeterLog() {
+  try {
+    const rec = await store.get(METER_KEY);
+    meterReadings = (rec && Array.isArray(rec.readings)) ? rec.readings : [];
+  } catch (err) {
+    console.error('could not load the meter log', err);
+    meterReadings = [];
+  }
+}
+
+async function saveMeterLog() {
+  meterReadings.sort((a, b) => (a.at < b.at ? -1 : 1));
+  await store.put({
+    id: METER_KEY, readings: meterReadings,
+    seedVersion: METER_SEED_VERSION, savedAt: Date.now()
+  });
+}
+
+/* Loads the hand-recorded meter readings.
+
+   Only ever adds: a reading already in the log keeps whatever value it has, so
+   a correction typed on the phone is never undone by an update. */
+async function seedMeterLog() {
+  try {
+    const rec = await store.get(METER_KEY);
+    const already = rec && rec.seedVersion === METER_SEED_VERSION;
+    if (already) return 0;
+
+    const have = new Set(meterReadings.map(e => e.at));
+    let added = 0;
+    buildHistoricMeterLog().forEach(e => {
+      if (have.has(e.at)) return;
+      meterReadings.push(e);
+      added++;
+    });
+    await saveMeterLog();
+    return added;
+  } catch (err) {
+    console.error('could not load the recorded meter readings', err);
+    return 0;
+  }
+}
+
+/* Points state.meter / state.prevMeter at the log.
+
+   The log is the single source of truth, so this runs before anything is
+   worked out. Today's own reading is whatever the log holds for this morning,
+   and the earlier figure is the newest reading before it - which is why
+   starting a new report no longer loses the history. */
+function syncMeterFromLog() {
+  const nowStamp = readingStamp(state.date, state.readingTime);
+  const mine = meterAtStamp(meterReadings, nowStamp);
+  state.meter = mine === null ? '' : String(mine);
+  const before = meterBefore(meterReadings, nowStamp);
+  state.prevMeter = before ? num(before.value) : null;
+  state.prevMeterAt = before ? before.at : null;
+}
+
+/* Writes today's reading into the log, replacing any earlier value for the
+   same moment so editing the box does not pile up entries. */
+async function recordMeterReading(stamp, value) {
+  meterReadings = meterReadings.filter(e => e.at !== stamp);
+  if (value !== null) meterReadings.push({ at: stamp, value });
+  await saveMeterLog();
+}
+
 const SEED_MARKER = '__historic-seeded';
 /* Bumped whenever the embedded readings change, so an app that already loaded
    an older set picks up the corrections instead of skipping them. */
@@ -3929,12 +4193,19 @@ async function seedYesterdayFromHistory() {
         if (num(from.backup) !== null) { target.prevBackup = String(num(from.backup)); seeded = true; }
       }
     });
+    // The sampling dates stand for days at a time, so the last ones recorded
+    // are repeated rather than left blank for re-typing.
+    Object.values(ITEM_INDEX).forEach(item => {
+      if (item.type !== 'date') return;
+      const from = source.values[item.id];
+      if (!from || !from.date) return;
+      const target = valueOf(item.id);
+      if (!target.date) target.date = from.date;
+    });
+
     if (seeded && !state.lastCheckDate) {
       state.lastCheckDate = source.date || null;
       state.lastReadingTime = source.readingTime || DEFAULT_READING_TIME;
-    }
-    if (num(state.prevMeter) === null && num(source.meter) !== null) {
-      state.prevMeter = num(source.meter);
     }
   } catch (err) {
     console.error('could not seed yesterday figures', err);
@@ -3954,7 +4225,7 @@ async function findPreviousReport() {
 /* ---------------- WhatsApp sheet ---------------- */
 
 function showWhatsApp() {
-  const ev = evaluate(state, previousReport, submittedReports, dosingEvents);
+  const ev = refresh();
   const messages = buildWhatsApp(state, ev);
   el('#waBody').innerHTML = messages.map((m, i) => `
     <div class="wa-block">
@@ -4152,11 +4423,13 @@ function renderDosing() {
   if (last) card.classList.add(running ? 'running' : 'stopped');
 
   el('#dosingNow').textContent = !last ? 'Not logged yet'
-    : (running ? 'DAF RUNNING' : 'DAF STOPPED');
+    : (running ? 'DAF DOSAGE RUNNING' : 'DAF DOSAGE STOPPED');
   el('#dosingSince').textContent = last
     ? `since ${prettyStamp(last.at)}`
-    : 'Record when the plant starts or stops';
-  el('#btnDosingToggle').textContent = running ? 'Record DAF stopped' : 'Record DAF started';
+    : 'Record when the chemical dosage starts or stops';
+  el('#btnDosingToggle').textContent = running
+    ? 'Record DAF dosage stopped'
+    : 'Record DAF dosage started';
 
   // last few entries, newest first
   const recent = dosingEvents.slice().sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, 6);
@@ -4183,8 +4456,8 @@ function openDosingEntry() {
   el('#dosingTime').value = nowHHMM();
   el('#dosingMeter').value = '';
   el('#dosingHint').textContent = running
-    ? 'When did you switch the dosing off? Add the meter reading if you noted it.'
-    : 'When did you switch the dosing on? Add the meter reading if you noted it.';
+    ? 'When did you switch the dosage off? Add the meter reading if you noted it.'
+    : 'When did you switch the dosage on? Add the meter reading if you noted it.';
   el('#dosingEntry').hidden = false;
 }
 
@@ -4212,7 +4485,7 @@ async function saveDosingEntry() {
   el('#dosingEntry').hidden = true;
   renderDosing();
   refresh();
-  toast(on ? 'DAF start recorded' : 'DAF stop recorded');
+  toast(on ? 'DAF dosage start recorded' : 'DAF dosage stop recorded');
 }
 
 function bindDosing() {
@@ -4227,6 +4500,94 @@ function bindDosing() {
     renderDosing();
     refresh();
     toast('Entry removed');
+  });
+}
+
+/* ---------------- DAF water meter log ---------------- */
+
+function renderMeterLog(opts) {
+  const keepInput = !!(opts && opts.keepInput);
+  const nowStamp = readingStamp(state.date, state.readingTime);
+  const mine = meterAtStamp(meterReadings, nowStamp);
+  const before = meterBefore(meterReadings, nowStamp);
+
+  // While the operator is typing, leaving the box alone avoids fighting the
+  // caret. Every other path rewrites it from the log.
+  if (!keepInput) el('#fMeter').value = mine === null ? '' : String(mine);
+
+  const pm = el('#prevMeterNote');
+  if (pm) {
+    pm.textContent = before
+      ? `Last reading was ${fmtQty(num(before.value), 1)} m\u00B3 on ${prettyStamp(before.at)}`
+      : 'No earlier meter reading yet';
+  }
+
+  const list = el('#meterList');
+  if (!list) return;
+  const recent = meterSorted(meterReadings).slice().reverse().slice(0, 8);
+  list.innerHTML = recent.length ? recent.map(e => {
+    const prev = meterBefore(meterReadings, e.at);
+    const diff = prev ? num(e.value) - num(prev.value) : null;
+    return `
+      <div class="dosing-row">
+        <span class="dosing-when">${esc(prettyStamp(e.at))}${e.at === nowStamp ? ' <em>(this report)</em>' : ''}</span>
+        <span>
+          <strong>${esc(fmtQty(num(e.value), 1))}</strong>
+          ${diff !== null ? `<span class="muted"> +${esc(fmtQty(diff, 1))} m\u00B3</span>` : ''}
+          <button type="button" class="dosing-del" data-meterdel="${esc(e.at)}">remove</button>
+        </span>
+      </div>`;
+  }).join('') : '<p class="muted small">No meter readings recorded yet.</p>';
+}
+
+function openMeterEntry() {
+  el('#meterDate').value = todayISO();
+  el('#meterTime').value = state.readingTime || DEFAULT_READING_TIME;
+  el('#meterValue').value = '';
+  el('#meterEntry').hidden = false;
+}
+
+async function saveMeterEntry() {
+  const date = el('#meterDate').value;
+  const time = el('#meterTime').value;
+  const value = num(el('#meterValue').value);
+  if (!date || !time) { toast('Pick a date and a time'); return; }
+  if (value === null) { toast('Type the meter reading'); return; }
+
+  const at = `${date}T${time}`;
+
+  // The meter only counts up, so a reading that sits below an earlier one or
+  // above a later one is a typing slip worth catching now.
+  const before = meterBefore(meterReadings, at);
+  const after = meterSorted(meterReadings).find(e => e.at > at);
+  if (before && value < num(before.value)) {
+    toast(`Lower than the ${fmtQty(num(before.value), 1)} reading before it - check the number`);
+    return;
+  }
+  if (after && value > num(after.value)) {
+    toast(`Higher than the ${fmtQty(num(after.value), 1)} reading after it - check the number`);
+    return;
+  }
+
+  await recordMeterReading(at, value);
+  el('#meterEntry').hidden = true;
+  refresh();
+  renderMeterLog();
+  toast('Meter reading saved');
+}
+
+function bindMeterLog() {
+  el('#btnMeterAdd').addEventListener('click', openMeterEntry);
+  el('#btnMeterCancel').addEventListener('click', () => { el('#meterEntry').hidden = true; });
+  el('#btnMeterSave').addEventListener('click', saveMeterEntry);
+  el('#meterList').addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-meterdel]');
+    if (!btn) return;
+    meterReadings = meterReadings.filter(x => x.at !== btn.dataset.meterdel);
+    await saveMeterLog();
+    refresh();
+    renderMeterLog();
+    toast('Reading removed');
   });
 }
 
@@ -4287,13 +4648,9 @@ function hydrateFields() {
   el('#fDate').value = state.date;
   el('#fReporter').value = state.reporter || '';
   el('#fReadingTime').value = state.readingTime || DEFAULT_READING_TIME;
-  el('#fMeter').value = state.meter ?? '';
-  const pm = el('#prevMeterNote');
-  if (pm) {
-    pm.textContent = num(state.prevMeter) !== null
-      ? `Last reading was ${fmtQty(num(state.prevMeter), 1)} m\u00B3 on ${prettyDate(state.lastCheckDate)}`
-      : 'No earlier meter reading yet';
-  }
+  // The meter box, the "last reading" line and the log list all come from the
+  // one log, so they are filled in together.
+  renderMeterLog();
   el('#fSite').value = state.site || '';
   el('#fPrefix').value = state.reportPrefix || DEFAULT_PREFIX;
   el('#fAvgWindow').value = state.avgWindowDays || DEFAULT_AVG_WINDOW;
@@ -4310,14 +4667,32 @@ function bindShell() {
   });
   el('#fReporter').addEventListener('input', e => { state.reporter = e.target.value; queueSave(); refresh(); });
   el('#fMeter').addEventListener('input', e => {
-    state.meter = e.target.value;
+    // Straight into the log, under this morning's reading time, replacing any
+    // value already there. The log is what every figure is read from.
+    const stamp = readingStamp(state.date, state.readingTime);
+    const value = num(e.target.value);
+    meterReadings = meterReadings.filter(x => x.at !== stamp);
+    if (value !== null) meterReadings.push({ at: stamp, value });
+    queueMeterSave();
     queueSave();
     refresh();
+    renderMeterLog({ keepInput: true });
   });
   el('#fReadingTime').addEventListener('change', e => {
+    const oldStamp = readingStamp(state.date, state.readingTime);
     state.readingTime = e.target.value || DEFAULT_READING_TIME;
+    // The reading moves with the time it was taken, so it does not strand
+    // itself at the old moment and read as a second reading.
+    const moved = meterReadings.find(x => x.at === oldStamp);
+    if (moved) {
+      const stamp = readingStamp(state.date, state.readingTime);
+      meterReadings = meterReadings.filter(x => x.at !== oldStamp && x.at !== stamp);
+      meterReadings.push({ at: stamp, value: moved.value });
+      queueMeterSave();
+    }
     queueSave();
     refresh();
+    renderMeterLog();
   });
   el('#fSite').addEventListener('input', e => { state.site = e.target.value; queueSave(); });
   el('#fAvgWindow').addEventListener('input', e => {
@@ -4400,14 +4775,14 @@ async function boot() {
         const hadReadings = Object.values(state.values || {})
           .some(v => v && (v.inUse !== undefined && v.inUse !== ''));
         const carriedStock = hadReadings ? carryStockForward(state.values) : {};
+        const carriedDates = carryDatesForward(state.values);
         state = {
           ...blankState(), ...carriedSettings(),
-          values: { ...defaultValues(), ...carriedStock },
+          values: { ...defaultValues(), ...carriedStock, ...carriedDates },
           lastCheckDate: hadReadings ? draft.date : (draft.lastCheckDate || null),
           lastReadingTime: hadReadings
             ? (draft.readingTime || DEFAULT_READING_TIME)
             : (draft.lastReadingTime || DEFAULT_READING_TIME),
-          prevMeter: hadReadings ? num(draft.meter) : (num(draft.prevMeter)),
           readingTime: nowHHMM(),
           id: DRAFT_ID
         };
@@ -4432,6 +4807,8 @@ async function boot() {
       dosingEvents = HISTORIC_DOSING_LOG.slice();
       await saveDosingLog();
     }
+    await loadMeterLog();
+    await seedMeterLog();
     await pruneOldReports();
     previousReport = await findPreviousReport();
     submittedReports = await loadSubmittedReports();
@@ -4448,6 +4825,8 @@ async function boot() {
   renderLogo();
   bindDosing();
   renderDosing();
+  bindMeterLog();
+  renderMeterLog();
   render();
   renderThresholds();
 
