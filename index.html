@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1e3a5f">
-<meta name="build-id" content="74a3c025c730">
+<meta name="build-id" content="45c42810b7e1">
 <title>Daily Ops Report</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -797,15 +797,23 @@ const EMPTY_TANK = 0;
 /* Adjustable trigger levels. Readings without an entry here are not graded
    automatically and rely on the operator's own OK / Fault choice. */
 const DEFAULT_THRESHOLDS = {
-  ph1:         { critLow: 6.0, warnLow: 6.5, warnHigh: 8.5, critHigh: 9.0 },
-  ph2:         { critLow: 6.0, warnLow: 6.5, warnHigh: 8.5, critHigh: 9.0 },
-  ph3:         { critLow: 6.0, warnLow: 6.5, warnHigh: 8.5, critHigh: 9.0 },
-  chemInUse:   { crit: 0,   warn: 300 },
-  chemBackup:  { crit: 0,   warn: 0 },
+  ph1:         { critLow: 4.9, warnLow: 5.0, warnHigh: 5.5, critHigh: 5.6 },
+  ph2:         { critLow: 6.0, warnLow: 6.1, warnHigh: 6.5, critHigh: 6.7 },
+  ph3:         { critLow: 6.0, warnLow: 6.1, warnHigh: 7.8, critHigh: 8.0 },
+  chemInUse:   { crit: 300, warn: 500 },
+  chemBackup:  { crit: 0,   warn: 300 },
   boilerChem:  { crit: 50,  warn: 100 },
-  saturator:   { critLow: 350, warnLow: 450, warnHigh: 700, critHigh: 800 },
-  flow:        { critLow: 5, warnLow: 10, warnHigh: 30, critHigh: 40 }
+  saturator:   { critLow: 500, warnLow: 550, warnHigh: 600, critHigh: 650 },
+  flow:        { critLow: 17, warnLow: 18, warnHigh: 20, critHigh: 21 }
 };
+
+/* Bumped whenever the numbers above change.
+
+   Trigger levels live inside the saved draft, so a phone that already ran an
+   older build keeps whatever that build shipped and never sees a new default.
+   The stamp lets boot() tell "these are just the old shipped numbers" apart
+   from "the operator typed these", and only the former gets replaced. */
+const THRESHOLD_VERSION = 2;
 
 /* Plain-language names for the Settings screen. */
 const TH_LABELS = {
@@ -837,6 +845,33 @@ function mergeThresholds(saved) {
     });
   });
   return out;
+}
+
+/* Works out which trigger levels to run after the app updates.
+
+   Takes the saved draft (or anything carrying `thresholds`, `thVersion` and
+   `thEdited`) and returns the set to use plus the stamps to store back.
+
+   Shipped numbers that the operator never touched are replaced by the new
+   defaults. Anything hand-typed is kept exactly as entered and only has
+   genuinely missing limits filled in. */
+function refreshThresholds(saved) {
+  const hand = !!saved && saved.thEdited === true;
+  const stale = !saved || Number(saved.thVersion) !== THRESHOLD_VERSION;
+  if (!hand && stale) {
+    return {
+      thresholds: JSON.parse(JSON.stringify(DEFAULT_THRESHOLDS)),
+      thVersion: THRESHOLD_VERSION,
+      thEdited: false,
+      replaced: true
+    };
+  }
+  return {
+    thresholds: mergeThresholds(saved && saved.thresholds),
+    thVersion: THRESHOLD_VERSION,
+    thEdited: hand,
+    replaced: false
+  };
 }
 
 /* Reusable option sets ------------------------------------------------ */
@@ -3181,7 +3216,12 @@ function blankState() {
     generalNote: '',
     values: defaultValues(),
     photos: {},
-    thresholds: deepCopy(DEFAULT_THRESHOLDS)
+    thresholds: deepCopy(DEFAULT_THRESHOLDS),
+    thVersion: THRESHOLD_VERSION,
+    /* False while the trigger levels are still the ones the app shipped with,
+       which is what lets a new build replace them. The moment the operator
+       edits one, the whole set becomes theirs and is never overwritten. */
+    thEdited: false
   };
 }
 
@@ -3193,7 +3233,9 @@ function carriedSettings() {
     reportPrefix: state.reportPrefix || DEFAULT_PREFIX,
     avgWindowDays: state.avgWindowDays || DEFAULT_AVG_WINDOW,
     logo: state.logo,
-    thresholds: mergeThresholds(state.thresholds)
+    thresholds: mergeThresholds(state.thresholds),
+    thVersion: state.thVersion,
+    thEdited: state.thEdited === true
   };
 }
 
@@ -3952,6 +3994,29 @@ const KEY_LABELS = {
   warn: 'Monitor at/below'
 };
 
+/* Lays a stored record over a blank state.
+
+   The spread alone is not enough for the threshold stamps. A record written by
+   an older build carries no stamp, blankState() supplies the current one, and
+   the spread would keep that: the record would then look up to date and go on
+   using levels the operator never chose. Reading both stamps straight off the
+   record keeps "missing" meaning missing. */
+function stateFromRecord(rec) {
+  return {
+    ...blankState(), ...rec, id: DRAFT_ID,
+    thVersion: rec.thVersion,
+    thEdited: rec.thEdited === true
+  };
+}
+
+/* Pulls the decision from refreshThresholds() into the live state. */
+function applyThresholdRefresh() {
+  const next = refreshThresholds(state);
+  state.thresholds = next.thresholds;
+  state.thVersion = next.thVersion;
+  state.thEdited = next.thEdited;
+}
+
 function bindThresholds() {
   el('#thresholdForm').addEventListener('input', (e) => {
     const t = e.target;
@@ -3959,6 +4024,9 @@ function bindThresholds() {
     const n = Number(t.value);
     if (!isFinite(n)) return;
     state.thresholds[t.dataset.th][t.dataset.thkey] = n;
+    // Hand-typed levels outrank anything a future build ships as default.
+    state.thEdited = true;
+    state.thVersion = THRESHOLD_VERSION;
     queueSave();
     refresh();
   });
@@ -4006,8 +4074,8 @@ async function renderHistory() {
   list.querySelectorAll('[data-load]').forEach(b => b.addEventListener('click', async () => {
     const rec = await store.get(b.dataset.load);
     if (!rec) return;
-    state = { ...blankState(), ...rec, id: DRAFT_ID };
-    state.thresholds = mergeThresholds(state.thresholds);
+    state = stateFromRecord(rec);
+    applyThresholdRefresh();
     previousReport = await findPreviousReport();
     submittedReports = await loadSubmittedReports();
     hydrateFields();
@@ -4270,6 +4338,9 @@ function bindShell() {
   el('#btnNewReport').addEventListener('click', startNewReport);
   el('#btnResetThresholds').addEventListener('click', () => {
     state.thresholds = deepCopy(DEFAULT_THRESHOLDS);
+    // Back to shipped numbers, so a later build may update them again.
+    state.thEdited = false;
+    state.thVersion = THRESHOLD_VERSION;
     renderThresholds();
     queueSave();
     refresh();
@@ -4321,7 +4392,7 @@ async function boot() {
   try {
     const draft = await store.get(DRAFT_ID);
     if (draft) {
-      state = { ...blankState(), ...draft, id: DRAFT_ID };
+      state = stateFromRecord(draft);
       if (!state.thresholds) state.thresholds = deepCopy(DEFAULT_THRESHOLDS);
       // A draft left over from a previous day starts fresh, keeping the
       // settings and rolling the tank levels into the Yesterday boxes.
@@ -4348,8 +4419,9 @@ async function boot() {
 
   if (!state.reporter) state.reporter = DEFAULT_REPORTER;
   if (!state.site) state.site = DEFAULT_SITE;
-  // Repairs settings saved by an older version that lack newer limits.
-  state.thresholds = mergeThresholds(state.thresholds);
+  // Takes new shipped limits, repairs any that an older version never saved,
+  // and leaves hand-typed numbers untouched.
+  applyThresholdRefresh();
   await seedYesterdayFromHistory();
 
   try {
