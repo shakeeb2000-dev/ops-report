@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1e3a5f">
-<meta name="build-id" content="5343be13dc3e">
+<meta name="build-id" content="6f839fe20fa5">
 <title>Daily Ops Report</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -5553,8 +5553,58 @@ async function checkStorage() {
   }
 }
 
+/* Puts a readable message on screen when start-up goes wrong.
+
+   A blank page is the worst thing this app can do: it gives no reason, no way
+   to reach the readings, and no clue whether the fault is the phone, the
+   network or the app. Anything is better than nothing. */
+function showStartupProblem(detail) {
+  try {
+    const host = document.querySelector('main') || document.body;
+    if (!host || document.querySelector('#startupProblem')) return;
+    const box = document.createElement('div');
+    // setAttribute rather than `.id =`, which reads the same in a browser but
+    // is the form the test harness can see too.
+    box.setAttribute('id', 'startupProblem');
+    box.className = 'card';
+    box.style.cssText = 'border:2px solid #be2c2c;background:#fdf2f2;color:#8a1f1f';
+    box.innerHTML =
+      '<h2 style="color:#be2c2c;margin-top:0">The app did not start properly</h2>'
+      + '<p class="small">Part of the screen could not be drawn, so some of it may be '
+      + 'missing. Your saved readings and reports are not affected.</p>'
+      + '<p class="small"><strong>Try:</strong> close the app completely and open it '
+      + 'again. If it keeps happening, your readings can still be rescued from '
+      + 'Settings using <strong>Save a backup</strong>.</p>'
+      + (detail ? `<p class="small" style="opacity:.75">Could not: ${esc(detail)}</p>` : '');
+    host.prepend(box);
+  } catch {
+    // Last resort: plain text straight into the body.
+    document.body.innerHTML = '<p style="font:16px sans-serif;padding:20px">'
+      + 'The app did not start properly. Close it completely and open it again.</p>';
+  }
+}
+
+/* Asks the browser to keep this site's storage.
+
+   Without it Chrome treats the readings, the cached app and everything else as
+   throwaway, and can clear the lot when the phone runs short of space - which
+   takes the offline copy with it and leaves a page that only works online. */
+async function keepStorage() {
+  try {
+    if (navigator.storage && typeof navigator.storage.persist === 'function') {
+      const already = typeof navigator.storage.persisted === 'function'
+        ? await navigator.storage.persisted()
+        : false;
+      if (!already) await navigator.storage.persist();
+    }
+  } catch (err) {
+    console.error('could not ask to keep storage', err);
+  }
+}
+
 async function boot() {
   await checkStorage();
+  await keepStorage();
 
   try {
     const draft = await store.get(DRAFT_ID);
@@ -5612,20 +5662,36 @@ async function boot() {
     console.error('could not load the previous report', err);
   }
 
-  hydrateFields();
-  showBuildId();
-  bindShell();
-  bindChecklist();   // delegated, attached once
-  bindThresholds();  // delegated, attached once
-  bindLogo();
-  renderLogo();
-  bindDosing();
-  renderDosing();
-  bindMeterLog();
-  renderMeterLog();
-  bindBackup();
-  render();
-  renderThresholds();
+  /* Drawing the screen comes last, and any one failure here used to leave
+     nothing on screen at all - a blank page with no hint of what went wrong,
+     and no way to reach the data. Each step is now separate: one failing step
+     loses its own piece of the screen rather than the whole app. */
+  const steps = [
+    ['fill the fields', hydrateFields],
+    ['show the version', showBuildId],
+    ['wire the buttons', bindShell],
+    ['wire the checklist', bindChecklist],
+    ['wire the trigger levels', bindThresholds],
+    ['wire the logo', bindLogo],
+    ['show the logo', renderLogo],
+    ['wire the dosing card', bindDosing],
+    ['show the dosing card', renderDosing],
+    ['wire the meter list', bindMeterLog],
+    ['show the meter list', renderMeterLog],
+    ['wire the backup buttons', bindBackup],
+    ['draw the checklist', render],
+    ['show the trigger levels', renderThresholds]
+  ];
+  const broken = [];
+  steps.forEach(([what, fn]) => {
+    try {
+      fn();
+    } catch (err) {
+      console.error(`could not ${what}`, err);
+      broken.push(what);
+    }
+  });
+  if (broken.length) showStartupProblem(broken.join(', '));
 
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     navigator.serviceWorker.register('sw.js').then(reg => {
@@ -5636,12 +5702,17 @@ async function boot() {
       reg.update().catch(() => {});
     }).catch(() => {});
 
-    // A new worker taking over means new files. Reload once so the screen and
-    // the code it is running cannot disagree. Guarded because not every
-    // environment that exposes `serviceWorker` exposes the event target.
+    /* A new worker taking over means new files, so reload once to keep the
+       screen and the code it runs in step.
+
+       Only when a worker was already in charge when the page opened. On a
+       first visit the worker takes over a page that had none, and reloading
+       then is pointless churn - and if anything goes wrong in start-up it
+       turns into a reload loop, which looks exactly like a blank page. */
+    const hadController = !!navigator.serviceWorker.controller;
     if (typeof navigator.serviceWorker.addEventListener === 'function') {
       navigator.serviceWorker.addEventListener('controllerchange', () => {
-        if (swReloading) return;
+        if (swReloading || !hadController) return;
         swReloading = true;
         if (typeof location.reload === 'function') location.reload();
       });
@@ -5649,8 +5720,28 @@ async function boot() {
   }
 }
 
+/* Nothing may reach the operator as a blank page.
+
+   An error thrown outside boot() - a syntax error in a later file, a failed
+   module, anything - would otherwise leave an empty screen with no reason
+   given and no way to reach the readings. */
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  window.addEventListener('error', (e) => {
+    console.error('unhandled error', e && (e.error || e.message));
+    if (typeof showStartupProblem === 'function') showStartupProblem('');
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    console.error('unhandled rejection', e && e.reason);
+  });
+}
+
 // Guarded so the module can be loaded in a test harness without a DOM.
-if (typeof document !== 'undefined') boot();
+if (typeof document !== 'undefined') {
+  boot().catch(err => {
+    console.error('the app could not start', err);
+    showStartupProblem('start up');
+  });
+}
 
 </script>
 </body>
