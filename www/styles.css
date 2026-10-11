@@ -705,6 +705,32 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
 .dosing-row .dosing-what.off { color: var(--todo); }
 .dosing-del { border: 0; background: none; color: var(--fault); font-size: .74rem; cursor: pointer; padding: 6px; }
 
+/* An entry dated after the present: not counted until its time comes, so it
+   is marked rather than shown like any other switch. */
+.dosing-warn {
+  margin: 0 0 11px;
+  padding: 9px 11px;
+  border: 1px solid #f0d58a;
+  border-radius: 10px;
+  background: #fff8e6;
+  color: #7a5200;
+  font-size: .8rem;
+  line-height: 1.4;
+}
+.dosing-row.future .dosing-when { color: #8a6100; }
+.dosing-future {
+  font-size: .64rem;
+  font-weight: 800;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: #8a6100;
+  background: #fff1c7;
+  border-radius: 20px;
+  padding: 2px 7px;
+}
+/* The reason an entry was refused, kept in the form while it is corrected. */
+#dosingHint.problem { color: var(--fault); font-weight: 600; }
+
 /* Only the newest entry shows; the arrow in the card heading opens the rest.
    The first row inside the folded block is a first-child too, so without this
    it lost its divider and ran straight into the row above when opened. */

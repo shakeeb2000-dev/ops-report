@@ -1267,28 +1267,53 @@ function toast(msg) {
 function renderDosing() {
   const card = el('#dosingCard');
   const running = dosingOnNow(dosingEvents);
-  const last = dosingLastEvent(dosingEvents);
+
+  /* "Since" is the last switch that has actually happened. It used to be the
+     newest entry of any kind, so a switch logged for a moment still to come
+     printed "STOPPED since" that moment - with the ON entry right underneath,
+     which read as the app ignoring it. Whether the dosing is running is
+     decided exactly as before; only the wording around it changed. */
+  const nowMs = Date.now();
+  const logged = dosingEvents.filter(e => e && e.at);
+  const notYet = (e) => { const t = toMs(e.at); return t !== null && t > nowMs; };
+  const last = dosingLastEvent(logged.filter(e => !notYet(e)));
+  const ahead = logged.filter(notYet).sort((a, b) => (a.at < b.at ? -1 : 1));
 
   card.classList.remove('running', 'stopped');
-  if (last) card.classList.add(running ? 'running' : 'stopped');
+  if (logged.length) card.classList.add(running ? 'running' : 'stopped');
 
-  el('#dosingNow').textContent = !last ? 'Not logged yet'
+  el('#dosingNow').textContent = !logged.length ? 'Not logged yet'
     : (running ? 'DAF DOSAGE RUNNING' : 'DAF DOSAGE STOPPED');
   el('#dosingSince').textContent = last
     ? `since ${prettyStamp(last.at)}`
-    : 'Record when the chemical dosage starts or stops';
+    : (logged.length ? '' : 'Record when the chemical dosage starts or stops');
   el('#btnDosingToggle').textContent = running
     ? 'Record DAF dosage stopped'
     : 'Record DAF dosage started';
+
+  /* Entries made before future times were refused can still be in the log.
+     Point at them: left alone, one starts counting the moment its time
+     comes, on the wrong day, and skews the dosed water in the next report. */
+  const warn = el('#dosingWarn');
+  if (warn) {
+    const first = ahead[0];
+    warn.hidden = !first;
+    warn.textContent = !first ? '' :
+      `A ${first.on ? 'start' : 'stop'} is logged for ${prettyStamp(first.at)}, which `
+      + "hasn't come yet, so it isn't counted. If that's wrong, remove it below and "
+      + 'add it again with the right date.'
+      + (ahead.length > 1 ? ` (${ahead.length - 1} more like it.)` : '');
+  }
 
   // Newest first. Folded away bar the latest, so it can hold more than the
   // six that used to fit on screen. The full list is still in Settings.
   const recent = dosingEvents.slice().sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, 20);
   const rows = recent.map(e => `
-    <div class="dosing-row">
+    <div class="dosing-row${notYet(e) ? ' future' : ''}">
       <span class="dosing-when">${esc(prettyStamp(e.at))}</span>
       <span>
         ${e.meter !== undefined ? `<span class="muted">${esc(fmtQty(e.meter, 1))} m\u00B3</span> ` : ''}
+        ${notYet(e) ? '<span class="dosing-future">not yet</span> ' : ''}
         <span class="dosing-what ${e.on ? 'on' : 'off'}">${e.on ? 'ON' : 'OFF'}</span>
         <button type="button" class="dosing-del" data-dosingdel="${esc(e.at)}">remove</button>
       </span>
@@ -1361,10 +1386,23 @@ function openDosingEntry() {
   el('#dosingDate').value = todayISO();
   el('#dosingTime').value = nowHHMM();
   el('#dosingMeter').value = '';
-  el('#dosingHint').textContent = running
+  const hint = el('#dosingHint');
+  hint.textContent = running
     ? 'When did you switch the dosage off? Add the meter reading if you noted it.'
     : 'When did you switch the dosage on? Add the meter reading if you noted it.';
+  setClass(hint, 'problem', false);
   el('#dosingEntry').hidden = false;
+}
+
+/* Why an entry was refused. Said in the form as well as in a toast: the toast
+   is gone in under three seconds, and the form stays open to be corrected. */
+function dosingFormProblem(msg) {
+  const hint = el('#dosingHint');
+  if (hint) {
+    hint.textContent = msg;
+    setClass(hint, 'problem', true);
+  }
+  toast(msg);
 }
 
 async function saveDosingEntry() {
@@ -1374,6 +1412,24 @@ async function saveDosingEntry() {
 
   const at = `${date}T${time}`;
   const on = !dosingOnNow(dosingEvents);
+
+  /* A switch that has not happened yet cannot be right, and this used to be
+     taken without a word. The dosing then read as still off - its moment had
+     not come - and the report, which runs to this morning's round, left it
+     out. Worse, once that moment did come it started counting, from the
+     wrong day. The usual way in: switched on last night, logged on the
+     morning round, with the date left on today, which is what the form
+     fills in. */
+  const atMs = toMs(at);
+  if (atMs === null) {
+    dosingFormProblem('That date or time could not be read - pick them again.');
+    return;
+  }
+  if (atMs > Date.now()) {
+    dosingFormProblem(`${prettyStamp(at)} hasn't come yet. If you switched it `
+      + `${on ? 'on' : 'off'} last night, set the date to yesterday.`);
+    return;
+  }
 
   // Two of the same in a row cannot be right.
   const before = dosingEvents.filter(e => e.at <= at).sort((a, b) => (a.at < b.at ? -1 : 1));

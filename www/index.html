@@ -118,6 +118,8 @@
         <div class="dosing-since muted" id="dosingSince">&nbsp;</div>
       </div>
     </div>
+    <!-- Filled by renderDosing() when an entry is dated after the present. -->
+    <p class="dosing-warn" id="dosingWarn" hidden></p>
     <button type="button" id="btnDosingToggle" class="btn btn-ghost full">Record DAF dosage started</button>
     <div class="dosing-entry" id="dosingEntry" hidden>
       <div class="field-grid">
