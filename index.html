@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1e3a5f">
-<meta name="build-id" content="6f839fe20fa5">
+<meta name="build-id" content="43425aa6c016">
 <title>Daily Ops Report</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -24,6 +24,11 @@
   --todo: #6e7681;
   --radius: 12px;
   --tap: 44px;
+  /* Height of the sticky top bar. Used by the sticky section and group
+     headers and by every scroll-margin. A starting figure only - boot()
+     measures the real bar and overwrites it, because the safe-area inset at
+     the top of the screen differs from phone to phone. */
+  --topbar-h: 96px;
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -64,9 +69,13 @@ html, body {
 }
 .icon-btn:active { background: rgba(255,255,255,.24); }
 
-.progress { height: 4px; background: rgba(255,255,255,.2); border-radius: 3px; margin-top: 10px; overflow: hidden; }
+.progress { height: 5px; background: rgba(255,255,255,.2); border-radius: 3px; margin-top: 10px; overflow: hidden; }
 .progress-fill { height: 100%; width: 0; background: #6fd39b; transition: width .25s ease; }
-.progress-label { margin: 4px 0 8px; font-size: .7rem; color: #b6c8dd; }
+.progress-label { margin: 5px 0 8px; font-size: .72rem; color: #b6c8dd; font-variant-numeric: tabular-nums; }
+/* Tinted when something needs attention, so the count is not just more grey
+   text in a grey line. */
+.progress-label.has-fault { color: #ffb4b4; font-weight: 600; }
+.progress-label.has-watch { color: #ffd98a; font-weight: 600; }
 
 /* ---------------- layout ---------------- */
 main { padding: 14px 12px 0; max-width: 720px; margin: 0 auto; }
@@ -79,7 +88,10 @@ main { padding: 14px 12px 0; max-width: 720px; margin: 0 auto; }
   padding: 14px;
   margin-bottom: 12px;
 }
-.card > h2 {
+/* .card-head > h2 is listed too: the heading is a grandchild of the card once
+   it shares a row with the "?" button, and "> h2" alone stopped matching it. */
+.card > h2,
+.card > .card-head > h2 {
   margin: 0 0 10px;
   font-size: .8rem;
   text-transform: uppercase;
@@ -87,11 +99,76 @@ main { padding: 14px 12px 0; max-width: 720px; margin: 0 auto; }
   color: var(--navy);
   font-weight: 700;
 }
+
+/* Card heading with its buttons in the corner: a "?" for the standing
+   instructions, and an arrow where there is something folded away. Both were
+   full lines of their own before. */
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.card > .card-head > h2 { margin: 0; }
+/* A folded "Needs attention" is its heading and nothing else, so the gap
+   that would sit under the heading goes too. */
+.card.folded > .card-head { margin-bottom: 0; }
+.card-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  /* The 34px buttons hang into the card's padding rather than making the
+     heading row taller than the text in it. */
+  margin: -7px -4px -7px 0;
+}
+.help-btn {
+  flex: 0 0 auto;
+  width: 34px; height: 34px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1.5px solid var(--line);
+  border-radius: 50%;
+  background: #fff;
+  color: var(--slate);
+  font: inherit;
+  font-size: .9rem;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+}
+/* Must stay: .help-btn sets display, which beats the hidden attribute. The
+   fold arrows are hidden until there is something behind them. */
+.help-btn[hidden] { display: none; }
+.help-btn[data-help][aria-expanded="true"] {
+  background: var(--navy);
+  border-color: var(--navy);
+  color: #fff;
+}
+/* The arrow says open or shut by which way it points: down to open, up to
+   close again. */
+.fold-btn .chev { width: 18px; height: 18px; stroke: var(--navy); stroke-width: 2.4; }
+.fold-btn[aria-expanded="true"] { border-color: #b0c6dd; background: #eef4fb; }
+.fold-btn[aria-expanded="true"] .chev { transform: rotate(180deg); }
+.help-text {
+  background: #eef4fb;
+  border: 1px solid #b0c6dd;
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 11px;
+  font-size: .8rem;
+  line-height: 1.45;
+  color: #17365d;
+}
 .muted { color: var(--slate); font-weight: 400; }
 .small { font-size: .8rem; }
 
 label { display: block; font-size: .78rem; color: var(--slate); font-weight: 600; margin-bottom: 10px; }
-input[type=text], input[type=date], input[type=number], select, textarea {
+/* input[type=time] was missing from this list, so the time box kept its own
+   intrinsic size and sat half-width next to a full-width date box. */
+input[type=text], input[type=date], input[type=time], input[type=number], select, textarea {
   width: 100%;
   margin-top: 4px;
   padding: 11px 12px;
@@ -108,104 +185,335 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
 .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
 /* ---------------- section / group ---------------- */
+
+/* Anything scrolled to by the app has to clear the sticky top bar, or it
+   lands underneath it. One figure, used by both the scroll margins and the
+   sticky group headers, so they cannot drift apart. */
+.section { margin-bottom: 14px; scroll-margin-top: calc(var(--topbar-h) + 10px); }
+
 .section-head {
+  position: sticky;
+  top: var(--topbar-h);
+  z-index: 24;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   background: var(--navy);
   color: #fff;
   border-radius: var(--radius) var(--radius) 0 0;
-  padding: 11px 14px;
+  padding: 10px 12px;
+  margin-top: 4px;
+}
+.section-no {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 22px; height: 22px;
+  border-radius: 6px;
+  background: rgba(255,255,255,.16);
+  font-size: .72rem;
+  font-weight: 800;
+}
+.section-title {
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: .82rem;
   font-weight: 700;
   letter-spacing: .05em;
   text-transform: uppercase;
-  margin-top: 4px;
+}
+.section-tally {
+  flex: 0 0 auto;
+  font-size: .72rem;
+  font-weight: 700;
+  color: #b6c8dd;
+  font-variant-numeric: tabular-nums;
 }
 .section-body {
   background: var(--card);
   border: 1px solid var(--line);
   border-top: 0;
   border-radius: 0 0 var(--radius) var(--radius);
-  margin-bottom: 14px;
-  overflow: hidden;
+  /* No overflow:hidden here - it would trap the sticky group headers. */
 }
-.group { border-top: 1px solid var(--line); }
+
+.group { border-top: 1px solid var(--line); scroll-margin-top: calc(var(--topbar-h) + 48px); }
 .group:first-child { border-top: 0; }
 .group-head {
+  position: sticky;
+  top: calc(var(--topbar-h) + 42px);
+  z-index: 22;
   width: 100%;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 10px;
-  background: #fafbfc;
+  background: #f7f9fb;
   border: 0;
-  padding: 13px 14px;
+  border-bottom: 1px solid var(--line);
+  padding: 10px 12px;
   font: inherit;
-  font-weight: 700;
-  font-size: .88rem;
   color: var(--navy);
   text-align: left;
   cursor: pointer;
   min-height: var(--tap);
 }
-.group-head .chev { color: var(--slate); font-size: .75rem; }
-.group-meta { display: flex; align-items: center; gap: 6px; }
-.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.group-head-text { flex: 1 1 auto; min-width: 0; }
+.group-title { display: block; font-weight: 700; font-size: .86rem; }
+.group-note { display: block; font-size: .7rem; color: var(--slate); font-weight: 400; }
+.group-meta { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.group-tally {
+  font-size: .7rem;
+  font-weight: 700;
+  color: var(--slate);
+  background: #e9edf2;
+  border-radius: 20px;
+  padding: 2px 8px;
+  font-variant-numeric: tabular-nums;
+}
+.group-tally.complete { color: #12603a; background: #dcf0e4; }
+
+.dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: 0 0 10px; }
 .dot.ok { background: var(--ok); }
 .dot.watch { background: var(--watch); }
-.dot.fault { background: var(--fault); }
+.dot.fault { background: var(--fault); box-shadow: 0 0 0 3px rgba(190,44,44,.16); }
 .dot.todo, .dot.blank { background: #c4cad2; }
-.group-items { padding: 4px 12px 12px; }
+
+.chev {
+  width: 16px; height: 16px;
+  fill: none;
+  stroke: var(--slate);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform .18s ease;
+}
+.group[data-collapsed="true"] .chev { transform: rotate(-90deg); }
+.group-items { padding: 2px 12px 10px; }
 .group[data-collapsed="true"] .group-items { display: none; }
+.group[data-collapsed="true"] .group-head { border-bottom-color: transparent; }
 
 /* ---------------- item row ---------------- */
-.item { padding: 11px 2px; border-top: 1px dashed var(--line); }
+
+/* A colour rail down the left edge. Scrolling the sheet, the rails alone say
+   which checks are settled and which are not, without reading a word. */
+/* Clearing the top bar is not enough: the section header (42px) and the group
+   header (44px, or ~58px when it carries a note) are both sticky underneath
+   it, so a row scrolled to has to clear all three. */
+.item {
+  position: relative;
+  padding: 9px 2px 9px 12px;
+  border-top: 1px solid var(--line);
+  scroll-margin-top: calc(var(--topbar-h) + 108px);
+}
 .item:first-child { border-top: 0; }
-.item-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
-.item-label { font-size: .92rem; font-weight: 600; }
+.item::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 10px; bottom: 10px;
+  width: 3px;
+  border-radius: 3px;
+  background: #dde2e8;
+  transition: background .15s ease;
+}
+/* Set from refresh() rather than with :has(), which an older WebView on the
+   plant phone would quietly ignore. ("data-state", not "data-status" - the
+   status buttons already own that attribute.) */
+.item[data-state="ok"]::before    { background: var(--ok); }
+.item[data-state="watch"]::before { background: var(--watch); }
+.item[data-state="fault"]::before { background: var(--fault); }
+.item[data-state="todo"]::before  { background: var(--todo); }
+
+.item-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.item-id { flex: 1 1 auto; min-width: 0; padding-top: 2px; }
+.item-label { font-size: .92rem; font-weight: 600; line-height: 1.3; }
 .item-hint { font-size: .72rem; color: var(--slate); margin-top: 1px; }
 .item-value { font-size: .78rem; color: var(--slate); white-space: nowrap; }
+.item-aside { flex: 0 0 auto; display: flex; align-items: center; gap: 2px; }
 
-.statusrow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 9px; }
-.sbtn {
+/* The four status buttons read as one control rather than four, which makes
+   the row shorter and the selected one unmistakable. */
+.statusrow {
+  display: flex;
+  margin-top: 8px;
   border: 1.5px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
   background: #fff;
-  border-radius: 9px;
+}
+.sbtn {
+  flex: 1 1 0;
+  min-width: 0;
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: transparent;
   padding: 9px 2px;
   font-size: .72rem;
   font-weight: 700;
   color: var(--slate);
   cursor: pointer;
-  min-height: var(--tap);
+  min-height: 42px;
   font-family: inherit;
 }
-.sbtn[aria-pressed="true"].ok    { background: var(--ok);    border-color: var(--ok);    color: #fff; }
-.sbtn[aria-pressed="true"].watch { background: var(--watch); border-color: var(--watch); color: #fff; }
-.sbtn[aria-pressed="true"].fault { background: var(--fault); border-color: var(--fault); color: #fff; }
-.sbtn[aria-pressed="true"].todo  { background: var(--todo);  border-color: var(--todo);  color: #fff; }
+.sbtn:first-child { border-left: 0; }
+.sbtn[aria-pressed="true"] { color: #fff; }
+.sbtn[aria-pressed="true"].ok    { background: var(--ok); }
+.sbtn[aria-pressed="true"].watch { background: var(--watch); }
+.sbtn[aria-pressed="true"].fault { background: var(--fault); }
+.sbtn[aria-pressed="true"].todo  { background: var(--todo); }
 
-.numrow { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
-.numrow input { margin-top: 0; }
-.numrow .unit { font-size: .8rem; color: var(--slate); min-width: 38px; }
+/* The unit sits against the field instead of floating in its own column, so
+   the reading and what it is measured in read as one thing. */
+.numrow {
+  display: flex;
+  margin-top: 8px;
+  align-items: stretch;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fff;
+  overflow: hidden;
+}
+.numrow input { margin-top: 0; border: 0; border-radius: 0; }
+.numrow .unit {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 0 12px;
+  font-size: .8rem;
+  font-weight: 600;
+  color: var(--slate);
+  background: #f3f5f8;
+  border-left: 1px solid var(--line);
+}
+/* Items with no unit still render the span, and date rows have none at all. */
+.numrow .unit:empty { display: none; }
+/* A pressure or a flow rate is three or four digits. A field the full width of
+   the phone invites a second look to check nothing is missing. */
+.item[data-type="number"] .numrow { max-width: 260px; }
+.item[data-type="date"] .numrow { max-width: 220px; }
+
+/* ---- a short reading and its four buttons on one line ----
+   Saturators (3 digits), flow rate (4) and the three pH points (3-4 each).
+   Measured: the four labels need about 146px of text, and an item has 333px
+   to work with on a 412px-wide phone.
+
+   The buttons are sized to their words rather than split evenly, so the long
+   "Not done" gets the room and "OK" does not waste it. When it gets tight,
+   "Not done" breaks onto two lines inside its own button first. Only on a
+   phone too narrow even for that do the buttons drop to the line below, at
+   full width - which is how every row looked before, so nothing is lost. */
+.inline-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+.inline-row > .numrow,
+.inline-row > .multirow { flex: 0 0 auto; margin-top: 0; }
+.inline-row > .statusrow { flex: 1 1 165px; min-width: 165px; margin-top: 0; }
+.inline-row .sbtn {
+  flex: 1 1 auto;
+  min-width: auto;
+  padding: 2px 4px;
+  line-height: 1.15;
+}
+
+/* Number boxes sized for what goes in them. Four digits still fit. */
+.inline-row .numrow input {
+  width: 54px;
+  flex: 0 0 54px;
+  padding: 0 6px;
+  text-align: center;
+}
+.inline-row .numrow .unit { padding: 0 9px; }
+/* No up/down spinners: no use on a phone, and they eat a narrow box. */
+.inline-row input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+.inline-row input[type=number]::-webkit-outer-spin-button,
+.inline-row input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+/* pH: three small boxes, each with its point number tucked into the corner
+   instead of on a line of its own above. */
+.inline-row > .multirow { gap: 4px; flex-wrap: nowrap; }
+/* Three classes deep on purpose: ".multirow.narrow label" further up sets
+   flex: 0 1 84px and would otherwise win. */
+.inline-row .multirow .mfield {
+  position: relative;
+  flex: 0 0 40px;
+  min-width: 0;
+  margin: 0;
+}
+.inline-row .mfield input {
+  margin-top: 0;
+  padding: 13px 2px 3px;
+  text-align: center;
+}
+.inline-row .mtag {
+  position: absolute;
+  top: 3px; left: 5px;
+  font-size: .58rem;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--slate);
+  pointer-events: none;   /* a tap on the number still lands in the box */
+}
+/* The focus ring belongs on the whole field, since overflow:hidden would
+   clip a ring drawn on the input itself. */
+.numrow:focus-within { border-color: var(--navy); outline: 2px solid #9db8d8; outline-offset: 1px; }
+.numrow input:focus { outline: none; }
 .pairgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
 .pairgrid.with-ibc { grid-template-columns: 1fr 1fr .72fr; }
 .pairgrid label { margin-bottom: 0; }
 
-/* yesterday / today tank levels */
+/* last check / now tank levels. The carried-over row is deliberately quieter
+   and tighter than the row being filled in: it is there to be read, and only
+   occasionally corrected. */
 .stockblock { margin-top: 9px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
-.stockrow { display: flex; gap: 8px; align-items: flex-end; padding: 9px 10px; }
-.stockrow.yesterday { background: #f6f7f9; border-bottom: 1px dashed var(--line); }
+.stockrow { display: flex; gap: 8px; align-items: flex-end; padding: 8px 10px; }
+.stockrow.yesterday { background: #f6f7f9; border-bottom: 1px solid var(--line); align-items: center; }
 .stockrow.today { background: #fff; }
 .stockrow label { margin-bottom: 0; flex: 1 1 0; min-width: 0; font-size: .72rem; }
-.stockrow input { margin-top: 3px; padding: 9px 10px; min-height: 40px; }
-.stockrow.yesterday input { background: #fbfbfc; color: var(--slate); }
+.stockrow input { margin-top: 3px; padding: 9px 10px; min-height: 42px; }
+.stockrow.yesterday label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 1 auto;
+  font-size: .68rem;
+  white-space: nowrap;   /* "In use" was breaking across two lines */
+}
+/* Quiet, but never invisible. With a transparent border an empty carried-over
+   box left the word "Level" sitting on its own next to nothing, which reads as
+   a drawing fault rather than an empty field. */
+.stockrow.yesterday input {
+  margin-top: 0;
+  width: 66px;
+  flex: 0 0 66px;
+  background: #fff;
+  color: var(--slate);
+  border-color: #e4e9ef;
+  padding: 4px 6px;
+  min-height: 32px;
+  font-size: .86rem;
+  font-weight: 700;
+  text-align: left;
+}
+.stockrow.yesterday input::placeholder { color: #c2c9d2; font-weight: 400; }
+.stockrow.yesterday input:focus {
+  background: #fff;
+  border-color: var(--navy);
+  color: var(--ink);
+}
 .stocktag {
-  flex: 0 0 58px;
-  font-size: .64rem;
+  flex: 0 0 68px;        /* wide enough to keep "LAST CHECK" on one line */
+  font-size: .6rem;
   font-weight: 800;
-  letter-spacing: .05em;
+  letter-spacing: .04em;
   text-transform: uppercase;
   color: var(--slate);
   padding-bottom: 13px;
+  white-space: nowrap;
 }
+.stockrow.yesterday .stocktag { padding-bottom: 0; }
 .stockrow.today .stocktag { color: var(--navy); }
 
 /* company logo picker */
@@ -250,20 +558,20 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
 .sumrow.total strong { font-size: 1.02rem; }
 .sumfoot { margin-top: 6px; font-size: .76rem; color: #4c6a8e; }
 
-/* "I don't know if any were delivered" */
-.stockrow.unsure { padding-top: 0; }
+/* "I don't know if any were delivered" - a get-out, not a main action, so it
+   no longer takes a full-width button the size of the fields above it. */
+.stockrow.unsure { padding: 0 10px 8px; }
 .unsure-btn {
-  width: 100%;
-  border: 1.5px dashed var(--line);
+  border: 1px dashed #c8cfd8;
   background: #fff;
-  border-radius: 9px;
-  padding: 9px 10px;
-  font-size: .76rem;
+  border-radius: 20px;
+  padding: 6px 12px;
+  font-size: .72rem;
   font-weight: 600;
   color: var(--slate);
   font-family: inherit;
   cursor: pointer;
-  min-height: 40px;
+  min-height: 34px;
 }
 .unsure-btn[aria-pressed="true"] {
   background: #fff8e6;
@@ -272,9 +580,14 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
   color: #8a6100;
 }
 
-/* named options, e.g. clarity and cleanliness grades */
-.choicerow { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 9px; }
+/* Named options, e.g. clarity and cleanliness grades.
+   Flex rather than a fixed two-column grid: an odd number of options used to
+   leave a hole beside the last one, and "Not checked" sat in it looking like
+   a mistake. The last option now stretches across instead. */
+.choicerow { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .cbtn {
+  flex: 1 1 calc(50% - 3px);
+  min-width: calc(50% - 3px);
   border: 1.5px solid var(--line);
   background: #fff;
   border-radius: 9px;
@@ -283,7 +596,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
   font-weight: 600;
   color: var(--ink);
   cursor: pointer;
-  min-height: var(--tap);
+  min-height: 42px;
   font-family: inherit;
   text-align: center;
 }
@@ -296,10 +609,14 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
 .btn.full { width: 100%; flex: none; }
 
 .pill {
-  display: inline-block;
-  padding: 3px 8px;
+  display: inline-grid;
+  place-items: center;
+  min-width: 46px;
+  min-height: 21px;
+  margin-left: 4px;
+  padding: 2px 8px;
   border-radius: 20px;
-  font-size: .66rem;
+  font-size: .64rem;
   font-weight: 800;
   letter-spacing: .04em;
   color: #fff;
@@ -312,7 +629,48 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
 .pill.blank { background: #b6bcc4; }
 
 /* ---------------- photos ---------------- */
-.item-tools { display: flex; gap: 8px; margin-top: 9px; flex-wrap: wrap; }
+
+/* Icon buttons on the label line. Drawn at 34px but padded out to a 42px
+   touch area, because this gets tapped with a work glove on. */
+.icon-tool {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  color: #9aa4b0;
+  position: relative;
+}
+.icon-tool svg {
+  width: 19px; height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.icon-tool.has { color: var(--navy); }
+.icon-tool.has svg { stroke-width: 2.1; }
+/* A dot marks an attachment; two or more photos show the count instead. */
+.icon-tool.has::after {
+  content: attr(data-count);
+  position: absolute;
+  top: 6px; right: 1px;
+  min-width: 7px; height: 7px;
+  border-radius: 7px;
+  background: var(--navy);
+  color: #fff;
+  font-size: .56rem;
+  font-weight: 800;
+  line-height: 7px;
+  padding: 0 1px;
+  text-align: center;
+}
+/* .tool-btn is still the Settings sheet's small button (logo picker, Cancel). */
 .tool-btn {
   border: 1.5px solid var(--line);
   background: #fff;
@@ -358,6 +716,11 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
 .dosing-row .dosing-what.on { color: var(--ok); }
 .dosing-row .dosing-what.off { color: var(--todo); }
 .dosing-del { border: 0; background: none; color: var(--fault); font-size: .74rem; cursor: pointer; padding: 6px; }
+
+/* Only the newest entry shows; the arrow in the card heading opens the rest.
+   The first row inside the folded block is a first-child too, so without this
+   it lost its divider and ran straight into the row above when opened. */
+.log-rest > .dosing-row:first-child { border-top: 1px solid var(--line); }
 
 /* ---------------- summary ---------------- */
 .summary-empty { font-size: .85rem; color: var(--slate); }
@@ -524,8 +887,17 @@ body.no-scroll { overflow: hidden; }
 
 /* ---------------- wider screens ---------------- */
 
+/* Phones 360px wide and under. Three fewer pixels each side of a group is
+   what lets the three pH boxes keep their buttons on the same line - it was
+   five pixels short. */
+@media (max-width: 374px) {
+  .group-items { padding-left: 9px; padding-right: 9px; }
+}
+
 @media (min-width: 560px) {
-  .statusrow { grid-template-columns: repeat(4, minmax(0, 120px)); }
+  /* Stop the segmented control stretching the full width of a tablet. */
+  .statusrow { max-width: 420px; }
+  .cbtn { flex: 0 1 calc(33.333% - 4px); min-width: calc(33.333% - 4px); }
 }
 
 @media (min-width: 720px) {
@@ -579,35 +951,49 @@ body.no-scroll { overflow: hidden; }
 <main>
   <!-- ---------- report details ---------- -->
   <section class="card">
-    <h2>Report details</h2>
+    <div class="card-head">
+      <h2>Report details</h2>
+      <div class="card-tools">
+        <button type="button" class="help-btn" data-help="helpReport"
+                aria-expanded="false" aria-label="What this section is for">?</button>
+      </div>
+    </div>
+    <div class="help-text" id="helpReport" hidden>
+      The DAF meter box is the one to fill in on your morning round.
+      Your name, the company name and the report number are kept in Settings,
+      under the gear icon at the top.
+    </div>
     <div class="field-grid">
       <label>Date
         <input type="date" id="fDate">
       </label>
-      <label>Reported by
-        <input type="text" id="fReporter" autocomplete="name">
-      </label>
-    </div>
-    <div class="field-grid">
-      <label>Time you took the readings
+      <label>Time of readings
         <input type="time" id="fReadingTime">
       </label>
-      <label>DAF meter this morning (m&sup3;)
-        <input type="number" inputmode="decimal" step="any" id="fMeter" placeholder="e.g. 224994.2">
-      </label>
     </div>
+    <label>DAF meter this morning (m&sup3;)
+      <input type="number" inputmode="decimal" step="any" id="fMeter" placeholder="e.g. 224994.2">
+    </label>
     <p class="muted small" id="prevMeterNote">&nbsp;</p>
-    <p class="muted small">This is the box to use on your morning round.</p>
   </section>
 
   <!-- ---------- DAF water meter log ---------- -->
   <section class="card dosing-card" id="meterCard">
-    <h2>Past meter readings</h2>
-    <p class="muted small">
+    <div class="card-head">
+      <h2>Past meter readings</h2>
+      <div class="card-tools">
+        <!-- Shown by renderMeterLog() once there is more than one reading. -->
+        <button type="button" class="help-btn fold-btn" data-fold="meter" hidden
+                aria-expanded="false" aria-label="Show older readings"><svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9.5l6 6 6-6"/></svg></button>
+        <button type="button" class="help-btn" data-help="helpMeter"
+                aria-expanded="false" aria-label="What this section is for">?</button>
+      </div>
+    </div>
+    <div class="help-text" id="helpMeter" hidden>
       This is the history, not today. Today's reading goes in the box above and
       appears here on its own. Use this list to fix a wrong reading, or to fill
       in a day you missed.
-    </p>
+    </div>
     <p class="muted small" id="meterCount">&nbsp;</p>
     <button type="button" id="btnMeterAdd" class="btn btn-ghost full">+ Add a reading for another day</button>
     <div class="dosing-entry" id="meterEntry" hidden>
@@ -633,7 +1019,21 @@ body.no-scroll { overflow: hidden; }
 
   <!-- ---------- DAF running log ---------- -->
   <section class="card dosing-card" id="dosingCard">
-    <h2>Chemical dosing</h2>
+    <div class="card-head">
+      <h2>Chemical dosing</h2>
+      <div class="card-tools">
+        <!-- Shown by renderDosing() once there is more than one entry. -->
+        <button type="button" class="help-btn fold-btn" data-fold="dosing" hidden
+                aria-expanded="false" aria-label="Show older dosing entries"><svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9.5l6 6 6-6"/></svg></button>
+        <button type="button" class="help-btn" data-help="helpDosing"
+                aria-expanded="false" aria-label="What this section is for">?</button>
+      </div>
+    </div>
+    <div class="help-text" id="helpDosing" hidden>
+      Recording a switch does not start or save a report &mdash; it just adds to
+      the list, and the meter reading goes into your meter list. Carry on with
+      the same report tomorrow morning.
+    </div>
     <div class="dosing-state">
       <span class="dosing-dot" id="dosingDot"></span>
       <div>
@@ -642,11 +1042,6 @@ body.no-scroll { overflow: hidden; }
       </div>
     </div>
     <button type="button" id="btnDosingToggle" class="btn btn-ghost full">Record DAF dosage started</button>
-    <p class="muted small">
-      Recording a switch does not start or save a report &mdash; it just adds to
-      the list, and the meter reading goes into your meter list. Carry on with
-      the same report tomorrow morning.
-    </p>
     <div class="dosing-entry" id="dosingEntry" hidden>
       <div class="field-grid">
         <label>Date
@@ -671,9 +1066,17 @@ body.no-scroll { overflow: hidden; }
   </section>
 
   <!-- ---------- live action summary ---------- -->
-  <section class="card" id="summaryCard">
-    <h2>Needs attention</h2>
-    <div id="summaryBody" class="summary-empty">Fill in the checklist below.</div>
+  <!-- Starts folded. The top bar already counts the faults, so nothing is
+       lost by keeping the list itself out of the way until it is wanted. -->
+  <section class="card folded" id="summaryCard">
+    <div class="card-head">
+      <h2>Needs attention</h2>
+      <div class="card-tools">
+        <button type="button" class="help-btn fold-btn" data-fold="summary"
+                aria-expanded="false" aria-label="Show what needs attention"><svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9.5l6 6 6-6"/></svg></button>
+      </div>
+    </div>
+    <div id="summaryBody" class="summary-empty" hidden>Fill in the checklist below.</div>
   </section>
 
   <!-- ---------- checklist renders here ---------- -->
@@ -798,6 +1201,14 @@ body.no-scroll { overflow: hidden; }
     <hr>
     <h2>Saved reports</h2>
     <div id="historyList" class="history"></div>
+    <hr>
+    <h2>Your name</h2>
+    <p class="muted small">
+      Shown on every report as the person who did the checks. It is always the
+      same, so it lives here rather than taking up room on the morning sheet.
+    </p>
+    <input type="text" id="fReporter" autocomplete="name" placeholder="Your name">
+
     <hr>
     <h2>Company name</h2>
     <input type="text" id="fSite" placeholder="Shown in the PDF header">
@@ -3846,22 +4257,44 @@ function render() {
   refresh();
 }
 
+/* Inline SVG rather than emoji. A camera or pencil emoji is drawn from
+   whatever font the WebView happens to have, which on a plant phone has
+   turned up as an empty box; these always draw. */
+const ICON = {
+  camera: '<svg viewBox="0 0 24 24" aria-hidden="true">'
+    + '<path d="M3.5 9A2 2 0 0 1 5.5 7h1.9l1.2-2h6.8l1.2 2h1.9a2 2 0 0 1 2 2v8.5a2 2 0 0 1-2 2h-14a2 2 0 0 1-2-2V9Z"/>'
+    + '<circle cx="12" cy="13" r="3.3"/></svg>',
+  pencil: '<svg viewBox="0 0 24 24" aria-hidden="true">'
+    + '<path d="M4 20.2h4L20 8.2l-4-4L4 16.2v4Z"/><path d="M14.2 6l3.8 3.8"/></svg>',
+  chevron: '<svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9.5l6 6 6-6"/></svg>'
+};
+
 function renderSection(section) {
   return `
-    <div class="section-head">${esc(section.title)}</div>
-    <div class="section-body">
-      ${section.groups.map(g => renderGroup(section, g)).join('')}
-    </div>`;
+    <section class="section" data-section="${section.id}">
+      <div class="section-head">
+        <span class="section-no">${esc(section.number)}</span>
+        <span class="section-title">${esc(section.title)}</span>
+        <span class="section-tally" data-sectiontally="${section.id}"></span>
+      </div>
+      <div class="section-body">
+        ${section.groups.map(g => renderGroup(section, g)).join('')}
+      </div>
+    </section>`;
 }
 
 function renderGroup(section, group) {
   return `
     <div class="group" data-group="${group.id}" data-collapsed="false">
       <button class="group-head" type="button" data-toggle="${group.id}">
-        <span>${esc(group.title)}${group.note ? ` <span class="muted">(${esc(group.note)})</span>` : ''}</span>
+        <span class="dot blank" data-groupdot="${group.id}"></span>
+        <span class="group-head-text">
+          <span class="group-title">${esc(group.number)} &middot; ${esc(group.title)}</span>
+          ${group.note ? `<span class="group-note">${esc(group.note)}</span>` : ''}
+        </span>
         <span class="group-meta">
-          <span class="dot blank" data-groupdot="${group.id}"></span>
-          <span class="chev">&#9660;</span>
+          <span class="group-tally" data-grouptally="${group.id}"></span>
+          ${ICON.chevron}
         </span>
       </button>
       <div class="group-items">
@@ -3870,23 +4303,42 @@ function renderGroup(section, group) {
     </div>`;
 }
 
+/* Which checks get the OK / Monitor / Fault / Not done buttons.
+
+   Not choice items, which carry their own grading, and not the sample-date
+   rows, which only need a date. And - at the operator's request - not the
+   tank levels or separator testing, which took four rows of buttons out of
+   the chemical group alone. The tanks are still graded from the levels typed
+   in, exactly as they always were whenever no button had been tapped; the
+   buttons were only ever a manual override on top of that. */
+const NO_STATUS_BUTTONS = new Set(['separators']);
+
+function showsStatusButtons(item) {
+  if (item.type === 'choice' || item.type === 'date' || item.type === 'stock') return false;
+  return !NO_STATUS_BUTTONS.has(item.id);
+}
+
 function renderItem(item) {
   const v = state.values[item.id] || {};
   let control = '';
 
   if (item.type === 'number') {
+    // No placeholder: the box is sized for three or four digits now, and a
+    // word in it would only show half cut off.
     control = `
       <div class="numrow">
         <input type="number" inputmode="decimal" step="any" data-num="${item.id}"
-               value="${v.value ?? ''}" placeholder="reading">
+               value="${v.value ?? ''}">
         <span class="unit">${esc(item.unit || '')}</span>
       </div>`;
 
   } else if (item.type === 'multi') {
+    // The field name sits in its own span so the narrow pH boxes can tuck
+    // their "1 / 2 / 3" into the corner of the box instead of a row above it.
     control = `
       <div class="multirow${item.inputWidth === 'narrow' ? ' narrow' : ''}">
         ${item.fields.map(f => `
-          <label>${esc(f.label)}
+          <label class="mfield"><span class="mtag">${esc(f.label)}</span>
             <input type="number" inputmode="decimal" step="any"
                    data-multi="${item.id}" data-key="${f.key}" value="${v[f.key] ?? ''}">
           </label>`).join('')}
@@ -3956,34 +4408,44 @@ function renderItem(item) {
       </div>`;
   }
 
-  // Choice items carry their own grading, and the sample-date rows only need
-  // a date, so neither shows the generic status buttons.
   const statuses = [
     [STATUS.OK, 'OK'], [STATUS.WATCH, 'Monitor'],
     [STATUS.FAULT, 'Fault'], [STATUS.TODO, 'Not done']
   ];
-  const statusRow = (item.type === 'choice' || item.type === 'date') ? '' : `
+  const statusRow = !showsStatusButtons(item) ? '' : `
     <div class="statusrow">
       ${statuses.map(([s, label]) => `
         <button type="button" class="sbtn ${s}" data-status="${item.id}" data-value="${s}"
                 aria-pressed="${v.status === s ? 'true' : 'false'}">${label}</button>`).join('')}
     </div>`;
 
+  // A short reading and its buttons share one line (saturators, flow rate,
+  // pH). See .inline-row for what happens on a phone too narrow for both.
+  const inline = !!statusRow && (item.type === 'number' || item.type === 'multi');
+  const body = inline
+    ? `<div class="inline-row">${control}${statusRow}</div>`
+    : `${control}${statusRow}`;
+
+  /* The photo and note buttons sit on the label line as icons. They used to be
+     a pair of labelled buttons on a row of their own, which cost about 49px on
+     every one of the 38 items - roughly a fifth of the whole sheet - for two
+     actions that are used on a handful of checks. */
   return `
-    <div class="item" data-item="${item.id}">
+    <div class="item" data-item="${item.id}" data-type="${item.type}">
       <div class="item-top">
-        <div>
+        <div class="item-id">
           <div class="item-label">${esc(item.label)}</div>
           ${item.hint ? `<div class="item-hint">${esc(item.hint)}</div>` : ''}
         </div>
-        <span class="pill blank" data-pill="${item.id}">-</span>
+        <div class="item-aside">
+          <button type="button" class="icon-tool" data-photo="${item.id}"
+                  aria-label="Add a photo to ${esc(item.label)}">${ICON.camera}</button>
+          <button type="button" class="icon-tool" data-note="${item.id}"
+                  aria-label="Add a note to ${esc(item.label)}">${ICON.pencil}</button>
+          <span class="pill blank" data-pill="${item.id}">-</span>
+        </div>
       </div>
-      ${control}
-      ${statusRow}
-      <div class="item-tools">
-        <button type="button" class="tool-btn" data-photo="${item.id}">&#128247; Add photo</button>
-        <button type="button" class="tool-btn" data-note="${item.id}">&#9998; Note</button>
-      </div>
+      ${body}
       <div class="note-input" data-notewrap="${item.id}" ${v.note ? '' : 'hidden'}>
         <input type="text" data-notefield="${item.id}" value="${esc(v.note || '')}"
                placeholder="Short note for your manager">
@@ -4195,6 +4657,10 @@ function refresh() {
     pill.className = `pill ${s}`;
     pill.textContent = STATUS_META[s].short;
 
+    // Drives the colour rail down the left edge of the row.
+    const row = document.querySelector(`[data-item="${id}"]`);
+    if (row) row.setAttribute('data-state', s);
+
     // live "used since yesterday" line under the chemical inputs
     const usage = document.querySelector(`[data-usage="${id}"]`);
     if (usage) {
@@ -4226,24 +4692,66 @@ function refresh() {
                 </div>`;
       }).join('');
     }
+
+    /* The icons carry a mark when something is attached, so a check with a
+       photo or a note can be spotted without opening anything. */
+    const vals = state.values[id] || {};
+    const photoBtn = document.querySelector(`[data-photo="${id}"]`);
+    if (photoBtn) {
+      const n = (vals.photos || []).length;
+      setClass(photoBtn, 'has', n > 0);
+      photoBtn.setAttribute('data-count', n > 1 ? String(n) : '');
+    }
+    setClass(document.querySelector(`[data-note="${id}"]`), 'has', !!(vals.note || '').trim());
   });
 
   CHECKLIST.forEach(section => {
+    let secDone = 0;
+    let secTotal = 0;
     section.groups.forEach(group => {
       const worst = worstOf(group.items.map(i => ev.items[i.id].status));
       const dot = document.querySelector(`[data-groupdot="${group.id}"]`);
       if (dot) dot.className = `dot ${worst}`;
+
+      // "4/5" on each group header, so a half-finished group is obvious even
+      // when it is folded shut.
+      const gDone = group.items.filter(i => ev.items[i.id].status !== STATUS.BLANK).length;
+      secDone += gDone;
+      secTotal += group.items.length;
+      const tally = document.querySelector(`[data-grouptally="${group.id}"]`);
+      if (tally) {
+        tally.textContent = `${gDone}/${group.items.length}`;
+        setClass(tally, 'complete', gDone === group.items.length);
+      }
     });
+    const secTally = document.querySelector(`[data-sectiontally="${section.id}"]`);
+    if (secTally) secTally.textContent = `${secDone}/${secTotal}`;
   });
 
   const total = Object.keys(ITEM_INDEX).length;
+  const counts = { ok: 0, watch: 0, fault: 0, todo: 0 };
+  Object.values(ev.items).forEach(i => {
+    if (counts[i.status] !== undefined) counts[i.status]++;
+  });
   const done = Object.values(ev.items).filter(i => i.status !== STATUS.BLANK).length;
   el('#progressFill').style.width = `${Math.round(done / total * 100)}%`;
-  el('#progressLabel').textContent = `${done} of ${total} checks recorded`;
+
+  /* The bar alone says how much is filled in but not whether anything is
+     wrong, which is the part worth knowing before walking back inside. */
+  const notes = [`${done} of ${total} checks recorded`];
+  if (counts.fault) notes.push(`${counts.fault} fault${counts.fault > 1 ? 's' : ''}`);
+  if (counts.watch) notes.push(`${counts.watch} to monitor`);
+  if (counts.todo) notes.push(`${counts.todo} not done`);
+  el('#progressLabel').textContent = notes.join(' \u00B7 ');
+  el('#progressLabel').className =
+    'progress-label' + (counts.fault ? ' has-fault' : counts.watch ? ' has-watch' : '');
   el('#topbarDate').textContent =
     `${prettyDate(state.date)}${state.reporter ? ' \u00B7 ' + state.reporter : ''}`;
 
   renderSummary(ev);
+  // The counts above can wrap the progress line onto a second row, which
+  // changes how far down the sticky headers belong.
+  syncTopbarHeight();
   return ev;
 }
 
@@ -4278,7 +4786,11 @@ function renderSummary(ev) {
 
 async function generatePdf() {
   if (!state.reporter.trim()) {
-    toast('Add your name first');
+    /* The name lives in Settings now, so pointing at the box is not enough -
+       the sheet it sits in has to be opened too, or the toast sends the
+       operator looking for a field that is not on screen. */
+    toast('Add your name in Settings first');
+    openSheet('#settingsSheet');
     el('#fReporter').focus();
     return;
   }
@@ -4861,9 +5373,10 @@ function renderDosing() {
     ? 'Record DAF dosage stopped'
     : 'Record DAF dosage started';
 
-  // last few entries, newest first
-  const recent = dosingEvents.slice().sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, 6);
-  el('#dosingList').innerHTML = recent.length ? recent.map(e => `
+  // Newest first. Folded away bar the latest, so it can hold more than the
+  // six that used to fit on screen. The full list is still in Settings.
+  const recent = dosingEvents.slice().sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, 20);
+  const rows = recent.map(e => `
     <div class="dosing-row">
       <span class="dosing-when">${esc(prettyStamp(e.at))}</span>
       <span>
@@ -4871,13 +5384,68 @@ function renderDosing() {
         <span class="dosing-what ${e.on ? 'on' : 'off'}">${e.on ? 'ON' : 'OFF'}</span>
         <button type="button" class="dosing-del" data-dosingdel="${esc(e.at)}">remove</button>
       </span>
-    </div>`).join('') : '';
+    </div>`);
+  el('#dosingList').innerHTML = collapsibleLog('dosing', rows);
+  syncFoldButton('dosing', rows.length);
 }
 
 function prettyStamp(stamp) {
   if (!stamp) return '';
   const [d, t] = String(stamp).split('T');
   return `${prettyDate(d)}, ${t || ''}`.trim();
+}
+
+/* The folding panels: the older meter readings, the older dosing entries,
+   and the whole of "Needs attention". Each opens from an arrow in its card's
+   heading, beside the "?".
+
+   Open or shut is remembered here rather than read back off the page. The
+   meter list is redrawn on every keystroke in the morning meter box, and an
+   open list must not snap shut while it is being looked at. Every session
+   starts with all three shut; that is the point of them. */
+const folds = { meter: false, dosing: false, summary: false };
+
+// classList.toggle(name, force) is not used: the test harness's DOM ignores
+// the second argument and flips the class instead, so it would test a
+// different page from the one the phone draws.
+function setClass(node, name, on) {
+  if (!node) return;
+  if (on) node.classList.add(name);
+  else node.classList.remove(name);
+}
+
+function applyFold(key) {
+  const open = !!folds[key];
+  const btn = document.querySelector(`[data-fold="${key}"]`);
+  if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  if (key === 'summary') {
+    const body = el('#summaryBody');
+    if (body) body.hidden = !open;
+    setClass(el('#summaryCard'), 'folded', !open);
+  } else {
+    const rest = document.querySelector(`[data-logrest="${key}"]`);
+    if (rest) rest.hidden = !open;
+  }
+}
+
+/* Shows the newest entry and keeps the rest behind the heading's arrow.
+
+   These lists are history: the latest line is the one worth seeing every
+   morning, and the older ones only matter when something needs correcting.
+   Every row is still written into the page - the older ones are hidden, not
+   left out - so opening the list never has to wait for anything. */
+function collapsibleLog(key, rows) {
+  if (rows.length < 2) return rows.join('');
+  return rows[0]
+    + `<div class="log-rest" data-logrest="${key}" ${folds[key] ? '' : 'hidden'}>`
+    + `${rows.slice(1).join('')}</div>`;
+}
+
+// The arrow only appears when there is something behind it.
+function syncFoldButton(key, rowCount) {
+  const btn = document.querySelector(`[data-fold="${key}"]`);
+  if (btn) btn.hidden = rowCount < 2;
+  applyFold(key);
 }
 
 function openDosingEntry() {
@@ -4982,8 +5550,12 @@ function renderMeterLog(opts) {
 
   const list = el('#meterList');
   if (!list) return;
-  const recent = meterSorted(meterReadings).slice().reverse().slice(0, 8);
-  list.innerHTML = recent.length ? recent.map(e => {
+  /* Was eight, to stop the card running down the screen. Now that all but the
+     newest fold away there is no space to save, so the list can hold enough
+     history to actually correct an old reading - while still staying bounded,
+     because a year of readings would be hundreds of rows. */
+  const recent = meterSorted(meterReadings).slice().reverse().slice(0, 30);
+  const rows = recent.map(e => {
     const prev = meterBefore(meterReadings, e.at);
     const diff = prev ? num(e.value) - num(prev.value) : null;
     return `
@@ -4995,7 +5567,11 @@ function renderMeterLog(opts) {
           <button type="button" class="dosing-del" data-meterdel="${esc(e.at)}">remove</button>
         </span>
       </div>`;
-  }).join('') : '<p class="muted small">No meter readings recorded yet.</p>';
+  });
+  list.innerHTML = rows.length
+    ? collapsibleLog('meter', rows)
+    : '<p class="muted small">No meter readings recorded yet.</p>';
+  syncFoldButton('meter', rows.length);
 }
 
 function openMeterEntry() {
@@ -5391,6 +5967,30 @@ function bindLogo() {
   });
 }
 
+/* The section and group headers stick below the top bar, and anything the app
+   scrolls to has to clear it. Its height is not a fixed number: the safe-area
+   inset above it differs between phones, and the progress line wraps to two
+   lines once the counts are long. So measure the bar and let the stylesheet
+   work from the real figure.
+
+   Guarded the same way as the error handlers at the foot of this file - the
+   test harness has no layout engine, so there is nothing to measure there. */
+let topbarHeight = 0;
+
+function syncTopbarHeight() {
+  const bar = document.querySelector('.topbar');
+  const root = document.documentElement;
+  if (!bar || typeof bar.getBoundingClientRect !== 'function') return;
+  if (!root || !root.style || typeof root.style.setProperty !== 'function') return;
+  const h = Math.round(bar.getBoundingClientRect().height);
+  // Only written when it actually moves; this is called from refresh(), which
+  // runs on every keystroke.
+  if (h > 0 && h !== topbarHeight) {
+    topbarHeight = h;
+    root.style.setProperty('--topbar-h', h + 'px');
+  }
+}
+
 function showBuildId() {
   const meta = document.querySelector('meta[name="build-id"]');
   const raw = meta ? meta.getAttribute('content') : '';
@@ -5453,6 +6053,28 @@ function bindShell() {
     refresh();
   });
   el('#fReporter').addEventListener('input', e => { state.reporter = e.target.value; queueSave(); refresh(); });
+
+  /* The "?" buttons and the fold arrows in the card headings. One listener on
+     main covers both, so nothing needs re-attaching when a list is redrawn. */
+  el('main').addEventListener('click', (e) => {
+    const help = e.target.closest('[data-help]');
+    if (help) {
+      const panel = document.getElementById(help.dataset.help);
+      if (!panel) return;
+      const wasOpen = !panel.hidden;
+      panel.hidden = wasOpen;
+      help.setAttribute('aria-expanded', wasOpen ? 'false' : 'true');
+      return;
+    }
+
+    const fold = e.target.closest('[data-fold]');
+    if (fold) {
+      const key = fold.dataset.fold;
+      folds[key] = !folds[key];
+      applyFold(key);
+    }
+  });
+
   el('#fMeter').addEventListener('input', e => {
     // Straight into the log, under this morning's reading time, replacing any
     // value already there. The log is what every figure is read from.
@@ -5680,7 +6302,8 @@ async function boot() {
     ['show the meter list', renderMeterLog],
     ['wire the backup buttons', bindBackup],
     ['draw the checklist', render],
-    ['show the trigger levels', renderThresholds]
+    ['show the trigger levels', renderThresholds],
+    ['size the top bar', syncTopbarHeight]
   ];
   const broken = [];
   steps.forEach(([what, fn]) => {
@@ -5733,6 +6356,11 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
   window.addEventListener('unhandledrejection', (e) => {
     console.error('unhandled rejection', e && e.reason);
   });
+
+  // Turning the phone changes the top bar's height, and the sticky headers
+  // below it have to follow.
+  window.addEventListener('resize', syncTopbarHeight);
+  window.addEventListener('orientationchange', syncTopbarHeight);
 }
 
 // Guarded so the module can be loaded in a test harness without a DOM.

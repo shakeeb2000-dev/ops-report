@@ -83,8 +83,18 @@ check('choice items do NOT also show generic status buttons',
   byType.choice.every(id => !html.includes(`data-status="${id}"`)));
 check('sample-date rows show only a date, no status buttons',
   byType.date.every(id => !html.includes(`data-status="${id}"`)));
+/* The tank levels and separator testing lost their status buttons at the
+   operator's request: the tanks are graded from the levels typed in, and the
+   buttons cost four rows in the chemical group alone. Named here rather than
+   read from app.js, so the test says what is wanted instead of repeating
+   whatever the code happens to do. */
+const noButtons = [...byType.stock, 'separators'];
+check('tank levels and separator testing show NO status buttons',
+  noButtons.every(id => !html.includes(`data-status="${id}"`)),
+  noButtons.filter(id => html.includes(`data-status="${id}"`)).join(', '));
 check('other items DO show status buttons',
-  [...byType.status, ...byType.number, ...byType.multi, ...byType.stock]
+  [...byType.status, ...byType.number, ...byType.multi]
+    .filter(id => !noButtons.includes(id))
     .every(id => html.includes(`data-status="${id}"`)));
 check('no template leftovers', !html.includes('undefined') && !html.includes('[object'));
 

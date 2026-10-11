@@ -165,22 +165,44 @@ function render() {
   refresh();
 }
 
+/* Inline SVG rather than emoji. A camera or pencil emoji is drawn from
+   whatever font the WebView happens to have, which on a plant phone has
+   turned up as an empty box; these always draw. */
+const ICON = {
+  camera: '<svg viewBox="0 0 24 24" aria-hidden="true">'
+    + '<path d="M3.5 9A2 2 0 0 1 5.5 7h1.9l1.2-2h6.8l1.2 2h1.9a2 2 0 0 1 2 2v8.5a2 2 0 0 1-2 2h-14a2 2 0 0 1-2-2V9Z"/>'
+    + '<circle cx="12" cy="13" r="3.3"/></svg>',
+  pencil: '<svg viewBox="0 0 24 24" aria-hidden="true">'
+    + '<path d="M4 20.2h4L20 8.2l-4-4L4 16.2v4Z"/><path d="M14.2 6l3.8 3.8"/></svg>',
+  chevron: '<svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9.5l6 6 6-6"/></svg>'
+};
+
 function renderSection(section) {
   return `
-    <div class="section-head">${esc(section.title)}</div>
-    <div class="section-body">
-      ${section.groups.map(g => renderGroup(section, g)).join('')}
-    </div>`;
+    <section class="section" data-section="${section.id}">
+      <div class="section-head">
+        <span class="section-no">${esc(section.number)}</span>
+        <span class="section-title">${esc(section.title)}</span>
+        <span class="section-tally" data-sectiontally="${section.id}"></span>
+      </div>
+      <div class="section-body">
+        ${section.groups.map(g => renderGroup(section, g)).join('')}
+      </div>
+    </section>`;
 }
 
 function renderGroup(section, group) {
   return `
     <div class="group" data-group="${group.id}" data-collapsed="false">
       <button class="group-head" type="button" data-toggle="${group.id}">
-        <span>${esc(group.title)}${group.note ? ` <span class="muted">(${esc(group.note)})</span>` : ''}</span>
+        <span class="dot blank" data-groupdot="${group.id}"></span>
+        <span class="group-head-text">
+          <span class="group-title">${esc(group.number)} &middot; ${esc(group.title)}</span>
+          ${group.note ? `<span class="group-note">${esc(group.note)}</span>` : ''}
+        </span>
         <span class="group-meta">
-          <span class="dot blank" data-groupdot="${group.id}"></span>
-          <span class="chev">&#9660;</span>
+          <span class="group-tally" data-grouptally="${group.id}"></span>
+          ${ICON.chevron}
         </span>
       </button>
       <div class="group-items">
@@ -189,23 +211,42 @@ function renderGroup(section, group) {
     </div>`;
 }
 
+/* Which checks get the OK / Monitor / Fault / Not done buttons.
+
+   Not choice items, which carry their own grading, and not the sample-date
+   rows, which only need a date. And - at the operator's request - not the
+   tank levels or separator testing, which took four rows of buttons out of
+   the chemical group alone. The tanks are still graded from the levels typed
+   in, exactly as they always were whenever no button had been tapped; the
+   buttons were only ever a manual override on top of that. */
+const NO_STATUS_BUTTONS = new Set(['separators']);
+
+function showsStatusButtons(item) {
+  if (item.type === 'choice' || item.type === 'date' || item.type === 'stock') return false;
+  return !NO_STATUS_BUTTONS.has(item.id);
+}
+
 function renderItem(item) {
   const v = state.values[item.id] || {};
   let control = '';
 
   if (item.type === 'number') {
+    // No placeholder: the box is sized for three or four digits now, and a
+    // word in it would only show half cut off.
     control = `
       <div class="numrow">
         <input type="number" inputmode="decimal" step="any" data-num="${item.id}"
-               value="${v.value ?? ''}" placeholder="reading">
+               value="${v.value ?? ''}">
         <span class="unit">${esc(item.unit || '')}</span>
       </div>`;
 
   } else if (item.type === 'multi') {
+    // The field name sits in its own span so the narrow pH boxes can tuck
+    // their "1 / 2 / 3" into the corner of the box instead of a row above it.
     control = `
       <div class="multirow${item.inputWidth === 'narrow' ? ' narrow' : ''}">
         ${item.fields.map(f => `
-          <label>${esc(f.label)}
+          <label class="mfield"><span class="mtag">${esc(f.label)}</span>
             <input type="number" inputmode="decimal" step="any"
                    data-multi="${item.id}" data-key="${f.key}" value="${v[f.key] ?? ''}">
           </label>`).join('')}
@@ -275,34 +316,44 @@ function renderItem(item) {
       </div>`;
   }
 
-  // Choice items carry their own grading, and the sample-date rows only need
-  // a date, so neither shows the generic status buttons.
   const statuses = [
     [STATUS.OK, 'OK'], [STATUS.WATCH, 'Monitor'],
     [STATUS.FAULT, 'Fault'], [STATUS.TODO, 'Not done']
   ];
-  const statusRow = (item.type === 'choice' || item.type === 'date') ? '' : `
+  const statusRow = !showsStatusButtons(item) ? '' : `
     <div class="statusrow">
       ${statuses.map(([s, label]) => `
         <button type="button" class="sbtn ${s}" data-status="${item.id}" data-value="${s}"
                 aria-pressed="${v.status === s ? 'true' : 'false'}">${label}</button>`).join('')}
     </div>`;
 
+  // A short reading and its buttons share one line (saturators, flow rate,
+  // pH). See .inline-row for what happens on a phone too narrow for both.
+  const inline = !!statusRow && (item.type === 'number' || item.type === 'multi');
+  const body = inline
+    ? `<div class="inline-row">${control}${statusRow}</div>`
+    : `${control}${statusRow}`;
+
+  /* The photo and note buttons sit on the label line as icons. They used to be
+     a pair of labelled buttons on a row of their own, which cost about 49px on
+     every one of the 38 items - roughly a fifth of the whole sheet - for two
+     actions that are used on a handful of checks. */
   return `
-    <div class="item" data-item="${item.id}">
+    <div class="item" data-item="${item.id}" data-type="${item.type}">
       <div class="item-top">
-        <div>
+        <div class="item-id">
           <div class="item-label">${esc(item.label)}</div>
           ${item.hint ? `<div class="item-hint">${esc(item.hint)}</div>` : ''}
         </div>
-        <span class="pill blank" data-pill="${item.id}">-</span>
+        <div class="item-aside">
+          <button type="button" class="icon-tool" data-photo="${item.id}"
+                  aria-label="Add a photo to ${esc(item.label)}">${ICON.camera}</button>
+          <button type="button" class="icon-tool" data-note="${item.id}"
+                  aria-label="Add a note to ${esc(item.label)}">${ICON.pencil}</button>
+          <span class="pill blank" data-pill="${item.id}">-</span>
+        </div>
       </div>
-      ${control}
-      ${statusRow}
-      <div class="item-tools">
-        <button type="button" class="tool-btn" data-photo="${item.id}">&#128247; Add photo</button>
-        <button type="button" class="tool-btn" data-note="${item.id}">&#9998; Note</button>
-      </div>
+      ${body}
       <div class="note-input" data-notewrap="${item.id}" ${v.note ? '' : 'hidden'}>
         <input type="text" data-notefield="${item.id}" value="${esc(v.note || '')}"
                placeholder="Short note for your manager">
@@ -514,6 +565,10 @@ function refresh() {
     pill.className = `pill ${s}`;
     pill.textContent = STATUS_META[s].short;
 
+    // Drives the colour rail down the left edge of the row.
+    const row = document.querySelector(`[data-item="${id}"]`);
+    if (row) row.setAttribute('data-state', s);
+
     // live "used since yesterday" line under the chemical inputs
     const usage = document.querySelector(`[data-usage="${id}"]`);
     if (usage) {
@@ -545,24 +600,66 @@ function refresh() {
                 </div>`;
       }).join('');
     }
+
+    /* The icons carry a mark when something is attached, so a check with a
+       photo or a note can be spotted without opening anything. */
+    const vals = state.values[id] || {};
+    const photoBtn = document.querySelector(`[data-photo="${id}"]`);
+    if (photoBtn) {
+      const n = (vals.photos || []).length;
+      setClass(photoBtn, 'has', n > 0);
+      photoBtn.setAttribute('data-count', n > 1 ? String(n) : '');
+    }
+    setClass(document.querySelector(`[data-note="${id}"]`), 'has', !!(vals.note || '').trim());
   });
 
   CHECKLIST.forEach(section => {
+    let secDone = 0;
+    let secTotal = 0;
     section.groups.forEach(group => {
       const worst = worstOf(group.items.map(i => ev.items[i.id].status));
       const dot = document.querySelector(`[data-groupdot="${group.id}"]`);
       if (dot) dot.className = `dot ${worst}`;
+
+      // "4/5" on each group header, so a half-finished group is obvious even
+      // when it is folded shut.
+      const gDone = group.items.filter(i => ev.items[i.id].status !== STATUS.BLANK).length;
+      secDone += gDone;
+      secTotal += group.items.length;
+      const tally = document.querySelector(`[data-grouptally="${group.id}"]`);
+      if (tally) {
+        tally.textContent = `${gDone}/${group.items.length}`;
+        setClass(tally, 'complete', gDone === group.items.length);
+      }
     });
+    const secTally = document.querySelector(`[data-sectiontally="${section.id}"]`);
+    if (secTally) secTally.textContent = `${secDone}/${secTotal}`;
   });
 
   const total = Object.keys(ITEM_INDEX).length;
+  const counts = { ok: 0, watch: 0, fault: 0, todo: 0 };
+  Object.values(ev.items).forEach(i => {
+    if (counts[i.status] !== undefined) counts[i.status]++;
+  });
   const done = Object.values(ev.items).filter(i => i.status !== STATUS.BLANK).length;
   el('#progressFill').style.width = `${Math.round(done / total * 100)}%`;
-  el('#progressLabel').textContent = `${done} of ${total} checks recorded`;
+
+  /* The bar alone says how much is filled in but not whether anything is
+     wrong, which is the part worth knowing before walking back inside. */
+  const notes = [`${done} of ${total} checks recorded`];
+  if (counts.fault) notes.push(`${counts.fault} fault${counts.fault > 1 ? 's' : ''}`);
+  if (counts.watch) notes.push(`${counts.watch} to monitor`);
+  if (counts.todo) notes.push(`${counts.todo} not done`);
+  el('#progressLabel').textContent = notes.join(' \u00B7 ');
+  el('#progressLabel').className =
+    'progress-label' + (counts.fault ? ' has-fault' : counts.watch ? ' has-watch' : '');
   el('#topbarDate').textContent =
     `${prettyDate(state.date)}${state.reporter ? ' \u00B7 ' + state.reporter : ''}`;
 
   renderSummary(ev);
+  // The counts above can wrap the progress line onto a second row, which
+  // changes how far down the sticky headers belong.
+  syncTopbarHeight();
   return ev;
 }
 
@@ -597,7 +694,11 @@ function renderSummary(ev) {
 
 async function generatePdf() {
   if (!state.reporter.trim()) {
-    toast('Add your name first');
+    /* The name lives in Settings now, so pointing at the box is not enough -
+       the sheet it sits in has to be opened too, or the toast sends the
+       operator looking for a field that is not on screen. */
+    toast('Add your name in Settings first');
+    openSheet('#settingsSheet');
     el('#fReporter').focus();
     return;
   }
@@ -1180,9 +1281,10 @@ function renderDosing() {
     ? 'Record DAF dosage stopped'
     : 'Record DAF dosage started';
 
-  // last few entries, newest first
-  const recent = dosingEvents.slice().sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, 6);
-  el('#dosingList').innerHTML = recent.length ? recent.map(e => `
+  // Newest first. Folded away bar the latest, so it can hold more than the
+  // six that used to fit on screen. The full list is still in Settings.
+  const recent = dosingEvents.slice().sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, 20);
+  const rows = recent.map(e => `
     <div class="dosing-row">
       <span class="dosing-when">${esc(prettyStamp(e.at))}</span>
       <span>
@@ -1190,13 +1292,68 @@ function renderDosing() {
         <span class="dosing-what ${e.on ? 'on' : 'off'}">${e.on ? 'ON' : 'OFF'}</span>
         <button type="button" class="dosing-del" data-dosingdel="${esc(e.at)}">remove</button>
       </span>
-    </div>`).join('') : '';
+    </div>`);
+  el('#dosingList').innerHTML = collapsibleLog('dosing', rows);
+  syncFoldButton('dosing', rows.length);
 }
 
 function prettyStamp(stamp) {
   if (!stamp) return '';
   const [d, t] = String(stamp).split('T');
   return `${prettyDate(d)}, ${t || ''}`.trim();
+}
+
+/* The folding panels: the older meter readings, the older dosing entries,
+   and the whole of "Needs attention". Each opens from an arrow in its card's
+   heading, beside the "?".
+
+   Open or shut is remembered here rather than read back off the page. The
+   meter list is redrawn on every keystroke in the morning meter box, and an
+   open list must not snap shut while it is being looked at. Every session
+   starts with all three shut; that is the point of them. */
+const folds = { meter: false, dosing: false, summary: false };
+
+// classList.toggle(name, force) is not used: the test harness's DOM ignores
+// the second argument and flips the class instead, so it would test a
+// different page from the one the phone draws.
+function setClass(node, name, on) {
+  if (!node) return;
+  if (on) node.classList.add(name);
+  else node.classList.remove(name);
+}
+
+function applyFold(key) {
+  const open = !!folds[key];
+  const btn = document.querySelector(`[data-fold="${key}"]`);
+  if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  if (key === 'summary') {
+    const body = el('#summaryBody');
+    if (body) body.hidden = !open;
+    setClass(el('#summaryCard'), 'folded', !open);
+  } else {
+    const rest = document.querySelector(`[data-logrest="${key}"]`);
+    if (rest) rest.hidden = !open;
+  }
+}
+
+/* Shows the newest entry and keeps the rest behind the heading's arrow.
+
+   These lists are history: the latest line is the one worth seeing every
+   morning, and the older ones only matter when something needs correcting.
+   Every row is still written into the page - the older ones are hidden, not
+   left out - so opening the list never has to wait for anything. */
+function collapsibleLog(key, rows) {
+  if (rows.length < 2) return rows.join('');
+  return rows[0]
+    + `<div class="log-rest" data-logrest="${key}" ${folds[key] ? '' : 'hidden'}>`
+    + `${rows.slice(1).join('')}</div>`;
+}
+
+// The arrow only appears when there is something behind it.
+function syncFoldButton(key, rowCount) {
+  const btn = document.querySelector(`[data-fold="${key}"]`);
+  if (btn) btn.hidden = rowCount < 2;
+  applyFold(key);
 }
 
 function openDosingEntry() {
@@ -1301,8 +1458,12 @@ function renderMeterLog(opts) {
 
   const list = el('#meterList');
   if (!list) return;
-  const recent = meterSorted(meterReadings).slice().reverse().slice(0, 8);
-  list.innerHTML = recent.length ? recent.map(e => {
+  /* Was eight, to stop the card running down the screen. Now that all but the
+     newest fold away there is no space to save, so the list can hold enough
+     history to actually correct an old reading - while still staying bounded,
+     because a year of readings would be hundreds of rows. */
+  const recent = meterSorted(meterReadings).slice().reverse().slice(0, 30);
+  const rows = recent.map(e => {
     const prev = meterBefore(meterReadings, e.at);
     const diff = prev ? num(e.value) - num(prev.value) : null;
     return `
@@ -1314,7 +1475,11 @@ function renderMeterLog(opts) {
           <button type="button" class="dosing-del" data-meterdel="${esc(e.at)}">remove</button>
         </span>
       </div>`;
-  }).join('') : '<p class="muted small">No meter readings recorded yet.</p>';
+  });
+  list.innerHTML = rows.length
+    ? collapsibleLog('meter', rows)
+    : '<p class="muted small">No meter readings recorded yet.</p>';
+  syncFoldButton('meter', rows.length);
 }
 
 function openMeterEntry() {
@@ -1710,6 +1875,30 @@ function bindLogo() {
   });
 }
 
+/* The section and group headers stick below the top bar, and anything the app
+   scrolls to has to clear it. Its height is not a fixed number: the safe-area
+   inset above it differs between phones, and the progress line wraps to two
+   lines once the counts are long. So measure the bar and let the stylesheet
+   work from the real figure.
+
+   Guarded the same way as the error handlers at the foot of this file - the
+   test harness has no layout engine, so there is nothing to measure there. */
+let topbarHeight = 0;
+
+function syncTopbarHeight() {
+  const bar = document.querySelector('.topbar');
+  const root = document.documentElement;
+  if (!bar || typeof bar.getBoundingClientRect !== 'function') return;
+  if (!root || !root.style || typeof root.style.setProperty !== 'function') return;
+  const h = Math.round(bar.getBoundingClientRect().height);
+  // Only written when it actually moves; this is called from refresh(), which
+  // runs on every keystroke.
+  if (h > 0 && h !== topbarHeight) {
+    topbarHeight = h;
+    root.style.setProperty('--topbar-h', h + 'px');
+  }
+}
+
 function showBuildId() {
   const meta = document.querySelector('meta[name="build-id"]');
   const raw = meta ? meta.getAttribute('content') : '';
@@ -1772,6 +1961,28 @@ function bindShell() {
     refresh();
   });
   el('#fReporter').addEventListener('input', e => { state.reporter = e.target.value; queueSave(); refresh(); });
+
+  /* The "?" buttons and the fold arrows in the card headings. One listener on
+     main covers both, so nothing needs re-attaching when a list is redrawn. */
+  el('main').addEventListener('click', (e) => {
+    const help = e.target.closest('[data-help]');
+    if (help) {
+      const panel = document.getElementById(help.dataset.help);
+      if (!panel) return;
+      const wasOpen = !panel.hidden;
+      panel.hidden = wasOpen;
+      help.setAttribute('aria-expanded', wasOpen ? 'false' : 'true');
+      return;
+    }
+
+    const fold = e.target.closest('[data-fold]');
+    if (fold) {
+      const key = fold.dataset.fold;
+      folds[key] = !folds[key];
+      applyFold(key);
+    }
+  });
+
   el('#fMeter').addEventListener('input', e => {
     // Straight into the log, under this morning's reading time, replacing any
     // value already there. The log is what every figure is read from.
@@ -1999,7 +2210,8 @@ async function boot() {
     ['show the meter list', renderMeterLog],
     ['wire the backup buttons', bindBackup],
     ['draw the checklist', render],
-    ['show the trigger levels', renderThresholds]
+    ['show the trigger levels', renderThresholds],
+    ['size the top bar', syncTopbarHeight]
   ];
   const broken = [];
   steps.forEach(([what, fn]) => {
@@ -2052,6 +2264,11 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
   window.addEventListener('unhandledrejection', (e) => {
     console.error('unhandled rejection', e && e.reason);
   });
+
+  // Turning the phone changes the top bar's height, and the sticky headers
+  // below it have to follow.
+  window.addEventListener('resize', syncTopbarHeight);
+  window.addEventListener('orientationchange', syncTopbarHeight);
 }
 
 // Guarded so the module can be loaded in a test harness without a DOM.

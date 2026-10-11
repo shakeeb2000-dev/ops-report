@@ -28,35 +28,49 @@
 <main>
   <!-- ---------- report details ---------- -->
   <section class="card">
-    <h2>Report details</h2>
+    <div class="card-head">
+      <h2>Report details</h2>
+      <div class="card-tools">
+        <button type="button" class="help-btn" data-help="helpReport"
+                aria-expanded="false" aria-label="What this section is for">?</button>
+      </div>
+    </div>
+    <div class="help-text" id="helpReport" hidden>
+      The DAF meter box is the one to fill in on your morning round.
+      Your name, the company name and the report number are kept in Settings,
+      under the gear icon at the top.
+    </div>
     <div class="field-grid">
       <label>Date
         <input type="date" id="fDate">
       </label>
-      <label>Reported by
-        <input type="text" id="fReporter" autocomplete="name">
-      </label>
-    </div>
-    <div class="field-grid">
-      <label>Time you took the readings
+      <label>Time of readings
         <input type="time" id="fReadingTime">
       </label>
-      <label>DAF meter this morning (m&sup3;)
-        <input type="number" inputmode="decimal" step="any" id="fMeter" placeholder="e.g. 224994.2">
-      </label>
     </div>
+    <label>DAF meter this morning (m&sup3;)
+      <input type="number" inputmode="decimal" step="any" id="fMeter" placeholder="e.g. 224994.2">
+    </label>
     <p class="muted small" id="prevMeterNote">&nbsp;</p>
-    <p class="muted small">This is the box to use on your morning round.</p>
   </section>
 
   <!-- ---------- DAF water meter log ---------- -->
   <section class="card dosing-card" id="meterCard">
-    <h2>Past meter readings</h2>
-    <p class="muted small">
+    <div class="card-head">
+      <h2>Past meter readings</h2>
+      <div class="card-tools">
+        <!-- Shown by renderMeterLog() once there is more than one reading. -->
+        <button type="button" class="help-btn fold-btn" data-fold="meter" hidden
+                aria-expanded="false" aria-label="Show older readings"><svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9.5l6 6 6-6"/></svg></button>
+        <button type="button" class="help-btn" data-help="helpMeter"
+                aria-expanded="false" aria-label="What this section is for">?</button>
+      </div>
+    </div>
+    <div class="help-text" id="helpMeter" hidden>
       This is the history, not today. Today's reading goes in the box above and
       appears here on its own. Use this list to fix a wrong reading, or to fill
       in a day you missed.
-    </p>
+    </div>
     <p class="muted small" id="meterCount">&nbsp;</p>
     <button type="button" id="btnMeterAdd" class="btn btn-ghost full">+ Add a reading for another day</button>
     <div class="dosing-entry" id="meterEntry" hidden>
@@ -82,7 +96,21 @@
 
   <!-- ---------- DAF running log ---------- -->
   <section class="card dosing-card" id="dosingCard">
-    <h2>Chemical dosing</h2>
+    <div class="card-head">
+      <h2>Chemical dosing</h2>
+      <div class="card-tools">
+        <!-- Shown by renderDosing() once there is more than one entry. -->
+        <button type="button" class="help-btn fold-btn" data-fold="dosing" hidden
+                aria-expanded="false" aria-label="Show older dosing entries"><svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9.5l6 6 6-6"/></svg></button>
+        <button type="button" class="help-btn" data-help="helpDosing"
+                aria-expanded="false" aria-label="What this section is for">?</button>
+      </div>
+    </div>
+    <div class="help-text" id="helpDosing" hidden>
+      Recording a switch does not start or save a report &mdash; it just adds to
+      the list, and the meter reading goes into your meter list. Carry on with
+      the same report tomorrow morning.
+    </div>
     <div class="dosing-state">
       <span class="dosing-dot" id="dosingDot"></span>
       <div>
@@ -91,11 +119,6 @@
       </div>
     </div>
     <button type="button" id="btnDosingToggle" class="btn btn-ghost full">Record DAF dosage started</button>
-    <p class="muted small">
-      Recording a switch does not start or save a report &mdash; it just adds to
-      the list, and the meter reading goes into your meter list. Carry on with
-      the same report tomorrow morning.
-    </p>
     <div class="dosing-entry" id="dosingEntry" hidden>
       <div class="field-grid">
         <label>Date
@@ -120,9 +143,17 @@
   </section>
 
   <!-- ---------- live action summary ---------- -->
-  <section class="card" id="summaryCard">
-    <h2>Needs attention</h2>
-    <div id="summaryBody" class="summary-empty">Fill in the checklist below.</div>
+  <!-- Starts folded. The top bar already counts the faults, so nothing is
+       lost by keeping the list itself out of the way until it is wanted. -->
+  <section class="card folded" id="summaryCard">
+    <div class="card-head">
+      <h2>Needs attention</h2>
+      <div class="card-tools">
+        <button type="button" class="help-btn fold-btn" data-fold="summary"
+                aria-expanded="false" aria-label="Show what needs attention"><svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9.5l6 6 6-6"/></svg></button>
+      </div>
+    </div>
+    <div id="summaryBody" class="summary-empty" hidden>Fill in the checklist below.</div>
   </section>
 
   <!-- ---------- checklist renders here ---------- -->
@@ -247,6 +278,14 @@
     <hr>
     <h2>Saved reports</h2>
     <div id="historyList" class="history"></div>
+    <hr>
+    <h2>Your name</h2>
+    <p class="muted small">
+      Shown on every report as the person who did the checks. It is always the
+      same, so it lives here rather than taking up room on the morning sheet.
+    </p>
+    <input type="text" id="fReporter" autocomplete="name" placeholder="Your name">
+
     <hr>
     <h2>Company name</h2>
     <input type="text" id="fSite" placeholder="Shown in the PDF header">
