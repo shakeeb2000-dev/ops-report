@@ -1,7 +1,7 @@
 /* Offline cache. The plant has patchy signal, so every asset the app
    needs is precached and served cache-first. */
 
-const CACHE = 'ops-report-0dd2f2703289';
+const CACHE = 'ops-report-dedff0fad71a';
 
 const ASSETS = ['./', 'index.html', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
 

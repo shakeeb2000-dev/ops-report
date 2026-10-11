@@ -1,6 +1,5 @@
 /* Exercises the pure logic of the app without a browser: markup generation,
-   grading, chemical usage, WhatsApp output and PDF generation for awkward
-   inputs.
+   grading, chemical usage and PDF generation for awkward inputs.
 
    Run: node tools/smoke_test.js
 */
@@ -289,24 +288,81 @@ const CHEM_LIMITS = `state.thresholds = mergeThresholds({
     chemBackup: { crit: 0, warn: 0 }
   });`;
 
+/* The litre levels: how a chemical is judged until there is enough history to
+   know how fast it goes. Graded with no history at all, so it is this rule and
+   not the days-left one below that is being tested. */
+const gradeLitres = (setup) => run(`
+  (() => {
+    state = blankState();
+    state.date = '2026-09-24';
+    ${setup}
+    return evaluate(state, null, [], []);
+  })()
+`);
+
 // Yesterday's figures now live on the form itself, so no history is needed.
 // The exact example from the brief: 1000/500 yesterday, 600/500 today = 400 used
 // backup rules: none at all is red, under the monitor level is amber
-ev = grade(`${CHEM_LIMITS} state.values.caustic = { inUse: 800, backup: 0 };`);
+ev = gradeLitres(`${CHEM_LIMITS} state.values.caustic = { inUse: 800, backup: 0 };`);
 check('no backup stock is a fault', ev.items.caustic.status === 'fault', ev.items.caustic.status);
 check('the reason says there is no backup', /no backup stock/.test(ev.items.caustic.reason), ev.items.caustic.reason);
-ev = grade(`${CHEM_LIMITS} state.values.caustic = { inUse: 250, backup: 2000 };`);
+ev = gradeLitres(`${CHEM_LIMITS} state.values.caustic = { inUse: 250, backup: 2000 };`);
 check('usage tank under the monitor level is a watch', ev.items.caustic.status === 'watch', ev.items.caustic.status);
 check('and it says refill', ev.items.caustic.badge === 'REFILL', ev.items.caustic.badge);
-ev = grade(`${CHEM_LIMITS} state.values.caustic = { inUse: 0, backup: 2000 };`);
+ev = gradeLitres(`${CHEM_LIMITS} state.values.caustic = { inUse: 0, backup: 2000 };`);
 check('an empty usage tank is a fault', ev.items.caustic.status === 'fault', ev.items.caustic.status);
 check('and it still says refill', ev.items.caustic.badge === 'REFILL', ev.items.caustic.badge);
-ev = grade(`${CHEM_LIMITS} state.values.caustic = { inUse: 800, backup: 0 };`);
+ev = gradeLitres(`${CHEM_LIMITS} state.values.caustic = { inUse: 800, backup: 0 };`);
 check('no backup says reorder', ev.items.caustic.badge === 'REORDER', ev.items.caustic.badge);
-ev = grade(`${CHEM_LIMITS} state.values.caustic = { inUse: 301, backup: 2000 };`);
+ev = gradeLitres(`${CHEM_LIMITS} state.values.caustic = { inUse: 301, backup: 2000 };`);
 check('just above the usage trigger is ok', ev.items.caustic.status === 'ok', ev.items.caustic.status);
-ev = grade(`${CHEM_LIMITS} state.values.caustic = { inUse: 800, backup: 1000 };`);
+ev = gradeLitres(`${CHEM_LIMITS} state.values.caustic = { inUse: 800, backup: 1000 };`);
 check('healthy backup is ok', ev.items.caustic.status === 'ok', ev.items.caustic.status);
+// A tank at the fault level used to be called "usage tank empty" whatever was
+// in it; the managers were told 200 L was empty.
+ev = gradeLitres(`state.values.coagulant = { inUse: 200, backup: 1000 };`);
+check('a low tank says how much is in it, not "empty"',
+  /usage tank very low \(200 L\)/.test(ev.items.coagulant.reason) && !/empty/.test(ev.items.coagulant.reason),
+  ev.items.coagulant.reason);
+
+/* Days left: how a chemical is judged once the history says how fast it goes.
+   A steady ten days of exactly 200 L of caustic a day, so every expected
+   figure below is plain arithmetic. (HISTORY above runs its stock down to the
+   floor part way through, which makes its average awkward to state.) Today's
+   rows carry no last check, so today does not move the average. */
+const STEADY = `(() => {
+  const iso = d => { const x = new Date('2026-09-24T00:00:00'); x.setDate(x.getDate() - d);
+    return x.getFullYear() + '-' + String(x.getMonth()+1).padStart(2,'0') + '-' + String(x.getDate()).padStart(2,'0'); };
+  const out = []; let total = 9000;
+  for (let i = 10; i >= 1; i--) {
+    out.push({ id: 's' + i, date: iso(i), lastCheckDate: iso(i + 1), values: {
+      caustic: { prevInUse: '1000', prevBackup: String(total - 1000),
+                 inUse: '1000', backup: String(total - 1200) } } });
+    total -= 200;
+  }
+  return out;
+})()`;
+const gradeDays = (setup) => run(`
+  (() => {
+    state = blankState();
+    state.date = '2026-09-24';
+    ${setup}
+    return evaluate(state, null, ${STEADY}, []);
+  })()
+`);
+ev = gradeDays(`state.values.caustic = { inUse: 300, backup: 200 };`);
+check('under three days of stock is a fault, to reorder',
+  ev.items.caustic.status === 'fault' && ev.items.caustic.badge === 'REORDER',
+  `${ev.items.caustic.status} ${ev.items.caustic.badge}`);
+check('and it says how long the stock will last',
+  /only 2\.5 days of stock left \(500 L on site\)/.test(ev.items.caustic.reason), ev.items.caustic.reason);
+ev = gradeDays(`state.values.caustic = { inUse: 600, backup: 600 };`);
+check('under a week of stock is a watch, to order soon',
+  ev.items.caustic.status === 'watch' && ev.items.caustic.badge === 'ORDER SOON',
+  `${ev.items.caustic.status} ${ev.items.caustic.badge} ${ev.items.caustic.reason}`);
+ev = gradeDays(`state.values.caustic = { inUse: 1000, backup: 2000 };`);
+check('two weeks of stock is fine, whatever the litres',
+  ev.items.caustic.status === 'ok', `${ev.items.caustic.status} ${ev.items.caustic.reason}`);
 
 ev = grade(`state.values.caustic = { prevInUse: 1000, prevBackup: 500, inUse: 600, backup: 500 };`);
 check('400 L used is worked out correctly',
@@ -338,19 +394,33 @@ check('no movement reads as zero used',
 ev = grade(`state.values.caustic = { inUse: 600, backup: 500 };`);
 check('without a last check there is no sum', ev.items.caustic.sum === null);
 
-// days of stock remaining
+/* HISTORY holds no sulphuric acid, so today's one day of usage is all there
+   is - not enough to judge on, and the litre levels decide. */
 ev = grade(`${CHEM_LIMITS}
   state.values.sulphuric = { prevInUse: 400, prevBackup: 2000, inUse: 200, backup: 2000 };`);
-check('a low usage tank is a watch, whatever the usage',
+check('with one day of usage, a low usage tank is judged on litres',
   ev.items.sulphuric.status === 'watch', ev.items.sulphuric.status);
 check('the status comes from the tank level',
   /usage tank low/.test(ev.items.sulphuric.reason), ev.items.sulphuric.reason);
 
-// a heavy usage day with healthy tanks must stay green
+/* The usage tank, once the rate is known: at 200 L a day, 150 L left is less
+   than a day of dosing, so it needs refilling from the backup. */
+ev = gradeDays(`state.values.caustic = { inUse: 150, backup: 3000 };`);
+check('a usage tank that runs dry within a day is a fault, to refill',
+  ev.items.caustic.status === 'fault' && ev.items.caustic.badge === 'REFILL',
+  `${ev.items.caustic.status} ${ev.items.caustic.badge} ${ev.items.caustic.reason}`);
+check('and it says what is left and how long it lasts',
+  /usage tank down to 150 L, less than a day of dosing/.test(ev.items.caustic.reason), ev.items.caustic.reason);
+
+/* A heavy usage day with healthy stock must stay green: a single day's use
+   is reported, but only the stock on hand - in days - decides the colour.
+   Stock here is about 13 days at the average rate. (The stock in this case
+   was raised when chemicals moved to days left: the 1,500 L it had before is
+   only about three days of caustic, which is now rightly flagged.) */
 ev = grade(`${CHEM_LIMITS}
-  state.values.caustic = { prevInUse: 1000, prevBackup: 1000, inUse: 500, backup: 1000, ibc: 1 };`);
+  state.values.caustic = { prevInUse: 1000, prevBackup: 6000, inUse: 1500, backup: 5000, ibc: 1 };`);
 check('heavy usage alone does not flag anything',
-  ev.items.caustic.status === 'ok', ev.items.caustic.status);
+  ev.items.caustic.status === 'ok', `${ev.items.caustic.status} ${ev.items.caustic.reason}`);
 check('the average is reported from the history',
   /Average use \d/.test(ev.items.caustic.sum.footer), ev.items.caustic.sum.footer);
 check('the average says how many days it covers',
@@ -412,6 +482,9 @@ const AGREED = {
   ph1:        { critLow: 4.9, warnLow: 5.0, warnHigh: 5.5, critHigh: 5.6 },
   ph2:        { critLow: 6.0, warnLow: 6.1, warnHigh: 6.5, critHigh: 6.7 },
   ph3:        { critLow: 6.0, warnLow: 6.1, warnHigh: 7.8, critHigh: 8.0 },
+  // Chemicals judged on days left - asked for by the operator, Oct 2026.
+  chemDays:   { crit: 3, warn: 7 },
+  chemTankDays: { crit: 1, warn: 2 },
   chemInUse:  { crit: 300, warn: 500 },
   chemBackup: { crit: 0, warn: 300 },
   boilerChem: { crit: 50, warn: 100 },
@@ -806,8 +879,8 @@ check('and the water through the plant',
   waterBlock.text.indexOf('Water through the plant') !== -1);
 check('and how long the dosing was on',
   waterBlock.text.indexOf('Chemical was dosing for') !== -1);
-check('and the water speed',
-  waterBlock.text.indexOf('Water speed while dosing') !== -1);
+check('and the average flow',
+  waterBlock.text.indexOf('Average flow while dosing') !== -1);
 check('and explains what a dose figure means',
   waterBlock.text.indexOf('litres of chemical used for every') !== -1);
 
@@ -1336,7 +1409,7 @@ const twoCol = run(`
       ['Chemical was dosing for', '12.5 of those 24.0 hrs', false],
       ['Water that got chemical', '1,311 m\u00B3  (estimated)', true],
       ['Dosing on at 28 Sep 8:30am', 'meter not noted', false],
-      ['Water speed while dosing', '15.0 m\u00B3 per hour', false],
+      ['Average flow while dosing', '15.0 m\u00B3/h', false],
       ['Meter at 28 Sep 8:00am', '223,460.4 m\u00B3', false]
     ].map(([l, v, b]) => Math.round(measure(l, 8.2, b) + measure(v, b ? 9 : 8.6, b)));
 
@@ -1396,14 +1469,18 @@ const empty = run(`
     const bytes = buildPdf(state, ev, null);
     return { len: bytes.length, head: String.fromCharCode(...bytes.slice(0, 8)),
              acts: ev.actions.leighton.length + ev.actions.hafiz.length,
-             wa: buildWhatsApp(state, ev).map(m => m.text) };
+             verdict: ev.verdict.text, text: String.fromCharCode(...bytes) };
   })()
 `);
 check('a blank report still produces a PDF', empty.len > 1000, `${empty.len} bytes`);
 check('valid PDF header', empty.head.startsWith('%PDF-1.'));
 check('nothing flagged when nothing entered', empty.acts === 0, String(empty.acts));
-check('WhatsApp says all clear', empty.wa.every(t => t.includes('All checks clear')));
-check('the default name appears', empty.wa[0].includes('HAFIZ SHAKEEB ARSLAN'));
+// These two used to be read off the WhatsApp text, which has been taken out.
+// With nothing entered at all, nothing is flagged - but the headline does not
+// claim "all checks clear" when not one check was made.
+check('the report says nothing needs action, and that the checks are blank',
+  /Nothing needs action today\. 38 checks were left blank\./.test(empty.verdict), empty.verdict);
+check('the default name appears', empty.text.includes('HAFIZ SHAKEEB ARSLAN'));
 
 const hostile = run(`
   (() => {

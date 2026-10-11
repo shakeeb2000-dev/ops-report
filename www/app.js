@@ -1072,38 +1072,6 @@ async function findPreviousReport() {
   return candidates[0] || null;
 }
 
-/* ---------------- WhatsApp sheet ---------------- */
-
-function showWhatsApp() {
-  const ev = refresh();
-  const messages = buildWhatsApp(state, ev);
-  el('#waBody').innerHTML = messages.map((m, i) => `
-    <div class="wa-block">
-      <h3>Message ${i + 1} &rarr; ${esc(m.owner)}</h3>
-      <div class="wa-text" id="waText${i}">${esc(m.text)}</div>
-      <button type="button" class="btn btn-ghost" data-copy="${i}">Copy message</button>
-    </div>`).join('');
-
-  el('#waBody').querySelectorAll('[data-copy]').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const text = messages[Number(btn.dataset.copy)].text;
-      try {
-        await navigator.clipboard.writeText(text);
-        toast('Copied - paste into WhatsApp');
-      } catch {
-        const ta = document.createElement('textarea');
-        ta.value = text;
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        ta.remove();
-        toast('Copied');
-      }
-    });
-  });
-  openSheet('#waSheet');
-}
-
 /* ---------------- settings ---------------- */
 
 const KEY_LABELS = {
@@ -1624,7 +1592,7 @@ function renderFlowDetail(ev) {
   if (!days.length) {
     box.innerHTML = counts
       + '<p class="muted small">No day yet has the dosing running right through '
-      + 'between two meter readings, so there is no measured speed. Until there '
+      + 'between two meter readings, so there is no measured average flow. Until there '
       + 'is, dosed water can only be worked out when the meter was noted at the '
       + 'switch.</p>';
     return;
@@ -1693,9 +1661,80 @@ function renderDosingAudit() {
 
 const BACKUP_VERSION = 1;
 
+/* When this device last saved a backup, so it can say when one is due.
+
+   Kept in a record of its own rather than in the draft: the draft is replaced
+   every morning and whenever a saved report is loaded, and either would lose
+   the date. */
+const BACKUP_INFO_KEY = '__backup-info';
+// After this many days the main screen starts asking for a backup.
+const BACKUP_REMIND_DAYS = 7;
+let lastBackupAt = null;
+
 /* Records that must not travel. The draft is whatever that device happens to
-   have half-finished, and the seed markers have to be judged locally. */
-const BACKUP_SKIP = new Set([DRAFT_ID, SEED_MARKER]);
+   have half-finished, and the seed markers have to be judged locally - as does
+   the backup date, which belongs to the device that made the backup. */
+const BACKUP_SKIP = new Set([DRAFT_ID, SEED_MARKER, BACKUP_INFO_KEY]);
+
+async function loadBackupInfo() {
+  try {
+    const rec = await store.get(BACKUP_INFO_KEY);
+    lastBackupAt = rec && Number(rec.lastBackupAt) > 0 ? Number(rec.lastBackupAt) : null;
+  } catch (err) {
+    console.error('could not read the backup date', err);
+    lastBackupAt = null;
+  }
+}
+
+async function noteBackupMade() {
+  lastBackupAt = Date.now();
+  try {
+    await store.put({ id: BACKUP_INFO_KEY, lastBackupAt });
+  } catch (err) {
+    console.error('could not record the backup date', err);
+  }
+  renderBackupStatus();
+}
+
+/* "today", "yesterday", "12 days ago" - by calendar day, as a person counts.
+   Local dates on purpose: toISOString() is UTC, which on a Melbourne morning
+   is still yesterday. */
+function daysSinceBackup() {
+  if (!lastBackupAt) return null;
+  const iso = isoOf(lastBackupAt);
+  return iso >= todayISO() ? 0 : (daysBetween(iso, todayISO()) || 0);
+}
+
+function renderBackupStatus() {
+  const days = daysSinceBackup();
+  const ago = days === null ? '' : days === 0 ? 'today' : days === 1 ? 'yesterday' : `${days} days ago`;
+
+  const status = el('#backupStatus');
+  if (status) {
+    status.textContent = days === null
+      ? 'No backup has been saved on this phone yet.'
+      : `Last backup: ${prettyDate(isoOf(lastBackupAt))} (${ago}).`;
+    setClass(status, 'overdue', days === null || days >= BACKUP_REMIND_DAYS);
+  }
+
+  const nag = el('#backupNag');
+  if (nag) {
+    const due = days === null || days >= BACKUP_REMIND_DAYS;
+    nag.hidden = !due;
+    const text = el('#backupNagText');
+    if (text && due) {
+      text.textContent = days === null
+        ? 'No backup saved yet. Your reports are only on this phone.'
+        : `Last backup was ${ago}. Your reports are only on this phone.`;
+    }
+  }
+}
+
+// The local calendar date of a moment, as YYYY-MM-DD.
+function isoOf(ms) {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 async function buildBackup() {
   const all = await store.all();
@@ -1727,9 +1766,12 @@ async function exportBackup() {
     const blob = new Blob([text], { type: 'application/json' });
     const file = new File([blob], name, { type: 'application/json' });
 
+    // Counted as made once the file is handed over; backing out of the share
+    // sheet is not a backup, so the reminder stays.
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       try {
         await navigator.share({ files: [file], title: name });
+        await noteBackupMade();
         toast('Backup shared');
         return;
       } catch (err) {
@@ -1744,6 +1786,7 @@ async function exportBackup() {
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 4000);
+    await noteBackupMade();
     toast(`Backup saved - ${payload.records.length} records`);
   } catch (err) {
     console.error('could not build the backup', err);
@@ -1848,6 +1891,7 @@ async function importBackup(text) {
 
 function bindBackup() {
   el('#btnBackupExport').addEventListener('click', exportBackup);
+  el('#btnBackupNag').addEventListener('click', exportBackup);
   el('#btnBackupImport').addEventListener('click', () => el('#backupInput').click());
   el('#backupInput').addEventListener('change', async (e) => {
     const file = (e.target.files || [])[0];
@@ -2001,7 +2045,7 @@ function bindShell() {
         `${prettyDate(RECORDED_FROM)} to ${prettyDate(RECORDED_TO)} hold the `
         + 'readings recorded on paper.\n\n'
         + 'Saving a report for this date replaces them, which changes the '
-        + 'measured water speed and the dose figures.\n\n'
+        + 'measured average flow and the dose figures.\n\n'
         + 'Use today\'s date for a test report. Carry on anyway?'
       );
       if (!ok) {
@@ -2081,8 +2125,8 @@ function bindShell() {
   el('#fGeneralNote').addEventListener('input', e => { state.generalNote = e.target.value; queueSave(); });
 
   el('#btnPdf').addEventListener('click', generatePdf);
-  el('#btnWhatsApp').addEventListener('click', showWhatsApp);
   el('#btnSettings').addEventListener('click', () => {
+    renderBackupStatus();
     renderHistory();
     renderFlowDetail(refresh());
     renderDosingAudit();
@@ -2090,6 +2134,9 @@ function bindShell() {
   });
   el('#btnNewReport').addEventListener('click', startNewReport);
   el('#btnResetThresholds').addEventListener('click', () => {
+    // One tap used to wipe every level typed by hand, with no way back.
+    if (!confirm('Put every trigger level back to the original numbers?\n\n'
+      + 'Any level you have changed will be lost.')) return;
     state.thresholds = deepCopy(DEFAULT_THRESHOLDS);
     // Back to shipped numbers, so a later build may update them again.
     state.thEdited = false;
@@ -2247,6 +2294,7 @@ async function boot() {
   } catch (err) {
     console.error('could not load the previous report', err);
   }
+  await loadBackupInfo();
 
   /* Drawing the screen comes last, and any one failure here used to leave
      nothing on screen at all - a blank page with no hint of what went wrong,
@@ -2265,6 +2313,7 @@ async function boot() {
     ['wire the meter list', bindMeterLog],
     ['show the meter list', renderMeterLog],
     ['wire the backup buttons', bindBackup],
+    ['show when the last backup was', renderBackupStatus],
     ['draw the checklist', render],
     ['show the trigger levels', renderThresholds],
     ['size the top bar', syncTopbarHeight]

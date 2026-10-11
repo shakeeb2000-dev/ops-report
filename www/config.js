@@ -51,6 +51,14 @@ const DEFAULT_THRESHOLDS = {
   ph1:         { critLow: 4.9, warnLow: 5.0, warnHigh: 5.5, critHigh: 5.6 },
   ph2:         { critLow: 6.0, warnLow: 6.1, warnHigh: 6.5, critHigh: 6.7 },
   ph3:         { critLow: 6.0, warnLow: 6.1, warnHigh: 7.8, critHigh: 8.0 },
+  /* The four delivered chemicals are judged in days, not litres, once the app
+     has the history to know how fast each one goes - one set of litre levels
+     treated a chemical that lasts two weeks like one that lasts two days.
+     chemDays is the whole stock on site (time to order); chemTankDays is the
+     usage tank alone at the rate it empties while dosing (time to refill). */
+  chemDays:    { crit: 3,   warn: 7 },
+  chemTankDays:{ crit: 1,   warn: 2 },
+  // Litre levels: what the chemicals are judged on until that history exists.
   chemInUse:   { crit: 300, warn: 500 },
   chemBackup:  { crit: 0,   warn: 300 },
   boilerChem:  { crit: 50,  warn: 100 },
@@ -71,8 +79,10 @@ const TH_LABELS = {
   ph1:         'pH reading 1',
   ph2:         'pH reading 2',
   ph3:         'pH reading 3',
-  chemInUse:   'Chemical usage tank (L)',
-  chemBackup:  'Chemical backup stock (L)',
+  chemDays:    'Chemical stock on site - days left (time to order)',
+  chemTankDays:'Chemical usage tank - days of dosing left (time to refill)',
+  chemInUse:   'Chemical usage tank, litres - only until there is enough history',
+  chemBackup:  'Chemical backup stock, litres - only until there is enough history',
   boilerChem:  'Boiler chemical (L)',
   saturator:   'Saturator pressure (kPa)',
   flow:        'Flow rate (m3/h)'
@@ -533,7 +543,7 @@ function stockBadge(item, status, reason) {
   if (item && item.topUp === 'litres') return 'REFILL';
   // For the delivered chemicals, no backup left is the more serious problem,
   // so that is the action named.
-  if (/no backup stock/.test(reason)) return 'REORDER';
+  if (/no backup stock|backup very low/.test(reason)) return 'REORDER';
   if (/usage tank/.test(reason)) return 'REFILL';
   if (status === STATUS.FAULT) return 'REORDER';
   if (status === STATUS.WATCH) return 'LOW';

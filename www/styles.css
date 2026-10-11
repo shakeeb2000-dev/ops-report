@@ -826,20 +826,67 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
 .th-inputs label { font-size: .68rem; margin-bottom: 0; }
 .th-inputs input { padding: 8px; min-height: 40px; }
 
-.wa-block { border: 1px solid var(--line); border-radius: 11px; padding: 12px; margin-bottom: 12px; }
-.wa-block h3 { margin: 0 0 8px; font-size: .84rem; color: var(--navy); }
-.wa-text {
-  white-space: pre-wrap;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: .76rem;
-  background: #f7f9fb;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 10px;
-  max-height: 260px;
-  overflow-y: auto;
-  margin-bottom: 9px;
+/* ---------------- backup ---------------- */
+
+/* The reminder on the main screen: one line, only when a backup is due. */
+.backup-nag {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 9px 10px 9px 14px;
+  border: 1px solid #f0d58a;
+  border-left: 4px solid var(--watch);
+  border-radius: var(--radius);
+  background: #fff8e6;
+  color: #6b4a00;
+  font-size: .82rem;
+  line-height: 1.35;
 }
+/* Must stay: .backup-nag sets display, which beats the hidden attribute. */
+.backup-nag[hidden] { display: none; }
+.backup-nag span { flex: 1 1 auto; }
+.backup-nag .btn {
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding: 0 14px;
+  font-size: .82rem;
+}
+
+.backup-status { margin: 0 0 8px; font-size: .88rem; font-weight: 700; color: var(--ok); }
+.backup-status.overdue { color: #8a6100; }
+
+/* ---------------- settings ---------------- */
+
+/* Settings that belong together sit under one rule, each with its own name. */
+.sheet-inner h2.sub { margin-top: 18px; }
+
+/* The working-out and repair panels, folded away: needed for an odd question,
+   not day to day. */
+.advanced > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: var(--tap);
+  font-size: .85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--navy);
+}
+.advanced > summary::-webkit-details-marker { display: none; }
+.advanced > summary::after {
+  content: "";
+  width: 9px; height: 9px;
+  margin-right: 6px;
+  border-right: 2.2px solid var(--slate);
+  border-bottom: 2.2px solid var(--slate);
+  transform: rotate(45deg) translateY(-3px);
+  transition: transform .18s ease;
+}
+.advanced[open] > summary::after { transform: rotate(-135deg) translateY(-2px); }
 .history-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; border-top: 1px solid var(--line); padding: 10px 0; font-size: .85rem; }
 .history-row:first-child { border-top: 0; }
 .history-row .h-actions { display: flex; gap: 6px; }

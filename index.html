@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1e3a5f">
-<meta name="build-id" content="0dd2f2703289">
+<meta name="build-id" content="dedff0fad71a">
 <title>Daily Ops Report</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -838,20 +838,67 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
 .th-inputs label { font-size: .68rem; margin-bottom: 0; }
 .th-inputs input { padding: 8px; min-height: 40px; }
 
-.wa-block { border: 1px solid var(--line); border-radius: 11px; padding: 12px; margin-bottom: 12px; }
-.wa-block h3 { margin: 0 0 8px; font-size: .84rem; color: var(--navy); }
-.wa-text {
-  white-space: pre-wrap;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: .76rem;
-  background: #f7f9fb;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 10px;
-  max-height: 260px;
-  overflow-y: auto;
-  margin-bottom: 9px;
+/* ---------------- backup ---------------- */
+
+/* The reminder on the main screen: one line, only when a backup is due. */
+.backup-nag {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 9px 10px 9px 14px;
+  border: 1px solid #f0d58a;
+  border-left: 4px solid var(--watch);
+  border-radius: var(--radius);
+  background: #fff8e6;
+  color: #6b4a00;
+  font-size: .82rem;
+  line-height: 1.35;
 }
+/* Must stay: .backup-nag sets display, which beats the hidden attribute. */
+.backup-nag[hidden] { display: none; }
+.backup-nag span { flex: 1 1 auto; }
+.backup-nag .btn {
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding: 0 14px;
+  font-size: .82rem;
+}
+
+.backup-status { margin: 0 0 8px; font-size: .88rem; font-weight: 700; color: var(--ok); }
+.backup-status.overdue { color: #8a6100; }
+
+/* ---------------- settings ---------------- */
+
+/* Settings that belong together sit under one rule, each with its own name. */
+.sheet-inner h2.sub { margin-top: 18px; }
+
+/* The working-out and repair panels, folded away: needed for an odd question,
+   not day to day. */
+.advanced > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: var(--tap);
+  font-size: .85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--navy);
+}
+.advanced > summary::-webkit-details-marker { display: none; }
+.advanced > summary::after {
+  content: "";
+  width: 9px; height: 9px;
+  margin-right: 6px;
+  border-right: 2.2px solid var(--slate);
+  border-bottom: 2.2px solid var(--slate);
+  transform: rotate(45deg) translateY(-3px);
+  transition: transform .18s ease;
+}
+.advanced[open] > summary::after { transform: rotate(-135deg) translateY(-2px); }
 .history-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; border-top: 1px solid var(--line); padding: 10px 0; font-size: .85rem; }
 .history-row:first-child { border-top: 0; }
 .history-row .h-actions { display: flex; gap: 6px; }
@@ -975,6 +1022,14 @@ body.no-scroll { overflow: hidden; }
 </header>
 
 <main>
+  <!-- ---------- backup reminder ----------
+       Shown by renderBackupStatus() only when a backup is overdue. Everything
+       lives on this one phone, so this is the nudge that keeps a copy of it. -->
+  <div class="backup-nag" id="backupNag" hidden>
+    <span id="backupNagText">&nbsp;</span>
+    <button type="button" class="btn btn-primary" id="btnBackupNag">Save a backup</button>
+  </div>
+
   <!-- ---------- report details ---------- -->
   <section class="card">
     <div class="card-head">
@@ -1122,11 +1177,13 @@ body.no-scroll { overflow: hidden; }
 
 <!-- ---------- sticky action bar ---------- -->
 <nav class="actionbar">
-  <button id="btnWhatsApp" class="btn btn-ghost">WhatsApp text</button>
   <button id="btnPdf" class="btn btn-primary">Save &amp; make PDF</button>
 </nav>
 
-<!-- ---------- settings sheet ---------- -->
+<!-- ---------- settings sheet ----------
+     In order of how often each part is needed: the backup first, because it is
+     the one thing that should be done regularly; then the one-off setup; the
+     working-out and repair panels last, folded away under Advanced. -->
 <div id="settingsSheet" class="sheet" hidden>
   <div class="sheet-inner">
     <div class="sheet-head">
@@ -1134,25 +1191,70 @@ body.no-scroll { overflow: hidden; }
       <button class="icon-btn" data-close-sheet>&times;</button>
     </div>
 
-    <h2>New report</h2>
+    <h2>Backup</h2>
+    <p class="backup-status" id="backupStatus">&nbsp;</p>
     <p class="muted small">
-      Clears everything on screen so you can start again. Your name, site and
-      trigger levels are kept, and reports you have already saved are not touched.
+      Everything is kept on this phone only. If it is lost or reset, your reports
+      go with it &mdash; so save a backup now and again, somewhere off the phone
+      such as your email or Google Drive. Photos are not included.
     </p>
-    <button id="btnNewReport" class="btn btn-ghost full">&#10227; Start a new report</button>
+    <div class="sheet-foot">
+      <button id="btnBackupExport" class="btn btn-primary">Save a backup</button>
+      <button id="btnBackupImport" class="btn btn-ghost">Load a backup</button>
+    </div>
+    <p class="muted small">
+      <strong>Using two devices?</strong> Load the other one&rsquo;s backup here to
+      bring them together. Readings and dosing times from both are combined; where
+      the same morning exists on both, the one saved later is kept.
+    </p>
+    <input type="file" id="backupInput" accept=".json,application/json" hidden>
+
+    <hr>
+    <h2>App version</h2>
+    <p class="muted small">
+      Running version <strong class="js-build-id">dev</strong>. If you have just
+      uploaded an update and this number has not changed, tap below &mdash; the
+      phone can hold on to the old copy otherwise.
+    </p>
+    <button id="btnCheckUpdate" class="btn btn-ghost full">&#10227; Check for an update</button>
+
+    <hr>
+    <h2>Your name</h2>
+    <p class="muted small">Shown on every report as the person who did the checks.</p>
+    <input type="text" id="fReporter" autocomplete="name" placeholder="Your name">
+
+    <h2 class="sub">Company name</h2>
+    <input type="text" id="fSite" placeholder="Shown in the PDF header">
+
+    <h2 class="sub">Report number prefix</h2>
+    <p class="muted small">Used for the reference on each report, e.g. ATP-DOR-2026-09-28.</p>
+    <input type="text" id="fPrefix" placeholder="ATP-DOR">
+
+    <h2 class="sub">Company logo</h2>
+    <p class="muted small">Appears at the top of every PDF. Pick it once and it is remembered.</p>
+    <div class="logo-row">
+      <div class="logo-preview" id="logoPreview"><span class="muted small">No logo</span></div>
+      <div class="logo-actions">
+        <button type="button" id="btnLogoPick" class="tool-btn">Choose image</button>
+        <button type="button" id="btnLogoClear" class="tool-btn">Remove</button>
+      </div>
+    </div>
+    <input type="file" accept="image/*" id="logoInput" hidden>
 
     <hr>
     <h2>Trigger levels</h2>
     <p class="muted small">
-      Set the numbers that decide when an item is flagged. Anything at or past the
-      <strong>Fault</strong> figure is reported as a fault; anything at or past
-      <strong>Monitor</strong> is reported as needing a watch.
+      The numbers that decide when a check is flagged. At or past
+      <strong>Fault</strong> it is reported as a fault; at or past
+      <strong>Monitor</strong>, as needing a watch. The four chemicals are judged
+      on how many days they will last. Their litre levels are only used until the
+      app has enough history to know how fast each one goes.
     </p>
     <div id="thresholdForm"></div>
     <div class="sheet-foot">
       <button id="btnResetThresholds" class="btn btn-ghost">Reset to defaults</button>
-      <button class="btn btn-primary" data-close-sheet>Done</button>
     </div>
+
     <hr>
     <h2>Average usage</h2>
     <p class="muted small">
@@ -1166,39 +1268,28 @@ body.no-scroll { overflow: hidden; }
     </label>
 
     <hr>
-    <h2>Backup &amp; moving between devices</h2>
-    <p class="muted small">
-      Each device keeps its own copy &mdash; your phone and your PC do not talk to
-      each other. Save a backup file here and load it on the other device to bring
-      them together. Readings and dosing times from both are combined; where the
-      same morning exists on both, the one saved later is kept. Photos are not
-      included.
-    </p>
-    <p class="muted small">
-      <strong>This is also your only backup.</strong> Save one now and again &mdash;
-      if the phone is lost or cleared, everything goes with it.
-    </p>
-    <div class="sheet-foot">
-      <button id="btnBackupExport" class="btn btn-ghost">Save a backup</button>
-      <button id="btnBackupImport" class="btn btn-ghost">Load a backup</button>
-    </div>
-    <input type="file" id="backupInput" accept=".json,application/json" hidden>
+    <h2>Saved reports</h2>
+    <div id="historyList" class="history"></div>
 
     <hr>
-    <h2>App version</h2>
+    <h2>New report</h2>
     <p class="muted small">
-      Running version <span class="js-build-id">dev</span>. If the version here does not
-      match what you uploaded, tap below &mdash; the phone can hold on to the old
-      copy otherwise.
+      Clears everything on screen so you can start again. Your name, site and
+      trigger levels are kept, and reports you have already saved are not touched.
     </p>
-    <button id="btnCheckUpdate" class="btn btn-ghost full">&#10227; Check for an update</button>
+    <button id="btnNewReport" class="btn btn-ghost full">&#10227; Start a new report</button>
 
     <hr>
-    <h2>Where the water speed comes from</h2>
+    <details class="advanced">
+      <summary>Advanced</summary>
+      <p class="muted small">How the figures are worked out, and repairs. Not needed day to day.</p>
+
+      <h2>Where the average flow comes from</h2>
     <p class="muted small">
-      The speed is averaged over past days where the dosing ran right through
-      the whole period between two meter readings. Only those days can be
-      measured exactly, so only those are used.
+      The water the meter recorded, divided by the hours, over past days when
+      the dosing ran right through from one meter reading to the next. Only
+      those days can be measured exactly, so only those are used. Your Flow
+      rate check is not part of this - it is reported as you type it.
     </p>
     <div id="flowDetail"></div>
 
@@ -1206,7 +1297,7 @@ body.no-scroll { overflow: hidden; }
     <h2>Every dosing entry</h2>
     <p class="muted small">
       The full list, newest first. An extra entry in the middle of a day stops
-      that day counting towards the speed above. Remove any wrong ones from the
+      that day counting towards the average flow above. Remove any wrong ones from the
       Chemical dosing card on the main screen.
     </p>
     <div id="dosingAudit"></div>
@@ -1215,69 +1306,16 @@ body.no-scroll { overflow: hidden; }
       seven times recorded on paper.
     </p>
 
-    <hr>
-    <h2>Recorded readings and reports</h2>
+      <h2>Recorded readings and reports</h2>
     <p class="muted small">
       Puts back everything written down before the app existed &mdash; the meter
       readings <em>and</em> the reports for 11 Sep to 2 Oct 2026. Use this if the
-      water speed looks wrong, or if the panel above says
+      average flow looks wrong, or if the panel above says
       <strong>meter reading missing</strong> for any of those days. Anything
       saved for those dates is replaced; other dates are untouched.
     </p>
     <button id="btnMeterRestore" class="btn btn-ghost full">&#10227; Put back the recorded readings and reports</button>
-
-    <hr>
-    <h2>Saved reports</h2>
-    <div id="historyList" class="history"></div>
-    <hr>
-    <h2>Your name</h2>
-    <p class="muted small">
-      Shown on every report as the person who did the checks. It is always the
-      same, so it lives here rather than taking up room on the morning sheet.
-    </p>
-    <input type="text" id="fReporter" autocomplete="name" placeholder="Your name">
-
-    <hr>
-    <h2>Company name</h2>
-    <input type="text" id="fSite" placeholder="Shown in the PDF header">
-
-    <hr>
-    <h2>Report number prefix</h2>
-    <p class="muted small">Used for the reference on each report, e.g. ATP-DOR-2026-09-28.</p>
-    <input type="text" id="fPrefix" placeholder="ATP-DOR">
-
-    <hr>
-    <h2>Company logo</h2>
-    <p class="muted small">Appears at the top of every PDF. Pick it once and it is remembered.</p>
-    <div class="logo-row">
-      <div class="logo-preview" id="logoPreview"><span class="muted small">No logo</span></div>
-      <div class="logo-actions">
-        <button type="button" id="btnLogoPick" class="tool-btn">Choose image</button>
-        <button type="button" id="btnLogoClear" class="tool-btn">Remove</button>
-      </div>
-    </div>
-    <input type="file" accept="image/*" id="logoInput" hidden>
-
-    <hr>
-    <h2>About</h2>
-    <p class="muted small">
-      Version <strong class="js-build-id">dev</strong><br>
-      If you have just uploaded an update and this number has not changed, use
-      <strong>Check for an update</strong> above.
-    </p>
-  </div>
-</div>
-
-<!-- ---------- whatsapp sheet ---------- -->
-<div id="waSheet" class="sheet" hidden>
-  <div class="sheet-inner">
-    <div class="sheet-head">
-      <h2>WhatsApp messages</h2>
-      <button class="icon-btn" data-close-sheet>&times;</button>
-    </div>
-    <p class="muted small">Send these as two separate messages so neither gets cut off by
-      &ldquo;Read more&rdquo;.</p>
-    <div id="waBody"></div>
+    </details>
   </div>
 </div>
 
@@ -1338,6 +1376,14 @@ const DEFAULT_THRESHOLDS = {
   ph1:         { critLow: 4.9, warnLow: 5.0, warnHigh: 5.5, critHigh: 5.6 },
   ph2:         { critLow: 6.0, warnLow: 6.1, warnHigh: 6.5, critHigh: 6.7 },
   ph3:         { critLow: 6.0, warnLow: 6.1, warnHigh: 7.8, critHigh: 8.0 },
+  /* The four delivered chemicals are judged in days, not litres, once the app
+     has the history to know how fast each one goes - one set of litre levels
+     treated a chemical that lasts two weeks like one that lasts two days.
+     chemDays is the whole stock on site (time to order); chemTankDays is the
+     usage tank alone at the rate it empties while dosing (time to refill). */
+  chemDays:    { crit: 3,   warn: 7 },
+  chemTankDays:{ crit: 1,   warn: 2 },
+  // Litre levels: what the chemicals are judged on until that history exists.
   chemInUse:   { crit: 300, warn: 500 },
   chemBackup:  { crit: 0,   warn: 300 },
   boilerChem:  { crit: 50,  warn: 100 },
@@ -1358,8 +1404,10 @@ const TH_LABELS = {
   ph1:         'pH reading 1',
   ph2:         'pH reading 2',
   ph3:         'pH reading 3',
-  chemInUse:   'Chemical usage tank (L)',
-  chemBackup:  'Chemical backup stock (L)',
+  chemDays:    'Chemical stock on site - days left (time to order)',
+  chemTankDays:'Chemical usage tank - days of dosing left (time to refill)',
+  chemInUse:   'Chemical usage tank, litres - only until there is enough history',
+  chemBackup:  'Chemical backup stock, litres - only until there is enough history',
   boilerChem:  'Boiler chemical (L)',
   saturator:   'Saturator pressure (kPa)',
   flow:        'Flow rate (m3/h)'
@@ -1820,7 +1868,7 @@ function stockBadge(item, status, reason) {
   if (item && item.topUp === 'litres') return 'REFILL';
   // For the delivered chemicals, no backup left is the more serious problem,
   // so that is the action named.
-  if (/no backup stock/.test(reason)) return 'REORDER';
+  if (/no backup stock|backup very low/.test(reason)) return 'REORDER';
   if (/usage tank/.test(reason)) return 'REFILL';
   if (status === STATUS.FAULT) return 'REORDER';
   if (status === STATUS.WATCH) return 'LOW';
@@ -3083,6 +3131,8 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
         let reason = '';
         const extra = [];
         let sum = null;
+        // Set for a chemical judged on days left: REORDER, ORDER SOON or REFILL.
+        let stockAction = null;
 
         if (item.type === 'status') {
           status = manual || STATUS.BLANK;
@@ -3126,11 +3176,6 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
           const onHand = stockOnHand(item, v);
           const hasAny = onHand !== null;
 
-          const levelStatus = !hasAny ? STATUS.BLANK
-            : item.hasBackup
-              ? gradeChemical(v, thresholds)
-              : gradeNumber(v.inUse, item.threshold, thresholds);
-
           const usage = stockUsage(item, v, gapDays);
 
           // Average across the window, over one record per morning.
@@ -3149,7 +3194,26 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
                 ? hoursLeft / stats.hoursPerDay
                 : daysLeftFromAverage(onHand, stats.avgPerDay));
 
-          // Levels alone decide the status. Usage and days left are information.
+          /* The four delivered chemicals are judged on how long they will last
+             once that is known; until then, and always for the boiler tanks,
+             on their litre levels. "Known" means at least two days of usage
+             behind it - the same bar the stock sum sets before it will quote an
+             average. One day alone is too jumpy to judge on, and the colour
+             must not claim more than the sum underneath it does. */
+          const rateKnown = stats.daysCovered >= 2;
+          const byDays = hasAny && item.hasBackup && item.topUp === 'ibc' && rateKnown
+            ? chemicalByDays({
+              inUse, backup, onHand, daysLeft: left,
+              perDosingDay: stats.avgPerHour ? stats.avgPerHour * 24 : null
+            }, thresholds)
+            : null;
+          if (byDays) stockAction = byDays.action;
+          const levelStatus = !hasAny ? STATUS.BLANK
+            : byDays ? byDays.status
+              : item.hasBackup
+                ? gradeChemical(v, thresholds)
+                : gradeNumber(v.inUse, item.threshold, thresholds);
+
           status = manual || levelStatus;
           display = hasAny
             ? (item.hasBackup
@@ -3164,7 +3228,9 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
 
           const bits = [];
           if (hasAny) {
-            if (item.hasBackup) {
+            if (byDays) {
+              bits.push(...byDays.reasons);
+            } else if (item.hasBackup) {
               const lvl = chemicalReason(v, thresholds);
               if (lvl) bits.push(lvl);
             } else {
@@ -3189,7 +3255,10 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
             daysCovered: stats.daysCovered, hoursCovered: stats.hoursCovered,
             hoursLeft, daysLeft: left,
             unconfirmed: !!(usage && usage.unconfirmed),
-            status
+            status,
+            // How urgent the days-left figure itself is, apart from the usage
+            // tank, so the stock table colours "15 days" by the 15 days.
+            daysStatus: byDays ? byDays.daysStatus : null
           });
 
         } else if (item.type === 'date') {
@@ -3215,7 +3284,7 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
         const photos = (v.photos || []).filter(id => state.photos && state.photos[id]);
         const optBadge = item.type === 'choice' ? optionBadge(item, v.choice) : null;
         const badge = item.type === 'stock'
-          ? stockBadge(item, status, reason)
+          ? (stockAction && !manual && needsAction(status) ? stockAction : stockBadge(item, status, reason))
           : (optBadge || STATUS_META[status].short);
         result.items[item.id] = {
           status, badge, display, reason, extra, sum,
@@ -3366,25 +3435,47 @@ function buildStockSum(item, v, usage, left, state, stats, dosingHours, hoursLef
   return { rows, total, footer };
 }
 
+/* The one line at the top of the report.
+
+   The numbers in it have to add up. It used to count only the faults but then
+   name and count everything else as well - "5 faults: A, B, C, plus 3 more" -
+   which reads as eight problems when there were six. Now the total comes
+   first, its make-up second, and the names plus "and N more" equal the total. */
 function buildVerdict(result) {
   const all = [].concat(...Object.values(result.actions));
-  const faults = all.filter(a => a.status === STATUS.FAULT);
-  const others = all.filter(a => a.status !== STATUS.FAULT);
+  /* Checks left blank are not things to act on, but the NOT DONE box under
+     this line counts them, so they are named here too - otherwise "1 not done"
+     sits directly above a box saying 2. */
+  const blank = (result.counts && result.counts.blank) || 0;
+  const leftBlank = blank ? ` ${plural(blank, 'check')} ${blank === 1 ? 'was' : 'were'} left blank.` : '';
   if (!all.length) {
-    return { tone: 'ok', text: 'All checks clear - nothing needs action today.' };
+    return {
+      tone: 'ok',
+      text: blank ? `Nothing needs action today.${leftBlank}` : 'All checks clear - nothing needs action today.'
+    };
   }
-  // Name the most serious few, keeping their proper labels.
-  const headline = faults.length ? faults : others;
-  const named = headline.slice(0, 3).map(a => a.label);
-  const faultCount = faults.length;
+  const n = (s) => all.filter(a => a.status === s).length;
+  const faults = n(STATUS.FAULT), watch = n(STATUS.WATCH), todo = n(STATUS.TODO);
 
-  let text = faultCount
-    ? `${plural(faultCount, 'fault')} to deal with`
-    : `${plural(all.length, 'item')} to watch`;
-  if (named.length) text += `: ${named.join(', ')}`;
-  const remaining = all.length - named.length;
-  if (remaining > 0) text += `, plus ${remaining} more needing attention`;
-  return { tone: faultCount ? 'fault' : 'watch', text: text + '.' };
+  const kinds = [];
+  if (faults) kinds.push(plural(faults, 'fault'));
+  if (watch) kinds.push(`${watch} to monitor`);
+  if (todo) kinds.push(`${todo} not done`);
+
+  // Actions are sorted worst first, so the few named are the most serious.
+  const named = all.slice(0, 3).map(a => a.label);
+  const more = all.length - named.length;
+  const names = more > 0 ? `${named.join(', ')} and ${more} more` : listOf(named);
+
+  let text;
+  if (kinds.length === 1) {
+    text = faults ? `${plural(faults, 'fault')} to deal with`
+      : watch ? `${plural(watch, 'item')} to monitor`
+        : `${plural(todo, 'check')} not done`;
+  } else {
+    text = `${all.length} things need attention (${listOf(kinds)})`;
+  }
+  return { tone: faults ? 'fault' : 'watch', text: `${text}: ${names}.${leftBlank}` };
 }
 
 function numberReason(item, n, thresholdKey, thresholds, status) {
@@ -3443,21 +3534,98 @@ function listOf(arr) {
   return arr.slice(0, -1).join(', ') + ' and ' + arr[arr.length - 1];
 }
 
+/* Why a chemical is flagged on its litre levels - the rule used until there is
+   enough history to know how fast it goes (see chemicalByDays).
+
+   "Empty" and "no backup" are only ever said of nothing at all. Anything at or
+   under the fault level used to be called "usage tank empty", so a tank with
+   200 L in it told the managers it was empty. */
 function chemicalReason(v, thresholds) {
   const bits = [];
   const inUse = num(v.inUse), backup = num(v.backup);
   // Backup first: with nothing in reserve, refilling is not an option.
   if (backup !== null) {
     const tb = thresholds.chemBackup;
-    if (backup <= tb.crit) bits.push('no backup stock');
+    if (backup <= 0) bits.push('no backup stock');
+    else if (backup <= tb.crit) bits.push(`backup very low (${fmtQty(backup)} L)`);
     else if (tb.warn > tb.crit && backup <= tb.warn) bits.push(`backup low (${fmtQty(backup)} L)`);
   }
   if (inUse !== null) {
     const ti = thresholds.chemInUse;
-    if (inUse <= ti.crit) bits.push('usage tank empty');
+    if (inUse <= EMPTY_TANK) bits.push('usage tank empty');
+    else if (inUse <= ti.crit) bits.push(`usage tank very low (${fmtQty(inUse)} L)`);
     else if (inUse <= ti.warn) bits.push(`usage tank low (${fmtQty(inUse)} L)`);
   }
   return bits.join(', ');
+}
+
+/* Judges a delivered chemical on how long it will last, not on litres.
+
+   One set of litre levels treated all four chemicals alike, but they go at
+   very different rates: in the recorded figures 400 L of flocculant lasted
+   about 13 days while 600 L of caustic lasted about 2. How long the stock
+   lasts is what decides when to order or refill, so that is what the colour
+   follows. Two questions, each with its own trigger levels in Settings:
+
+     - the stock on site (usage tank + backup): is it time to order?
+     - the usage tank on its own, at the rate it empties while dosing: is it
+       time to refill it from the backup? Judged at the dosing rate rather
+       than the calendar average, so a quiet weekend in the average cannot hide
+       a tank that will run dry tomorrow.
+
+   An empty usage tank is always a fault. Returns null while the app does not
+   yet know how fast the chemical goes; the caller then falls back to litres.
+   Only the colour and its explanation are decided here - every figure comes
+   from the existing usage and days-left working, unchanged. */
+function chemicalByDays(s, thresholds) {
+  if (s.daysLeft === null || s.daysLeft === undefined || !isFinite(s.daysLeft)) return null;
+  const td = thresholds.chemDays;
+  const tt = thresholds.chemTankDays;
+  const reasons = [];
+
+  // Stock on site: when to order.
+  let daysStatus = STATUS.OK;
+  if (s.daysLeft <= td.crit) daysStatus = STATUS.FAULT;
+  else if (s.daysLeft <= td.warn) daysStatus = STATUS.WATCH;
+  if (daysStatus !== STATUS.OK) {
+    const onSite = `${fmtQty(s.onHand)} L on site`;
+    if (s.onHand <= 0) reasons.push('none left on site');
+    else if (s.daysLeft < 1) reasons.push(`less than a day of stock left (${onSite})`);
+    else if (daysStatus === STATUS.FAULT) reasons.push(`only ${fmtDays(s.daysLeft)} of stock left (${onSite})`);
+    else reasons.push(`about ${fmtDays(s.daysLeft)} of stock left (${onSite})`);
+  }
+
+  // The usage tank: when to refill. Only asked when there is backup to refill
+  // from - with none, the tank is the whole stock and the question above has
+  // already said everything.
+  let tankStatus = STATUS.OK;
+  if (s.backup !== null && s.backup > 0 && s.inUse !== null) {
+    if (s.inUse <= EMPTY_TANK) {
+      tankStatus = STATUS.FAULT;
+      reasons.push('usage tank empty');
+    } else {
+      const tankDays = s.perDosingDay
+        ? s.inUse / s.perDosingDay
+        : (s.onHand > 0 ? s.daysLeft * s.inUse / s.onHand : 0);
+      if (tankDays <= tt.crit) tankStatus = STATUS.FAULT;
+      else if (tankDays <= tt.warn) tankStatus = STATUS.WATCH;
+      if (tankStatus !== STATUS.OK) {
+        reasons.push(`usage tank down to ${fmtQty(s.inUse)} L, `
+          + (tankDays < 1 ? 'less than a day' : `about ${fmtDays(tankDays)}`) + ' of dosing');
+      }
+    }
+  }
+
+  const status = worstOf([daysStatus, tankStatus]);
+  // When both ask for something, running out on site is the bigger problem,
+  // so ordering is the action named.
+  let action = null;
+  if (needsAction(daysStatus) && SEVERITY_ORDER.indexOf(daysStatus) >= SEVERITY_ORDER.indexOf(tankStatus)) {
+    action = daysStatus === STATUS.FAULT ? 'REORDER' : 'ORDER SOON';
+  } else if (needsAction(tankStatus)) {
+    action = 'REFILL';
+  }
+  return { status, daysStatus, reasons, action };
 }
 
 /* ------------------------------------------------------------------
@@ -3580,6 +3748,33 @@ function buildPdf(state, evaluated, previous) {
     doc.y += boxH + 12;
   });
 
+  /* ---- 4a. notes, on the first page ----
+     They used to come last, after every checklist row - on a normal day alone
+     on a page of their own at the very end - so the one part written specially
+     for the managers was the part most likely to be missed. The operator's own
+     line breaks are kept: wrapText alone would run them into one paragraph. */
+  const noteText = String(state.generalNote || '').trim();
+  if (noteText) {
+    const leading = 12.5;
+    const paras = noteText.split(/\n+/).map(p => p.trim()).filter(Boolean)
+      .map(p => wrapText(p, 9, false, W - 30));
+    const bodyH = paras.reduce((h, lines) => h + lines.length * leading, 0) + (paras.length - 1) * 3;
+    const boxH = 27 + bodyH + 8;
+    doc.ensure(boxH + 10);
+    doc.roundRect(L, doc.y, W, boxH, 7, { fill: [250, 251, 252], stroke: BRAND.hairline, lineWidth: 0.8 });
+    doc.roundRect(L, doc.y, 3.6, boxH, 1.8, { fill: BRAND.green });
+    doc.text('NOTES', L + 15, doc.y + 17, { size: 8.6, bold: true, colour: BRAND.green, tracking: 0.7 });
+    let ny = doc.y + 31;
+    paras.forEach(lines => {
+      lines.forEach(line => {
+        doc.text(line, L + 15, ny, { size: 9, colour: BRAND.ink });
+        ny += leading;
+      });
+      ny += 3;
+    });
+    doc.y += boxH + 12;
+  }
+
   /* ---- 4b. DAF water, told in the order it happens ---- */
   if (evaluated.meterMissing) {
     /* Nothing can be worked out from one reading, so the block says which one
@@ -3660,12 +3855,16 @@ function buildPdf(state, evaluated, previous) {
       lines.push(['Water that got chemical',
         `${fmtQty(dosed, 0)} m\u00B3${evaluated.waterNow.exact ? '' : '  (estimated)'}`, true]);
     }
-    // Only worth printing when something was actually dosed. "Speed while
-    // dosing" sitting under "dosing for 0.0 hrs" invites the question of which
-    // of the two is wrong, when neither is.
+    // Only worth printing when something was actually dosed. "Average flow
+    // while dosing" sitting under "dosing for 0.0 hrs" invites the question of
+    // which of the two is wrong, when neither is.
+    /* "Average flow", not "speed": it is the water the meter recorded divided
+       by the hours, over the days the dosing ran right through. Called "water
+       speed" it sat in the same report as the Flow rate check - the figure the
+       flow is set to - and read as a second opinion on the same number. */
     if (evaluated.flowRate && evaluated.dosingHours > 0) {
-      lines.push(['Water speed while dosing',
-        `${fmtQty(evaluated.flowRate, 1)} m\u00B3 per hour`, false]);
+      lines.push(['Average flow while dosing',
+        `${fmtQty(evaluated.flowRate, 1)} m\u00B3/h`, false]);
     }
 
     /* The closing sentence has to make sense of whatever the figures say,
@@ -3688,7 +3887,7 @@ function buildPdf(state, evaluated, previous) {
         + `1 m\u00B3 of that ${fmtQty(dosed, 0)} m\u00B3.`;
       if (!evaluated.waterNow.exact) {
         note += ' The meter was not noted when the dosing was switched, so this'
-          + ' volume is the dosing hours times the speed above';
+          + ' volume is the dosing hours times the average flow above';
         note += evaluated.flowDays
           ? `, which is measured from ${plural(evaluated.flowDays, 'earlier day')} `
             + 'when the dosing ran right through.'
@@ -3785,10 +3984,15 @@ function buildPdf(state, evaluated, previous) {
           leftTxt += ` (${fmtQty(s.waterLeft, 0)} m\u00B3)`;
         }
       }
-      const strong = s.status === STATUS.FAULT || s.status === STATUS.WATCH;
+      /* The days figure is coloured by how urgent the days are, not by the
+         row's overall status. A usage tank needing a refill made "15 days" of
+         stock print in red, which read as an emergency that was not there.
+         The bar at the left of the row still carries the overall status. */
+      const daysTone = s.daysStatus || s.status;
+      const strong = daysTone === STATUS.FAULT || daysTone === STATUS.WATCH;
       doc.text(leftTxt, cols.days, mid, {
         size: 9.2, bold: strong, align: 'right',
-        colour: strong ? STATUS_META[s.status].colour : BRAND.ink
+        colour: strong ? STATUS_META[daysTone].colour : BRAND.ink
       });
       doc.y += rowH;
     });
@@ -3810,16 +4014,28 @@ function buildPdf(state, evaluated, previous) {
     section.groups.forEach(group => {
       const heading = `${group.number}  ${group.title}` + (group.note ? `  (${group.note})` : '');
       const compactItems = group.items.filter(i => i.compact && evaluated.items[i.id].sum);
-      const normalItems = group.items.filter(i => !compactItems.includes(i));
+      const rest = group.items.filter(i => !compactItems.includes(i));
+      // Plain OK checks go two to a line at the end of the group (drawOkGrid);
+      // anything with something to say keeps a full row of its own.
+      const okItems = rest.filter(i => squashable(i, evaluated.items[i.id]));
+      const normalItems = rest.filter(i => !okItems.includes(i));
+      const allOk = group.items.every(i => evaluated.items[i.id].status === STATUS.OK);
 
       // A heading must never sit alone at the foot of a page, so the space for
       // the heading plus whatever follows it first is reserved together.
       const firstBlock = compactItems.length
         ? 16 + compactItems.length * 18
-        : (normalItems.length ? itemHeight(doc, normalItems[0], evaluated.items[normalItems[0].id]) : 0);
+        : normalItems.length ? itemHeight(doc, normalItems[0], evaluated.items[normalItems[0].id])
+          : okItems.length ? OK_GRID_ROW + 2 : 0;
       doc.ensure(18 + 4 + firstBlock);
 
       doc.text(heading, L, doc.y + 9, { size: 9, bold: true, colour: BRAND.green });
+      // A whole group in order says so on its heading, so it can be passed over
+      // at a glance.
+      if (allOk) {
+        doc.text(`ALL ${group.items.length} OK`, R, doc.y + 9,
+          { size: 7.2, bold: true, colour: BRAND.ok, align: 'right', tracking: 0.5 });
+      }
       doc.y += 13;
       doc.hline(L, R, doc.y, BRAND.green, 0.8);
       doc.rect(L, doc.y - 0.4, 24, 1.6, { fill: BRAND.gold });
@@ -3877,19 +4093,13 @@ function buildPdf(state, evaluated, previous) {
           doc.y += h + 2;
         }
       });
+      if (okItems.length) drawOkGrid(doc, okItems, evaluated, heading, L, W);
       doc.hline(L, R, doc.y, BRAND.hairline);
       doc.y += 14;
     });
   });
 
-  /* ---- 7. notes ---- */
-  if (state.generalNote && state.generalNote.trim()) {
-    doc.ensure(50);
-    doc.text('NOTES', L, doc.y + 10, { size: 9, bold: true, colour: BRAND.navy });
-    doc.y += 16;
-    const h = doc.paragraph(state.generalNote.trim(), L, doc.y, W, { size: 8.8, colour: BRAND.ink });
-    doc.y += h + 10;
-  }
+  /* ---- 7. (the notes are on the first page, section 4a) ---- */
 
   /* ---- 8. photo appendix ---- */
   if (photoOrder.length) {
@@ -3936,6 +4146,71 @@ function buildPdf(state, evaluated, previous) {
 
   const footer = `${state.site || DEFAULT_SITE} \u00B7 ${reportNumber(state)} \u00B7 ${prettyDate(state.date)}`;
   return doc.build(footer);
+}
+
+/* ---- the OK checks of a group, two to a line ----
+
+   Six rows of "Drier 1 ... OK" told the managers six times what one line can,
+   and a normal day ran to four pages, most of it rows that were fine. A check
+   that has something to say - a problem, a note, a photo, a stock sum, or one
+   left blank - still gets its full row. The rest are listed here, by name and
+   with their reading where they have one, so every check is still accounted
+   for. */
+const OK_GRID_ROW = 15;
+
+function squashable(item, ev) {
+  return ev.status === STATUS.OK && item.type !== 'stock'
+    && !ev.sum && !ev.note && !(ev.photos && ev.photos.length) && !ev.showReason;
+}
+
+// The reading worth printing beside a name: not "OK" again, and not a value
+// that only repeats the name ("Within target - Within target").
+function okValue(item, ev) {
+  if (item.type === 'status' || ev.hideDisplay) return '';
+  const d = String(ev.display == null ? '' : ev.display);
+  const same = (a, b) => a.trim().toLowerCase() === b.trim().toLowerCase();
+  if (!d || d === '-' || same(d, STATUS_META[ev.status].label) || same(d, item.label)) return '';
+  return d;
+}
+
+// Shortens text to fit, ending in "..." - never lets a cell run into the next.
+function fitText(str, size, bold, maxW) {
+  if (measure(str, size, bold) <= maxW) return str;
+  let s = str;
+  while (s.length > 1 && measure(`${s}...`, size, bold) > maxW) s = s.slice(0, -1);
+  return `${s.trimEnd()}...`;
+}
+
+function drawOkGrid(doc, items, evaluated, heading, L, W) {
+  const gap = 14;
+  const colW = (W - gap) / 2;
+  const size = 8.4;
+  for (let i = 0; i < items.length; i += 2) {
+    if (doc.ensure(OK_GRID_ROW + 2)) {
+      doc.text(`${heading} (continued)`, L, doc.y + 9,
+        { size: 8.4, bold: true, colour: BRAND.slate });
+      doc.y += 16;
+    }
+    [items[i], items[i + 1]].forEach((item, c) => {
+      if (!item) return;
+      const ev = evaluated.items[item.id];
+      const x = L + c * (colW + gap);
+      const base = doc.y + 10.6;
+      doc.icon('tick', x + 8, doc.y + OK_GRID_ROW / 2, 7, BRAND.ok);
+
+      // The reading is right-aligned in its column, so the two columns read
+      // as a tidy table; the name gets whatever room the reading leaves.
+      const right = x + colW - 4;
+      const value = okValue(item, ev);
+      const valueW = value ? Math.min(measure(value, size, false), colW * 0.55) : 0;
+      const shown = value ? fitText(value, size, false, valueW) : '';
+      const labelMax = colW - 22 - (value ? valueW + 10 : 0);
+      doc.text(fitText(item.label, size, false, labelMax), x + 18, base, { size, colour: BRAND.ink });
+      if (shown) doc.text(shown, right, base, { size, colour: BRAND.value, align: 'right' });
+    });
+    doc.y += OK_GRID_ROW;
+  }
+  doc.y += 3;
 }
 
 /* How tall a detail row will be once its sum, reason and note are included.
@@ -4051,70 +4326,6 @@ function drawStockSum(doc, sum, L, R, W) {
   });
 
   doc.y += boxH + 4;
-}
-
-/* ------------------------------------------------------------------
-   WhatsApp messages
-   ------------------------------------------------------------------ */
-
-function buildWhatsApp(state, evaluated) {
-  return CHECKLIST.map((section, sectionIndex) => {
-    const lines = [];
-    const actions = evaluated.actions[section.id];
-
-    if (sectionIndex === 0) {
-      lines.push(`*DAILY OPS REPORT* \u2014 ${prettyDate(state.date)}`);
-      lines.push(`_${reportNumber(state)} \u00B7 ${state.reporter || DEFAULT_REPORTER}_`);
-      lines.push('');
-      lines.push(`_${evaluated.verdict.text}_`);
-      lines.push('');
-    }
-    lines.push(`*\u2501\u2501\u2501 ${section.owner.toUpperCase()} \u2501\u2501\u2501*`);
-    if (sectionIndex !== 0) lines.push(`_${prettyDate(state.date)}_`);
-    lines.push('');
-
-    if (actions.length) {
-      const hasFault = actions.some(a => a.status === STATUS.FAULT);
-      lines.push(`${hasFault ? '\u274C' : '\u26A0\uFE0F'} *ACTION REQUIRED*`);
-      actions.forEach(a => {
-        let s = `\u2022 ${a.label}`;
-        if (a.reason) s += ` \u2014 *${a.reason}*`;
-        if (a.note) s += ` (${a.note})`;
-        lines.push(s);
-      });
-    } else {
-      lines.push('\u2705 *All checks clear*');
-    }
-    lines.push('');
-
-    section.groups.forEach(group => {
-      lines.push(`*${group.number} ${group.title}*${group.note ? ` _(${group.note})_` : ''}`);
-      group.items.forEach(item => {
-        const ev = evaluated.items[item.id];
-        let line = `\u2022 ${item.label}`;
-        if (item.type !== 'status' && ev.display && ev.display !== '-') {
-          line += ` \u2014 ${ev.display}`;
-        }
-        line += ` ${STATUS_META[ev.status].wa}`;
-        if (ev.photos.length) line += ' \uD83D\uDCF7';
-        lines.push(line);
-        if (ev.sum) {
-          lines.push(`   _${ev.sum.total.label}: ${ev.sum.total.value}_`);
-        }
-        if (ev.note) lines.push(`   _${ev.note}_`);
-      });
-      lines.push('');
-    });
-
-    if (sectionIndex === CHECKLIST.length - 1 && state.generalNote && state.generalNote.trim()) {
-      lines.push('*Notes*');
-      lines.push(state.generalNote.trim());
-      lines.push('');
-    }
-
-    lines.push('_\u2705 OK \u00B7 \u26A0\uFE0F Monitor \u00B7 \u274C Fault \u00B7 \u2B1C Not done_');
-    return { owner: section.owner, text: lines.join('\n').replace(/\n{3,}/g, '\n\n') };
-  });
 }
 
 /* ===== app.js ===== */
@@ -5192,38 +5403,6 @@ async function findPreviousReport() {
   return candidates[0] || null;
 }
 
-/* ---------------- WhatsApp sheet ---------------- */
-
-function showWhatsApp() {
-  const ev = refresh();
-  const messages = buildWhatsApp(state, ev);
-  el('#waBody').innerHTML = messages.map((m, i) => `
-    <div class="wa-block">
-      <h3>Message ${i + 1} &rarr; ${esc(m.owner)}</h3>
-      <div class="wa-text" id="waText${i}">${esc(m.text)}</div>
-      <button type="button" class="btn btn-ghost" data-copy="${i}">Copy message</button>
-    </div>`).join('');
-
-  el('#waBody').querySelectorAll('[data-copy]').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const text = messages[Number(btn.dataset.copy)].text;
-      try {
-        await navigator.clipboard.writeText(text);
-        toast('Copied - paste into WhatsApp');
-      } catch {
-        const ta = document.createElement('textarea');
-        ta.value = text;
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        ta.remove();
-        toast('Copied');
-      }
-    });
-  });
-  openSheet('#waSheet');
-}
-
 /* ---------------- settings ---------------- */
 
 const KEY_LABELS = {
@@ -5744,7 +5923,7 @@ function renderFlowDetail(ev) {
   if (!days.length) {
     box.innerHTML = counts
       + '<p class="muted small">No day yet has the dosing running right through '
-      + 'between two meter readings, so there is no measured speed. Until there '
+      + 'between two meter readings, so there is no measured average flow. Until there '
       + 'is, dosed water can only be worked out when the meter was noted at the '
       + 'switch.</p>';
     return;
@@ -5813,9 +5992,80 @@ function renderDosingAudit() {
 
 const BACKUP_VERSION = 1;
 
+/* When this device last saved a backup, so it can say when one is due.
+
+   Kept in a record of its own rather than in the draft: the draft is replaced
+   every morning and whenever a saved report is loaded, and either would lose
+   the date. */
+const BACKUP_INFO_KEY = '__backup-info';
+// After this many days the main screen starts asking for a backup.
+const BACKUP_REMIND_DAYS = 7;
+let lastBackupAt = null;
+
 /* Records that must not travel. The draft is whatever that device happens to
-   have half-finished, and the seed markers have to be judged locally. */
-const BACKUP_SKIP = new Set([DRAFT_ID, SEED_MARKER]);
+   have half-finished, and the seed markers have to be judged locally - as does
+   the backup date, which belongs to the device that made the backup. */
+const BACKUP_SKIP = new Set([DRAFT_ID, SEED_MARKER, BACKUP_INFO_KEY]);
+
+async function loadBackupInfo() {
+  try {
+    const rec = await store.get(BACKUP_INFO_KEY);
+    lastBackupAt = rec && Number(rec.lastBackupAt) > 0 ? Number(rec.lastBackupAt) : null;
+  } catch (err) {
+    console.error('could not read the backup date', err);
+    lastBackupAt = null;
+  }
+}
+
+async function noteBackupMade() {
+  lastBackupAt = Date.now();
+  try {
+    await store.put({ id: BACKUP_INFO_KEY, lastBackupAt });
+  } catch (err) {
+    console.error('could not record the backup date', err);
+  }
+  renderBackupStatus();
+}
+
+/* "today", "yesterday", "12 days ago" - by calendar day, as a person counts.
+   Local dates on purpose: toISOString() is UTC, which on a Melbourne morning
+   is still yesterday. */
+function daysSinceBackup() {
+  if (!lastBackupAt) return null;
+  const iso = isoOf(lastBackupAt);
+  return iso >= todayISO() ? 0 : (daysBetween(iso, todayISO()) || 0);
+}
+
+function renderBackupStatus() {
+  const days = daysSinceBackup();
+  const ago = days === null ? '' : days === 0 ? 'today' : days === 1 ? 'yesterday' : `${days} days ago`;
+
+  const status = el('#backupStatus');
+  if (status) {
+    status.textContent = days === null
+      ? 'No backup has been saved on this phone yet.'
+      : `Last backup: ${prettyDate(isoOf(lastBackupAt))} (${ago}).`;
+    setClass(status, 'overdue', days === null || days >= BACKUP_REMIND_DAYS);
+  }
+
+  const nag = el('#backupNag');
+  if (nag) {
+    const due = days === null || days >= BACKUP_REMIND_DAYS;
+    nag.hidden = !due;
+    const text = el('#backupNagText');
+    if (text && due) {
+      text.textContent = days === null
+        ? 'No backup saved yet. Your reports are only on this phone.'
+        : `Last backup was ${ago}. Your reports are only on this phone.`;
+    }
+  }
+}
+
+// The local calendar date of a moment, as YYYY-MM-DD.
+function isoOf(ms) {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 async function buildBackup() {
   const all = await store.all();
@@ -5847,9 +6097,12 @@ async function exportBackup() {
     const blob = new Blob([text], { type: 'application/json' });
     const file = new File([blob], name, { type: 'application/json' });
 
+    // Counted as made once the file is handed over; backing out of the share
+    // sheet is not a backup, so the reminder stays.
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       try {
         await navigator.share({ files: [file], title: name });
+        await noteBackupMade();
         toast('Backup shared');
         return;
       } catch (err) {
@@ -5864,6 +6117,7 @@ async function exportBackup() {
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 4000);
+    await noteBackupMade();
     toast(`Backup saved - ${payload.records.length} records`);
   } catch (err) {
     console.error('could not build the backup', err);
@@ -5968,6 +6222,7 @@ async function importBackup(text) {
 
 function bindBackup() {
   el('#btnBackupExport').addEventListener('click', exportBackup);
+  el('#btnBackupNag').addEventListener('click', exportBackup);
   el('#btnBackupImport').addEventListener('click', () => el('#backupInput').click());
   el('#backupInput').addEventListener('change', async (e) => {
     const file = (e.target.files || [])[0];
@@ -6121,7 +6376,7 @@ function bindShell() {
         `${prettyDate(RECORDED_FROM)} to ${prettyDate(RECORDED_TO)} hold the `
         + 'readings recorded on paper.\n\n'
         + 'Saving a report for this date replaces them, which changes the '
-        + 'measured water speed and the dose figures.\n\n'
+        + 'measured average flow and the dose figures.\n\n'
         + 'Use today\'s date for a test report. Carry on anyway?'
       );
       if (!ok) {
@@ -6201,8 +6456,8 @@ function bindShell() {
   el('#fGeneralNote').addEventListener('input', e => { state.generalNote = e.target.value; queueSave(); });
 
   el('#btnPdf').addEventListener('click', generatePdf);
-  el('#btnWhatsApp').addEventListener('click', showWhatsApp);
   el('#btnSettings').addEventListener('click', () => {
+    renderBackupStatus();
     renderHistory();
     renderFlowDetail(refresh());
     renderDosingAudit();
@@ -6210,6 +6465,9 @@ function bindShell() {
   });
   el('#btnNewReport').addEventListener('click', startNewReport);
   el('#btnResetThresholds').addEventListener('click', () => {
+    // One tap used to wipe every level typed by hand, with no way back.
+    if (!confirm('Put every trigger level back to the original numbers?\n\n'
+      + 'Any level you have changed will be lost.')) return;
     state.thresholds = deepCopy(DEFAULT_THRESHOLDS);
     // Back to shipped numbers, so a later build may update them again.
     state.thEdited = false;
@@ -6367,6 +6625,7 @@ async function boot() {
   } catch (err) {
     console.error('could not load the previous report', err);
   }
+  await loadBackupInfo();
 
   /* Drawing the screen comes last, and any one failure here used to leave
      nothing on screen at all - a blank page with no hint of what went wrong,
@@ -6385,6 +6644,7 @@ async function boot() {
     ['wire the meter list', bindMeterLog],
     ['show the meter list', renderMeterLog],
     ['wire the backup buttons', bindBackup],
+    ['show when the last backup was', renderBackupStatus],
     ['draw the checklist', render],
     ['show the trigger levels', renderThresholds],
     ['size the top bar', syncTopbarHeight]

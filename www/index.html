@@ -26,6 +26,14 @@
 </header>
 
 <main>
+  <!-- ---------- backup reminder ----------
+       Shown by renderBackupStatus() only when a backup is overdue. Everything
+       lives on this one phone, so this is the nudge that keeps a copy of it. -->
+  <div class="backup-nag" id="backupNag" hidden>
+    <span id="backupNagText">&nbsp;</span>
+    <button type="button" class="btn btn-primary" id="btnBackupNag">Save a backup</button>
+  </div>
+
   <!-- ---------- report details ---------- -->
   <section class="card">
     <div class="card-head">
@@ -173,11 +181,13 @@
 
 <!-- ---------- sticky action bar ---------- -->
 <nav class="actionbar">
-  <button id="btnWhatsApp" class="btn btn-ghost">WhatsApp text</button>
   <button id="btnPdf" class="btn btn-primary">Save &amp; make PDF</button>
 </nav>
 
-<!-- ---------- settings sheet ---------- -->
+<!-- ---------- settings sheet ----------
+     In order of how often each part is needed: the backup first, because it is
+     the one thing that should be done regularly; then the one-off setup; the
+     working-out and repair panels last, folded away under Advanced. -->
 <div id="settingsSheet" class="sheet" hidden>
   <div class="sheet-inner">
     <div class="sheet-head">
@@ -185,25 +195,70 @@
       <button class="icon-btn" data-close-sheet>&times;</button>
     </div>
 
-    <h2>New report</h2>
+    <h2>Backup</h2>
+    <p class="backup-status" id="backupStatus">&nbsp;</p>
     <p class="muted small">
-      Clears everything on screen so you can start again. Your name, site and
-      trigger levels are kept, and reports you have already saved are not touched.
+      Everything is kept on this phone only. If it is lost or reset, your reports
+      go with it &mdash; so save a backup now and again, somewhere off the phone
+      such as your email or Google Drive. Photos are not included.
     </p>
-    <button id="btnNewReport" class="btn btn-ghost full">&#10227; Start a new report</button>
+    <div class="sheet-foot">
+      <button id="btnBackupExport" class="btn btn-primary">Save a backup</button>
+      <button id="btnBackupImport" class="btn btn-ghost">Load a backup</button>
+    </div>
+    <p class="muted small">
+      <strong>Using two devices?</strong> Load the other one&rsquo;s backup here to
+      bring them together. Readings and dosing times from both are combined; where
+      the same morning exists on both, the one saved later is kept.
+    </p>
+    <input type="file" id="backupInput" accept=".json,application/json" hidden>
+
+    <hr>
+    <h2>App version</h2>
+    <p class="muted small">
+      Running version <strong class="js-build-id">dev</strong>. If you have just
+      uploaded an update and this number has not changed, tap below &mdash; the
+      phone can hold on to the old copy otherwise.
+    </p>
+    <button id="btnCheckUpdate" class="btn btn-ghost full">&#10227; Check for an update</button>
+
+    <hr>
+    <h2>Your name</h2>
+    <p class="muted small">Shown on every report as the person who did the checks.</p>
+    <input type="text" id="fReporter" autocomplete="name" placeholder="Your name">
+
+    <h2 class="sub">Company name</h2>
+    <input type="text" id="fSite" placeholder="Shown in the PDF header">
+
+    <h2 class="sub">Report number prefix</h2>
+    <p class="muted small">Used for the reference on each report, e.g. ATP-DOR-2026-09-28.</p>
+    <input type="text" id="fPrefix" placeholder="ATP-DOR">
+
+    <h2 class="sub">Company logo</h2>
+    <p class="muted small">Appears at the top of every PDF. Pick it once and it is remembered.</p>
+    <div class="logo-row">
+      <div class="logo-preview" id="logoPreview"><span class="muted small">No logo</span></div>
+      <div class="logo-actions">
+        <button type="button" id="btnLogoPick" class="tool-btn">Choose image</button>
+        <button type="button" id="btnLogoClear" class="tool-btn">Remove</button>
+      </div>
+    </div>
+    <input type="file" accept="image/*" id="logoInput" hidden>
 
     <hr>
     <h2>Trigger levels</h2>
     <p class="muted small">
-      Set the numbers that decide when an item is flagged. Anything at or past the
-      <strong>Fault</strong> figure is reported as a fault; anything at or past
-      <strong>Monitor</strong> is reported as needing a watch.
+      The numbers that decide when a check is flagged. At or past
+      <strong>Fault</strong> it is reported as a fault; at or past
+      <strong>Monitor</strong>, as needing a watch. The four chemicals are judged
+      on how many days they will last. Their litre levels are only used until the
+      app has enough history to know how fast each one goes.
     </p>
     <div id="thresholdForm"></div>
     <div class="sheet-foot">
       <button id="btnResetThresholds" class="btn btn-ghost">Reset to defaults</button>
-      <button class="btn btn-primary" data-close-sheet>Done</button>
     </div>
+
     <hr>
     <h2>Average usage</h2>
     <p class="muted small">
@@ -217,39 +272,28 @@
     </label>
 
     <hr>
-    <h2>Backup &amp; moving between devices</h2>
-    <p class="muted small">
-      Each device keeps its own copy &mdash; your phone and your PC do not talk to
-      each other. Save a backup file here and load it on the other device to bring
-      them together. Readings and dosing times from both are combined; where the
-      same morning exists on both, the one saved later is kept. Photos are not
-      included.
-    </p>
-    <p class="muted small">
-      <strong>This is also your only backup.</strong> Save one now and again &mdash;
-      if the phone is lost or cleared, everything goes with it.
-    </p>
-    <div class="sheet-foot">
-      <button id="btnBackupExport" class="btn btn-ghost">Save a backup</button>
-      <button id="btnBackupImport" class="btn btn-ghost">Load a backup</button>
-    </div>
-    <input type="file" id="backupInput" accept=".json,application/json" hidden>
+    <h2>Saved reports</h2>
+    <div id="historyList" class="history"></div>
 
     <hr>
-    <h2>App version</h2>
+    <h2>New report</h2>
     <p class="muted small">
-      Running version <span class="js-build-id">dev</span>. If the version here does not
-      match what you uploaded, tap below &mdash; the phone can hold on to the old
-      copy otherwise.
+      Clears everything on screen so you can start again. Your name, site and
+      trigger levels are kept, and reports you have already saved are not touched.
     </p>
-    <button id="btnCheckUpdate" class="btn btn-ghost full">&#10227; Check for an update</button>
+    <button id="btnNewReport" class="btn btn-ghost full">&#10227; Start a new report</button>
 
     <hr>
-    <h2>Where the water speed comes from</h2>
+    <details class="advanced">
+      <summary>Advanced</summary>
+      <p class="muted small">How the figures are worked out, and repairs. Not needed day to day.</p>
+
+      <h2>Where the average flow comes from</h2>
     <p class="muted small">
-      The speed is averaged over past days where the dosing ran right through
-      the whole period between two meter readings. Only those days can be
-      measured exactly, so only those are used.
+      The water the meter recorded, divided by the hours, over past days when
+      the dosing ran right through from one meter reading to the next. Only
+      those days can be measured exactly, so only those are used. Your Flow
+      rate check is not part of this - it is reported as you type it.
     </p>
     <div id="flowDetail"></div>
 
@@ -257,7 +301,7 @@
     <h2>Every dosing entry</h2>
     <p class="muted small">
       The full list, newest first. An extra entry in the middle of a day stops
-      that day counting towards the speed above. Remove any wrong ones from the
+      that day counting towards the average flow above. Remove any wrong ones from the
       Chemical dosing card on the main screen.
     </p>
     <div id="dosingAudit"></div>
@@ -266,69 +310,16 @@
       seven times recorded on paper.
     </p>
 
-    <hr>
-    <h2>Recorded readings and reports</h2>
+      <h2>Recorded readings and reports</h2>
     <p class="muted small">
       Puts back everything written down before the app existed &mdash; the meter
       readings <em>and</em> the reports for 11 Sep to 2 Oct 2026. Use this if the
-      water speed looks wrong, or if the panel above says
+      average flow looks wrong, or if the panel above says
       <strong>meter reading missing</strong> for any of those days. Anything
       saved for those dates is replaced; other dates are untouched.
     </p>
     <button id="btnMeterRestore" class="btn btn-ghost full">&#10227; Put back the recorded readings and reports</button>
-
-    <hr>
-    <h2>Saved reports</h2>
-    <div id="historyList" class="history"></div>
-    <hr>
-    <h2>Your name</h2>
-    <p class="muted small">
-      Shown on every report as the person who did the checks. It is always the
-      same, so it lives here rather than taking up room on the morning sheet.
-    </p>
-    <input type="text" id="fReporter" autocomplete="name" placeholder="Your name">
-
-    <hr>
-    <h2>Company name</h2>
-    <input type="text" id="fSite" placeholder="Shown in the PDF header">
-
-    <hr>
-    <h2>Report number prefix</h2>
-    <p class="muted small">Used for the reference on each report, e.g. ATP-DOR-2026-09-28.</p>
-    <input type="text" id="fPrefix" placeholder="ATP-DOR">
-
-    <hr>
-    <h2>Company logo</h2>
-    <p class="muted small">Appears at the top of every PDF. Pick it once and it is remembered.</p>
-    <div class="logo-row">
-      <div class="logo-preview" id="logoPreview"><span class="muted small">No logo</span></div>
-      <div class="logo-actions">
-        <button type="button" id="btnLogoPick" class="tool-btn">Choose image</button>
-        <button type="button" id="btnLogoClear" class="tool-btn">Remove</button>
-      </div>
-    </div>
-    <input type="file" accept="image/*" id="logoInput" hidden>
-
-    <hr>
-    <h2>About</h2>
-    <p class="muted small">
-      Version <strong class="js-build-id">dev</strong><br>
-      If you have just uploaded an update and this number has not changed, use
-      <strong>Check for an update</strong> above.
-    </p>
-  </div>
-</div>
-
-<!-- ---------- whatsapp sheet ---------- -->
-<div id="waSheet" class="sheet" hidden>
-  <div class="sheet-inner">
-    <div class="sheet-head">
-      <h2>WhatsApp messages</h2>
-      <button class="icon-btn" data-close-sheet>&times;</button>
-    </div>
-    <p class="muted small">Send these as two separate messages so neither gets cut off by
-      &ldquo;Read more&rdquo;.</p>
-    <div id="waBody"></div>
+    </details>
   </div>
 </div>
 

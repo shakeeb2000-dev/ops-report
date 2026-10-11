@@ -170,23 +170,14 @@ async function main() {
       (app.document.querySelector('[data-th="flow"][data-thkey="critHigh"]') || {}).value === '21',
       String((app.document.querySelector('[data-th="flow"][data-thkey="critHigh"]') || {}).value));
 
-    // The buttons
-    const wa = app.document.querySelector('#btnWhatsApp');
+    // The buttons. The WhatsApp text option was taken out at the operator's
+    // request - the PDF is what goes to the managers.
     const pdf = app.document.querySelector('#btnPdf');
-    check('WhatsApp button exists', !!wa);
     check('PDF button exists', !!pdf);
+    check('there is no WhatsApp text button any more',
+      !app.document.querySelector('#btnWhatsApp') && !app.document.querySelector('#waSheet'));
 
     let threw = null;
-    try { wa.dispatch('click'); } catch (e) { threw = e; }
-    await sleep(30);
-    check('WhatsApp button runs without throwing', !threw, threw && threw.message);
-    const waBody = app.document.querySelector('#waBody');
-    check('WhatsApp sheet got filled', waBody && waBody.innerHTML.length > 200,
-      waBody ? String(waBody.innerHTML.length) : 'missing');
-    check('WhatsApp sheet actually opened',
-      app.document.querySelector('#waSheet').hidden === false);
-
-    threw = null;
     try { pdf.dispatch('click'); } catch (e) { threw = e; }
     await sleep(300);
     check('PDF button runs without throwing', !threw, threw && threw.message);
@@ -927,7 +918,9 @@ async function main() {
        had not landed. */
     const shown = Array.from(pc.document.querySelectorAll('.js-build-id'))
       .map(n => n.textContent);
-    check('the version appears in more than one place', shown.length >= 3,
+    // Two now: the duplicate "About" section in Settings was merged into
+    // "App version" when Settings was tidied.
+    check('the version appears in more than one place', shown.length >= 2,
       String(shown.length));
     check('and every one of them is filled in',
       shown.length > 0 && shown.every(t => t && t !== 'dev'),

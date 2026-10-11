@@ -109,8 +109,7 @@ const result = vm.runInContext(`
   (() => {
     const ev = evaluate(__state, __previous);
     const bytes = buildPdf(__state, ev, __previous);
-    const wa = buildWhatsApp(__state, ev);
-    return { bytes, counts: ev.counts, actions: ev.actions, wa,
+    return { bytes, counts: ev.counts, actions: ev.actions,
              usage: {
                caustic: ev.items.caustic.sum,
                coagulant: ev.items.coagulant.sum,
@@ -139,6 +138,3 @@ Object.entries(result.actions).forEach(([k, v]) => {
   v.forEach(a => console.log(`   - [${a.status}] ${a.label}: ${a.reason}`));
 });
 
-const waPath = outPath.replace(/\.pdf$/, '') + '-whatsapp.txt';
-fs.writeFileSync(waPath, result.wa.map(m => `=== ${m.owner} ===\n${m.text}`).join('\n\n\n'));
-console.log(`\nWhatsApp text written: ${waPath}`);

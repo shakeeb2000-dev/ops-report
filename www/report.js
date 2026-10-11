@@ -253,6 +253,8 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
         let reason = '';
         const extra = [];
         let sum = null;
+        // Set for a chemical judged on days left: REORDER, ORDER SOON or REFILL.
+        let stockAction = null;
 
         if (item.type === 'status') {
           status = manual || STATUS.BLANK;
@@ -296,11 +298,6 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
           const onHand = stockOnHand(item, v);
           const hasAny = onHand !== null;
 
-          const levelStatus = !hasAny ? STATUS.BLANK
-            : item.hasBackup
-              ? gradeChemical(v, thresholds)
-              : gradeNumber(v.inUse, item.threshold, thresholds);
-
           const usage = stockUsage(item, v, gapDays);
 
           // Average across the window, over one record per morning.
@@ -319,7 +316,26 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
                 ? hoursLeft / stats.hoursPerDay
                 : daysLeftFromAverage(onHand, stats.avgPerDay));
 
-          // Levels alone decide the status. Usage and days left are information.
+          /* The four delivered chemicals are judged on how long they will last
+             once that is known; until then, and always for the boiler tanks,
+             on their litre levels. "Known" means at least two days of usage
+             behind it - the same bar the stock sum sets before it will quote an
+             average. One day alone is too jumpy to judge on, and the colour
+             must not claim more than the sum underneath it does. */
+          const rateKnown = stats.daysCovered >= 2;
+          const byDays = hasAny && item.hasBackup && item.topUp === 'ibc' && rateKnown
+            ? chemicalByDays({
+              inUse, backup, onHand, daysLeft: left,
+              perDosingDay: stats.avgPerHour ? stats.avgPerHour * 24 : null
+            }, thresholds)
+            : null;
+          if (byDays) stockAction = byDays.action;
+          const levelStatus = !hasAny ? STATUS.BLANK
+            : byDays ? byDays.status
+              : item.hasBackup
+                ? gradeChemical(v, thresholds)
+                : gradeNumber(v.inUse, item.threshold, thresholds);
+
           status = manual || levelStatus;
           display = hasAny
             ? (item.hasBackup
@@ -334,7 +350,9 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
 
           const bits = [];
           if (hasAny) {
-            if (item.hasBackup) {
+            if (byDays) {
+              bits.push(...byDays.reasons);
+            } else if (item.hasBackup) {
               const lvl = chemicalReason(v, thresholds);
               if (lvl) bits.push(lvl);
             } else {
@@ -359,7 +377,10 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
             daysCovered: stats.daysCovered, hoursCovered: stats.hoursCovered,
             hoursLeft, daysLeft: left,
             unconfirmed: !!(usage && usage.unconfirmed),
-            status
+            status,
+            // How urgent the days-left figure itself is, apart from the usage
+            // tank, so the stock table colours "15 days" by the 15 days.
+            daysStatus: byDays ? byDays.daysStatus : null
           });
 
         } else if (item.type === 'date') {
@@ -385,7 +406,7 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
         const photos = (v.photos || []).filter(id => state.photos && state.photos[id]);
         const optBadge = item.type === 'choice' ? optionBadge(item, v.choice) : null;
         const badge = item.type === 'stock'
-          ? stockBadge(item, status, reason)
+          ? (stockAction && !manual && needsAction(status) ? stockAction : stockBadge(item, status, reason))
           : (optBadge || STATUS_META[status].short);
         result.items[item.id] = {
           status, badge, display, reason, extra, sum,
@@ -536,25 +557,47 @@ function buildStockSum(item, v, usage, left, state, stats, dosingHours, hoursLef
   return { rows, total, footer };
 }
 
+/* The one line at the top of the report.
+
+   The numbers in it have to add up. It used to count only the faults but then
+   name and count everything else as well - "5 faults: A, B, C, plus 3 more" -
+   which reads as eight problems when there were six. Now the total comes
+   first, its make-up second, and the names plus "and N more" equal the total. */
 function buildVerdict(result) {
   const all = [].concat(...Object.values(result.actions));
-  const faults = all.filter(a => a.status === STATUS.FAULT);
-  const others = all.filter(a => a.status !== STATUS.FAULT);
+  /* Checks left blank are not things to act on, but the NOT DONE box under
+     this line counts them, so they are named here too - otherwise "1 not done"
+     sits directly above a box saying 2. */
+  const blank = (result.counts && result.counts.blank) || 0;
+  const leftBlank = blank ? ` ${plural(blank, 'check')} ${blank === 1 ? 'was' : 'were'} left blank.` : '';
   if (!all.length) {
-    return { tone: 'ok', text: 'All checks clear - nothing needs action today.' };
+    return {
+      tone: 'ok',
+      text: blank ? `Nothing needs action today.${leftBlank}` : 'All checks clear - nothing needs action today.'
+    };
   }
-  // Name the most serious few, keeping their proper labels.
-  const headline = faults.length ? faults : others;
-  const named = headline.slice(0, 3).map(a => a.label);
-  const faultCount = faults.length;
+  const n = (s) => all.filter(a => a.status === s).length;
+  const faults = n(STATUS.FAULT), watch = n(STATUS.WATCH), todo = n(STATUS.TODO);
 
-  let text = faultCount
-    ? `${plural(faultCount, 'fault')} to deal with`
-    : `${plural(all.length, 'item')} to watch`;
-  if (named.length) text += `: ${named.join(', ')}`;
-  const remaining = all.length - named.length;
-  if (remaining > 0) text += `, plus ${remaining} more needing attention`;
-  return { tone: faultCount ? 'fault' : 'watch', text: text + '.' };
+  const kinds = [];
+  if (faults) kinds.push(plural(faults, 'fault'));
+  if (watch) kinds.push(`${watch} to monitor`);
+  if (todo) kinds.push(`${todo} not done`);
+
+  // Actions are sorted worst first, so the few named are the most serious.
+  const named = all.slice(0, 3).map(a => a.label);
+  const more = all.length - named.length;
+  const names = more > 0 ? `${named.join(', ')} and ${more} more` : listOf(named);
+
+  let text;
+  if (kinds.length === 1) {
+    text = faults ? `${plural(faults, 'fault')} to deal with`
+      : watch ? `${plural(watch, 'item')} to monitor`
+        : `${plural(todo, 'check')} not done`;
+  } else {
+    text = `${all.length} things need attention (${listOf(kinds)})`;
+  }
+  return { tone: faults ? 'fault' : 'watch', text: `${text}: ${names}.${leftBlank}` };
 }
 
 function numberReason(item, n, thresholdKey, thresholds, status) {
@@ -613,21 +656,98 @@ function listOf(arr) {
   return arr.slice(0, -1).join(', ') + ' and ' + arr[arr.length - 1];
 }
 
+/* Why a chemical is flagged on its litre levels - the rule used until there is
+   enough history to know how fast it goes (see chemicalByDays).
+
+   "Empty" and "no backup" are only ever said of nothing at all. Anything at or
+   under the fault level used to be called "usage tank empty", so a tank with
+   200 L in it told the managers it was empty. */
 function chemicalReason(v, thresholds) {
   const bits = [];
   const inUse = num(v.inUse), backup = num(v.backup);
   // Backup first: with nothing in reserve, refilling is not an option.
   if (backup !== null) {
     const tb = thresholds.chemBackup;
-    if (backup <= tb.crit) bits.push('no backup stock');
+    if (backup <= 0) bits.push('no backup stock');
+    else if (backup <= tb.crit) bits.push(`backup very low (${fmtQty(backup)} L)`);
     else if (tb.warn > tb.crit && backup <= tb.warn) bits.push(`backup low (${fmtQty(backup)} L)`);
   }
   if (inUse !== null) {
     const ti = thresholds.chemInUse;
-    if (inUse <= ti.crit) bits.push('usage tank empty');
+    if (inUse <= EMPTY_TANK) bits.push('usage tank empty');
+    else if (inUse <= ti.crit) bits.push(`usage tank very low (${fmtQty(inUse)} L)`);
     else if (inUse <= ti.warn) bits.push(`usage tank low (${fmtQty(inUse)} L)`);
   }
   return bits.join(', ');
+}
+
+/* Judges a delivered chemical on how long it will last, not on litres.
+
+   One set of litre levels treated all four chemicals alike, but they go at
+   very different rates: in the recorded figures 400 L of flocculant lasted
+   about 13 days while 600 L of caustic lasted about 2. How long the stock
+   lasts is what decides when to order or refill, so that is what the colour
+   follows. Two questions, each with its own trigger levels in Settings:
+
+     - the stock on site (usage tank + backup): is it time to order?
+     - the usage tank on its own, at the rate it empties while dosing: is it
+       time to refill it from the backup? Judged at the dosing rate rather
+       than the calendar average, so a quiet weekend in the average cannot hide
+       a tank that will run dry tomorrow.
+
+   An empty usage tank is always a fault. Returns null while the app does not
+   yet know how fast the chemical goes; the caller then falls back to litres.
+   Only the colour and its explanation are decided here - every figure comes
+   from the existing usage and days-left working, unchanged. */
+function chemicalByDays(s, thresholds) {
+  if (s.daysLeft === null || s.daysLeft === undefined || !isFinite(s.daysLeft)) return null;
+  const td = thresholds.chemDays;
+  const tt = thresholds.chemTankDays;
+  const reasons = [];
+
+  // Stock on site: when to order.
+  let daysStatus = STATUS.OK;
+  if (s.daysLeft <= td.crit) daysStatus = STATUS.FAULT;
+  else if (s.daysLeft <= td.warn) daysStatus = STATUS.WATCH;
+  if (daysStatus !== STATUS.OK) {
+    const onSite = `${fmtQty(s.onHand)} L on site`;
+    if (s.onHand <= 0) reasons.push('none left on site');
+    else if (s.daysLeft < 1) reasons.push(`less than a day of stock left (${onSite})`);
+    else if (daysStatus === STATUS.FAULT) reasons.push(`only ${fmtDays(s.daysLeft)} of stock left (${onSite})`);
+    else reasons.push(`about ${fmtDays(s.daysLeft)} of stock left (${onSite})`);
+  }
+
+  // The usage tank: when to refill. Only asked when there is backup to refill
+  // from - with none, the tank is the whole stock and the question above has
+  // already said everything.
+  let tankStatus = STATUS.OK;
+  if (s.backup !== null && s.backup > 0 && s.inUse !== null) {
+    if (s.inUse <= EMPTY_TANK) {
+      tankStatus = STATUS.FAULT;
+      reasons.push('usage tank empty');
+    } else {
+      const tankDays = s.perDosingDay
+        ? s.inUse / s.perDosingDay
+        : (s.onHand > 0 ? s.daysLeft * s.inUse / s.onHand : 0);
+      if (tankDays <= tt.crit) tankStatus = STATUS.FAULT;
+      else if (tankDays <= tt.warn) tankStatus = STATUS.WATCH;
+      if (tankStatus !== STATUS.OK) {
+        reasons.push(`usage tank down to ${fmtQty(s.inUse)} L, `
+          + (tankDays < 1 ? 'less than a day' : `about ${fmtDays(tankDays)}`) + ' of dosing');
+      }
+    }
+  }
+
+  const status = worstOf([daysStatus, tankStatus]);
+  // When both ask for something, running out on site is the bigger problem,
+  // so ordering is the action named.
+  let action = null;
+  if (needsAction(daysStatus) && SEVERITY_ORDER.indexOf(daysStatus) >= SEVERITY_ORDER.indexOf(tankStatus)) {
+    action = daysStatus === STATUS.FAULT ? 'REORDER' : 'ORDER SOON';
+  } else if (needsAction(tankStatus)) {
+    action = 'REFILL';
+  }
+  return { status, daysStatus, reasons, action };
 }
 
 /* ------------------------------------------------------------------
@@ -750,6 +870,33 @@ function buildPdf(state, evaluated, previous) {
     doc.y += boxH + 12;
   });
 
+  /* ---- 4a. notes, on the first page ----
+     They used to come last, after every checklist row - on a normal day alone
+     on a page of their own at the very end - so the one part written specially
+     for the managers was the part most likely to be missed. The operator's own
+     line breaks are kept: wrapText alone would run them into one paragraph. */
+  const noteText = String(state.generalNote || '').trim();
+  if (noteText) {
+    const leading = 12.5;
+    const paras = noteText.split(/\n+/).map(p => p.trim()).filter(Boolean)
+      .map(p => wrapText(p, 9, false, W - 30));
+    const bodyH = paras.reduce((h, lines) => h + lines.length * leading, 0) + (paras.length - 1) * 3;
+    const boxH = 27 + bodyH + 8;
+    doc.ensure(boxH + 10);
+    doc.roundRect(L, doc.y, W, boxH, 7, { fill: [250, 251, 252], stroke: BRAND.hairline, lineWidth: 0.8 });
+    doc.roundRect(L, doc.y, 3.6, boxH, 1.8, { fill: BRAND.green });
+    doc.text('NOTES', L + 15, doc.y + 17, { size: 8.6, bold: true, colour: BRAND.green, tracking: 0.7 });
+    let ny = doc.y + 31;
+    paras.forEach(lines => {
+      lines.forEach(line => {
+        doc.text(line, L + 15, ny, { size: 9, colour: BRAND.ink });
+        ny += leading;
+      });
+      ny += 3;
+    });
+    doc.y += boxH + 12;
+  }
+
   /* ---- 4b. DAF water, told in the order it happens ---- */
   if (evaluated.meterMissing) {
     /* Nothing can be worked out from one reading, so the block says which one
@@ -830,12 +977,16 @@ function buildPdf(state, evaluated, previous) {
       lines.push(['Water that got chemical',
         `${fmtQty(dosed, 0)} m\u00B3${evaluated.waterNow.exact ? '' : '  (estimated)'}`, true]);
     }
-    // Only worth printing when something was actually dosed. "Speed while
-    // dosing" sitting under "dosing for 0.0 hrs" invites the question of which
-    // of the two is wrong, when neither is.
+    // Only worth printing when something was actually dosed. "Average flow
+    // while dosing" sitting under "dosing for 0.0 hrs" invites the question of
+    // which of the two is wrong, when neither is.
+    /* "Average flow", not "speed": it is the water the meter recorded divided
+       by the hours, over the days the dosing ran right through. Called "water
+       speed" it sat in the same report as the Flow rate check - the figure the
+       flow is set to - and read as a second opinion on the same number. */
     if (evaluated.flowRate && evaluated.dosingHours > 0) {
-      lines.push(['Water speed while dosing',
-        `${fmtQty(evaluated.flowRate, 1)} m\u00B3 per hour`, false]);
+      lines.push(['Average flow while dosing',
+        `${fmtQty(evaluated.flowRate, 1)} m\u00B3/h`, false]);
     }
 
     /* The closing sentence has to make sense of whatever the figures say,
@@ -858,7 +1009,7 @@ function buildPdf(state, evaluated, previous) {
         + `1 m\u00B3 of that ${fmtQty(dosed, 0)} m\u00B3.`;
       if (!evaluated.waterNow.exact) {
         note += ' The meter was not noted when the dosing was switched, so this'
-          + ' volume is the dosing hours times the speed above';
+          + ' volume is the dosing hours times the average flow above';
         note += evaluated.flowDays
           ? `, which is measured from ${plural(evaluated.flowDays, 'earlier day')} `
             + 'when the dosing ran right through.'
@@ -955,10 +1106,15 @@ function buildPdf(state, evaluated, previous) {
           leftTxt += ` (${fmtQty(s.waterLeft, 0)} m\u00B3)`;
         }
       }
-      const strong = s.status === STATUS.FAULT || s.status === STATUS.WATCH;
+      /* The days figure is coloured by how urgent the days are, not by the
+         row's overall status. A usage tank needing a refill made "15 days" of
+         stock print in red, which read as an emergency that was not there.
+         The bar at the left of the row still carries the overall status. */
+      const daysTone = s.daysStatus || s.status;
+      const strong = daysTone === STATUS.FAULT || daysTone === STATUS.WATCH;
       doc.text(leftTxt, cols.days, mid, {
         size: 9.2, bold: strong, align: 'right',
-        colour: strong ? STATUS_META[s.status].colour : BRAND.ink
+        colour: strong ? STATUS_META[daysTone].colour : BRAND.ink
       });
       doc.y += rowH;
     });
@@ -980,16 +1136,28 @@ function buildPdf(state, evaluated, previous) {
     section.groups.forEach(group => {
       const heading = `${group.number}  ${group.title}` + (group.note ? `  (${group.note})` : '');
       const compactItems = group.items.filter(i => i.compact && evaluated.items[i.id].sum);
-      const normalItems = group.items.filter(i => !compactItems.includes(i));
+      const rest = group.items.filter(i => !compactItems.includes(i));
+      // Plain OK checks go two to a line at the end of the group (drawOkGrid);
+      // anything with something to say keeps a full row of its own.
+      const okItems = rest.filter(i => squashable(i, evaluated.items[i.id]));
+      const normalItems = rest.filter(i => !okItems.includes(i));
+      const allOk = group.items.every(i => evaluated.items[i.id].status === STATUS.OK);
 
       // A heading must never sit alone at the foot of a page, so the space for
       // the heading plus whatever follows it first is reserved together.
       const firstBlock = compactItems.length
         ? 16 + compactItems.length * 18
-        : (normalItems.length ? itemHeight(doc, normalItems[0], evaluated.items[normalItems[0].id]) : 0);
+        : normalItems.length ? itemHeight(doc, normalItems[0], evaluated.items[normalItems[0].id])
+          : okItems.length ? OK_GRID_ROW + 2 : 0;
       doc.ensure(18 + 4 + firstBlock);
 
       doc.text(heading, L, doc.y + 9, { size: 9, bold: true, colour: BRAND.green });
+      // A whole group in order says so on its heading, so it can be passed over
+      // at a glance.
+      if (allOk) {
+        doc.text(`ALL ${group.items.length} OK`, R, doc.y + 9,
+          { size: 7.2, bold: true, colour: BRAND.ok, align: 'right', tracking: 0.5 });
+      }
       doc.y += 13;
       doc.hline(L, R, doc.y, BRAND.green, 0.8);
       doc.rect(L, doc.y - 0.4, 24, 1.6, { fill: BRAND.gold });
@@ -1047,19 +1215,13 @@ function buildPdf(state, evaluated, previous) {
           doc.y += h + 2;
         }
       });
+      if (okItems.length) drawOkGrid(doc, okItems, evaluated, heading, L, W);
       doc.hline(L, R, doc.y, BRAND.hairline);
       doc.y += 14;
     });
   });
 
-  /* ---- 7. notes ---- */
-  if (state.generalNote && state.generalNote.trim()) {
-    doc.ensure(50);
-    doc.text('NOTES', L, doc.y + 10, { size: 9, bold: true, colour: BRAND.navy });
-    doc.y += 16;
-    const h = doc.paragraph(state.generalNote.trim(), L, doc.y, W, { size: 8.8, colour: BRAND.ink });
-    doc.y += h + 10;
-  }
+  /* ---- 7. (the notes are on the first page, section 4a) ---- */
 
   /* ---- 8. photo appendix ---- */
   if (photoOrder.length) {
@@ -1106,6 +1268,71 @@ function buildPdf(state, evaluated, previous) {
 
   const footer = `${state.site || DEFAULT_SITE} \u00B7 ${reportNumber(state)} \u00B7 ${prettyDate(state.date)}`;
   return doc.build(footer);
+}
+
+/* ---- the OK checks of a group, two to a line ----
+
+   Six rows of "Drier 1 ... OK" told the managers six times what one line can,
+   and a normal day ran to four pages, most of it rows that were fine. A check
+   that has something to say - a problem, a note, a photo, a stock sum, or one
+   left blank - still gets its full row. The rest are listed here, by name and
+   with their reading where they have one, so every check is still accounted
+   for. */
+const OK_GRID_ROW = 15;
+
+function squashable(item, ev) {
+  return ev.status === STATUS.OK && item.type !== 'stock'
+    && !ev.sum && !ev.note && !(ev.photos && ev.photos.length) && !ev.showReason;
+}
+
+// The reading worth printing beside a name: not "OK" again, and not a value
+// that only repeats the name ("Within target - Within target").
+function okValue(item, ev) {
+  if (item.type === 'status' || ev.hideDisplay) return '';
+  const d = String(ev.display == null ? '' : ev.display);
+  const same = (a, b) => a.trim().toLowerCase() === b.trim().toLowerCase();
+  if (!d || d === '-' || same(d, STATUS_META[ev.status].label) || same(d, item.label)) return '';
+  return d;
+}
+
+// Shortens text to fit, ending in "..." - never lets a cell run into the next.
+function fitText(str, size, bold, maxW) {
+  if (measure(str, size, bold) <= maxW) return str;
+  let s = str;
+  while (s.length > 1 && measure(`${s}...`, size, bold) > maxW) s = s.slice(0, -1);
+  return `${s.trimEnd()}...`;
+}
+
+function drawOkGrid(doc, items, evaluated, heading, L, W) {
+  const gap = 14;
+  const colW = (W - gap) / 2;
+  const size = 8.4;
+  for (let i = 0; i < items.length; i += 2) {
+    if (doc.ensure(OK_GRID_ROW + 2)) {
+      doc.text(`${heading} (continued)`, L, doc.y + 9,
+        { size: 8.4, bold: true, colour: BRAND.slate });
+      doc.y += 16;
+    }
+    [items[i], items[i + 1]].forEach((item, c) => {
+      if (!item) return;
+      const ev = evaluated.items[item.id];
+      const x = L + c * (colW + gap);
+      const base = doc.y + 10.6;
+      doc.icon('tick', x + 8, doc.y + OK_GRID_ROW / 2, 7, BRAND.ok);
+
+      // The reading is right-aligned in its column, so the two columns read
+      // as a tidy table; the name gets whatever room the reading leaves.
+      const right = x + colW - 4;
+      const value = okValue(item, ev);
+      const valueW = value ? Math.min(measure(value, size, false), colW * 0.55) : 0;
+      const shown = value ? fitText(value, size, false, valueW) : '';
+      const labelMax = colW - 22 - (value ? valueW + 10 : 0);
+      doc.text(fitText(item.label, size, false, labelMax), x + 18, base, { size, colour: BRAND.ink });
+      if (shown) doc.text(shown, right, base, { size, colour: BRAND.value, align: 'right' });
+    });
+    doc.y += OK_GRID_ROW;
+  }
+  doc.y += 3;
 }
 
 /* How tall a detail row will be once its sum, reason and note are included.
@@ -1221,68 +1448,4 @@ function drawStockSum(doc, sum, L, R, W) {
   });
 
   doc.y += boxH + 4;
-}
-
-/* ------------------------------------------------------------------
-   WhatsApp messages
-   ------------------------------------------------------------------ */
-
-function buildWhatsApp(state, evaluated) {
-  return CHECKLIST.map((section, sectionIndex) => {
-    const lines = [];
-    const actions = evaluated.actions[section.id];
-
-    if (sectionIndex === 0) {
-      lines.push(`*DAILY OPS REPORT* \u2014 ${prettyDate(state.date)}`);
-      lines.push(`_${reportNumber(state)} \u00B7 ${state.reporter || DEFAULT_REPORTER}_`);
-      lines.push('');
-      lines.push(`_${evaluated.verdict.text}_`);
-      lines.push('');
-    }
-    lines.push(`*\u2501\u2501\u2501 ${section.owner.toUpperCase()} \u2501\u2501\u2501*`);
-    if (sectionIndex !== 0) lines.push(`_${prettyDate(state.date)}_`);
-    lines.push('');
-
-    if (actions.length) {
-      const hasFault = actions.some(a => a.status === STATUS.FAULT);
-      lines.push(`${hasFault ? '\u274C' : '\u26A0\uFE0F'} *ACTION REQUIRED*`);
-      actions.forEach(a => {
-        let s = `\u2022 ${a.label}`;
-        if (a.reason) s += ` \u2014 *${a.reason}*`;
-        if (a.note) s += ` (${a.note})`;
-        lines.push(s);
-      });
-    } else {
-      lines.push('\u2705 *All checks clear*');
-    }
-    lines.push('');
-
-    section.groups.forEach(group => {
-      lines.push(`*${group.number} ${group.title}*${group.note ? ` _(${group.note})_` : ''}`);
-      group.items.forEach(item => {
-        const ev = evaluated.items[item.id];
-        let line = `\u2022 ${item.label}`;
-        if (item.type !== 'status' && ev.display && ev.display !== '-') {
-          line += ` \u2014 ${ev.display}`;
-        }
-        line += ` ${STATUS_META[ev.status].wa}`;
-        if (ev.photos.length) line += ' \uD83D\uDCF7';
-        lines.push(line);
-        if (ev.sum) {
-          lines.push(`   _${ev.sum.total.label}: ${ev.sum.total.value}_`);
-        }
-        if (ev.note) lines.push(`   _${ev.note}_`);
-      });
-      lines.push('');
-    });
-
-    if (sectionIndex === CHECKLIST.length - 1 && state.generalNote && state.generalNote.trim()) {
-      lines.push('*Notes*');
-      lines.push(state.generalNote.trim());
-      lines.push('');
-    }
-
-    lines.push('_\u2705 OK \u00B7 \u26A0\uFE0F Monitor \u00B7 \u274C Fault \u00B7 \u2B1C Not done_');
-    return { owner: section.owner, text: lines.join('\n').replace(/\n{3,}/g, '\n\n') };
-  });
 }
