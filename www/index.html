@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1e3a5f">
+<meta name="build-id" content="__BUILD_ID__">
+<title>Daily Ops Report</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-row">
+    <div>
+      <h1>Daily Ops Report</h1>
+      <p id="topbarDate">&nbsp;</p>
+    </div>
+    <button id="btnSettings" class="icon-btn" aria-label="Settings">&#9881;</button>
+  </div>
+  <div class="progress"><div id="progressFill" class="progress-fill"></div></div>
+  <p id="progressLabel" class="progress-label">&nbsp;</p>
+</header>
+
+<main>
+  <!-- ---------- report details ---------- -->
+  <section class="card">
+    <h2>Report details</h2>
+    <div class="field-grid">
+      <label>Date
+        <input type="date" id="fDate">
+      </label>
+      <label>Reported by
+        <input type="text" id="fReporter" autocomplete="name">
+      </label>
+    </div>
+    <div class="field-grid">
+      <label>Time you took the readings
+        <input type="time" id="fReadingTime">
+      </label>
+      <label>DAF meter this morning (m&sup3;)
+        <input type="number" inputmode="decimal" step="any" id="fMeter" placeholder="e.g. 224994.2">
+      </label>
+    </div>
+    <p class="muted small" id="prevMeterNote">&nbsp;</p>
+    <p class="muted small">This is the box to use on your morning round.</p>
+  </section>
+
+  <!-- ---------- DAF water meter log ---------- -->
+  <section class="card dosing-card" id="meterCard">
+    <h2>Past meter readings</h2>
+    <p class="muted small">
+      This is the history, not today. Today's reading goes in the box above and
+      appears here on its own. Use this list to fix a wrong reading, or to fill
+      in a day you missed.
+    </p>
+    <p class="muted small" id="meterCount">&nbsp;</p>
+    <button type="button" id="btnMeterAdd" class="btn btn-ghost full">+ Add a reading for another day</button>
+    <div class="dosing-entry" id="meterEntry" hidden>
+      <div class="field-grid">
+        <label>Date
+          <input type="date" id="meterDate">
+        </label>
+        <label>Time
+          <input type="time" id="meterTime">
+        </label>
+      </div>
+      <label>Meter reading (m&sup3;)
+        <input type="number" inputmode="decimal" step="any" id="meterValue" placeholder="e.g. 224994.2">
+      </label>
+      <p class="muted small" id="meterHint">Pick the day the reading was taken.</p>
+      <div class="sheet-foot">
+        <button type="button" id="btnMeterCancel" class="tool-btn">Cancel</button>
+        <button type="button" id="btnMeterSave" class="btn btn-primary">Save</button>
+      </div>
+    </div>
+    <div class="dosing-list" id="meterList"></div>
+  </section>
+
+  <!-- ---------- DAF running log ---------- -->
+  <section class="card dosing-card" id="dosingCard">
+    <h2>Chemical dosing</h2>
+    <div class="dosing-state">
+      <span class="dosing-dot" id="dosingDot"></span>
+      <div>
+        <div class="dosing-now" id="dosingNow">Not logged yet</div>
+        <div class="dosing-since muted" id="dosingSince">&nbsp;</div>
+      </div>
+    </div>
+    <button type="button" id="btnDosingToggle" class="btn btn-ghost full">Record DAF dosage started</button>
+    <p class="muted small">
+      Recording a switch does not start or save a report &mdash; it just adds to
+      the list, and the meter reading goes into your meter list. Carry on with
+      the same report tomorrow morning.
+    </p>
+    <div class="dosing-entry" id="dosingEntry" hidden>
+      <div class="field-grid">
+        <label>Date
+          <input type="date" id="dosingDate">
+        </label>
+        <label>Time
+          <input type="time" id="dosingTime">
+        </label>
+      </div>
+      <label>Meter reading at that moment <span class="muted">(optional)</span>
+        <input type="number" inputmode="decimal" step="any" id="dosingMeter"
+               placeholder="leave blank if you did not note it">
+      </label>
+      <p class="muted small">If you fill this in it is saved into your meter list above.</p>
+      <p class="muted small" id="dosingHint">&nbsp;</p>
+      <div class="sheet-foot">
+        <button type="button" id="btnDosingCancel" class="tool-btn">Cancel</button>
+        <button type="button" id="btnDosingSave" class="btn btn-primary">Save</button>
+      </div>
+    </div>
+    <div class="dosing-list" id="dosingList"></div>
+  </section>
+
+  <!-- ---------- live action summary ---------- -->
+  <section class="card" id="summaryCard">
+    <h2>Needs attention</h2>
+    <div id="summaryBody" class="summary-empty">Fill in the checklist below.</div>
+  </section>
+
+  <!-- ---------- checklist renders here ---------- -->
+  <div id="checklist"></div>
+
+  <section class="card">
+    <h2>Notes <span class="muted">(optional)</span></h2>
+    <textarea id="fGeneralNote" rows="3" placeholder="Anything else your managers should know"></textarea>
+  </section>
+
+  <p class="version-line">Version <span class="js-build-id">dev</span></p>
+
+  <div class="spacer"></div>
+</main>
+
+<!-- ---------- sticky action bar ---------- -->
+<nav class="actionbar">
+  <button id="btnWhatsApp" class="btn btn-ghost">WhatsApp text</button>
+  <button id="btnPdf" class="btn btn-primary">Save &amp; make PDF</button>
+</nav>
+
+<!-- ---------- settings sheet ---------- -->
+<div id="settingsSheet" class="sheet" hidden>
+  <div class="sheet-inner">
+    <div class="sheet-head">
+      <h2>Settings</h2>
+      <button class="icon-btn" data-close-sheet>&times;</button>
+    </div>
+
+    <h2>New report</h2>
+    <p class="muted small">
+      Clears everything on screen so you can start again. Your name, site and
+      trigger levels are kept, and reports you have already saved are not touched.
+    </p>
+    <button id="btnNewReport" class="btn btn-ghost full">&#10227; Start a new report</button>
+
+    <hr>
+    <h2>Trigger levels</h2>
+    <p class="muted small">
+      Set the numbers that decide when an item is flagged. Anything at or past the
+      <strong>Fault</strong> figure is reported as a fault; anything at or past
+      <strong>Monitor</strong> is reported as needing a watch.
+    </p>
+    <div id="thresholdForm"></div>
+    <div class="sheet-foot">
+      <button id="btnResetThresholds" class="btn btn-ghost">Reset to defaults</button>
+      <button class="btn btn-primary" data-close-sheet>Done</button>
+    </div>
+    <hr>
+    <h2>Average usage</h2>
+    <p class="muted small">
+      How far back to look when working out average daily use. Reports older than
+      this are ignored. Because a report can cover several days &mdash; a weekend
+      or a few days off &mdash; the average may end up covering slightly more days
+      than this number.
+    </p>
+    <label>Look back this many days
+      <input type="number" id="fAvgWindow" inputmode="numeric" step="1" min="1" placeholder="14">
+    </label>
+
+    <hr>
+    <h2>Backup &amp; moving between devices</h2>
+    <p class="muted small">
+      Each device keeps its own copy &mdash; your phone and your PC do not talk to
+      each other. Save a backup file here and load it on the other device to bring
+      them together. Readings and dosing times from both are combined; where the
+      same morning exists on both, the one saved later is kept. Photos are not
+      included.
+    </p>
+    <p class="muted small">
+      <strong>This is also your only backup.</strong> Save one now and again &mdash;
+      if the phone is lost or cleared, everything goes with it.
+    </p>
+    <div class="sheet-foot">
+      <button id="btnBackupExport" class="btn btn-ghost">Save a backup</button>
+      <button id="btnBackupImport" class="btn btn-ghost">Load a backup</button>
+    </div>
+    <input type="file" id="backupInput" accept=".json,application/json" hidden>
+
+    <hr>
+    <h2>App version</h2>
+    <p class="muted small">
+      Running version <span class="js-build-id">dev</span>. If the version here does not
+      match what you uploaded, tap below &mdash; the phone can hold on to the old
+      copy otherwise.
+    </p>
+    <button id="btnCheckUpdate" class="btn btn-ghost full">&#10227; Check for an update</button>
+
+    <hr>
+    <h2>Where the water speed comes from</h2>
+    <p class="muted small">
+      The speed is averaged over past days where the dosing ran right through
+      the whole period between two meter readings. Only those days can be
+      measured exactly, so only those are used.
+    </p>
+    <div id="flowDetail"></div>
+
+    <hr>
+    <h2>Every dosing entry</h2>
+    <p class="muted small">
+      The full list, newest first. An extra entry in the middle of a day stops
+      that day counting towards the speed above. Remove any wrong ones from the
+      Chemical dosing card on the main screen.
+    </p>
+    <div id="dosingAudit"></div>
+    <p class="muted small">
+      Deleting <strong>every</strong> entry and reopening the app brings back the
+      seven times recorded on paper.
+    </p>
+
+    <hr>
+    <h2>Recorded readings and reports</h2>
+    <p class="muted small">
+      Puts back everything written down before the app existed &mdash; the meter
+      readings <em>and</em> the reports for 11 Sep to 2 Oct 2026. Use this if the
+      water speed looks wrong, or if the panel above says
+      <strong>meter reading missing</strong> for any of those days. Anything
+      saved for those dates is replaced; other dates are untouched.
+    </p>
+    <button id="btnMeterRestore" class="btn btn-ghost full">&#10227; Put back the recorded readings and reports</button>
+
+    <hr>
+    <h2>Saved reports</h2>
+    <div id="historyList" class="history"></div>
+    <hr>
+    <h2>Company name</h2>
+    <input type="text" id="fSite" placeholder="Shown in the PDF header">
+
+    <hr>
+    <h2>Report number prefix</h2>
+    <p class="muted small">Used for the reference on each report, e.g. ATP-DOR-2026-09-28.</p>
+    <input type="text" id="fPrefix" placeholder="ATP-DOR">
+
+    <hr>
+    <h2>Company logo</h2>
+    <p class="muted small">Appears at the top of every PDF. Pick it once and it is remembered.</p>
+    <div class="logo-row">
+      <div class="logo-preview" id="logoPreview"><span class="muted small">No logo</span></div>
+      <div class="logo-actions">
+        <button type="button" id="btnLogoPick" class="tool-btn">Choose image</button>
+        <button type="button" id="btnLogoClear" class="tool-btn">Remove</button>
+      </div>
+    </div>
+    <input type="file" accept="image/*" id="logoInput" hidden>
+
+    <hr>
+    <h2>About</h2>
+    <p class="muted small">
+      Version <strong class="js-build-id">dev</strong><br>
+      If you have just uploaded an update and this number has not changed, use
+      <strong>Check for an update</strong> above.
+    </p>
+  </div>
+</div>
+
+<!-- ---------- whatsapp sheet ---------- -->
+<div id="waSheet" class="sheet" hidden>
+  <div class="sheet-inner">
+    <div class="sheet-head">
+      <h2>WhatsApp messages</h2>
+      <button class="icon-btn" data-close-sheet>&times;</button>
+    </div>
+    <p class="muted small">Send these as two separate messages so neither gets cut off by
+      &ldquo;Read more&rdquo;.</p>
+    <div id="waBody"></div>
+  </div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="config.js"></script>
+<script src="pdf.js"></script>
+<script src="report.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

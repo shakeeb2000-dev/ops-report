@@ -1,0 +1,1288 @@
+/* ------------------------------------------------------------------
+   Turns the captured form state into
+     a) a professional PDF, and
+     b) the two WhatsApp messages.
+   ------------------------------------------------------------------ */
+
+/* Taken from the ATP logo: deep forest green with a golden amber accent. */
+const BRAND = {
+  green:     [13, 105, 56],
+  greenDark: [9, 78, 42],
+  gold:      [240, 168, 30],
+  ink:       [26, 32, 44],
+  navy:      [13, 105, 56],   // headers follow the brand green
+  slate:     [104, 114, 126],
+  // Readings and values: near-black so they are easy to read at a glance.
+  value:     [32, 38, 48],
+  hairline:  [226, 230, 235],
+  zebra:     [248, 250, 249],
+  ok:        [13, 105, 56],
+  watch:     [193, 128, 6],
+  fault:     [183, 40, 40],
+  todo:      [110, 118, 129],
+  amberBg:   [255, 249, 235],
+  redBg:     [253, 243, 242],
+  okBg:      [240, 248, 243],
+  sumBg:     [243, 248, 244],
+  sumEdge:   [186, 213, 195],
+  sumInk:    [12, 74, 42],
+  chart:     [46, 133, 85],
+  chartFaint:[224, 233, 227]
+};
+
+/* Which drawn glyph goes with each status. */
+const STATUS_ICON = { ok: 'tick', watch: 'bang', fault: 'cross', todo: 'dash', blank: 'dash' };
+
+const GENERIC_REASONS = new Set(['fault reported', 'needs monitoring', 'not completed']);
+
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+function prettyDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso + 'T00:00:00');
+  if (isNaN(d.getTime())) return iso;
+  return `${DAYS[d.getDay()]} ${String(d.getDate()).padStart(2, '0')} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+function shortDate(iso) {
+  if (!iso) return '-';
+  const d = new Date(iso + 'T00:00:00');
+  if (isNaN(d.getTime())) return iso;
+  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+/* "7:30pm" from a 'YYYY-MM-DDTHH:MM' stamp. The switch times are read as
+   times of day, and a 24-hour clock is slower to take in on a printed page. */
+function clockTime(stamp) {
+  const t = String(stamp || '').split('T')[1];
+  if (!t) return '';
+  const [hRaw, m] = t.split(':');
+  const h = Number(hRaw);
+  if (!isFinite(h)) return t;
+  const suffix = h < 12 ? 'am' : 'pm';
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${m}${suffix}`;
+}
+
+/* "2 Oct". Used where a date is read as prose rather than scanned in a table,
+   because "02/10" has to be decoded and can be read the American way round. */
+function dayMonth(iso) {
+  if (!iso) return '-';
+  const d = new Date(iso + 'T00:00:00');
+  if (isNaN(d.getTime())) return iso;
+  return `${d.getDate()} ${MONTHS[d.getMonth()]}`;
+}
+
+function reportNumber(state) {
+  return `${state.reportPrefix || DEFAULT_PREFIX}-${state.date || ''}`;
+}
+
+/* "less than a day" / "1 day" / "2.8 days" / "14 days" */
+function fmtDays(n) {
+  if (n === null || n === undefined) return '';
+  if (n < 1) return 'less than a day';
+  const rounded = n < 10 ? Math.round(n * 10) / 10 : Math.round(n);
+  if (rounded === 1) return '1 day';
+  return `${Number.isInteger(rounded) ? rounded : rounded.toFixed(1)} days`;
+}
+
+function plural(n, word) {
+  return `${n} ${word}${n === 1 ? '' : 's'}`;
+}
+
+/* ------------------------------------------------------------------
+   Evaluation
+   ------------------------------------------------------------------ */
+
+function evaluate(state, previous, history, dosingEvents, meterLog) {
+  // Always work from a complete set of thresholds, so a report saved by an
+  // older version cannot bring the calculation down with a missing limit.
+  const thresholds = mergeThresholds(state.thresholds);
+  const gapDays = daysBetween(state.lastCheckDate, state.date);
+  const submitted = history || [];
+  const avgWindow = state.avgWindowDays || DEFAULT_AVG_WINDOW;
+  const daf = dosingEvents || [];
+
+  // Flow rate while dosing, measured only from exact periods. Used to fill in
+  // any stretch where the meter was not noted at the switch.
+  const log = meterLog || [];
+
+  /* This morning's reading: the newest one up to the reading time.
+
+     An exact timestamp match is too brittle. The reading is filed under the
+     time the round was done, so editing that time afterwards left the reading
+     stranded at the old moment and the report found nothing for today - which
+     printed an opening meter line with no closing one, no water total, and an
+     estimated volume over a period of an hour and a half. */
+  const nowStamp = readingStamp(state.date, state.readingTime);
+  const sameDay = meterSorted(log)
+    .filter(e => e.at <= nowStamp && String(e.at).split('T')[0] === state.date);
+  const toEntry = sameDay.length ? sameDay[sameDay.length - 1] : null;
+  const meterTo = toEntry ? num(toEntry.value) : num(state.meter);
+  const meterToAt = toEntry ? toEntry.at : (num(state.meter) !== null ? nowStamp : null);
+
+  /* The reading this report measures from.
+
+     It has to be the one taken at the last tank check, because that is the
+     period the chemical usage covers. Taking the newest earlier reading
+     instead loses water: a reading noted at 6pm when the dosing was switched
+     on would open the next report at 6pm, and the water that passed between
+     the morning check and 6pm would fall into no report at all. Readings
+     inside the period still count, as anchors that make the dosed volume
+     exact rather than estimated.
+
+     It must also genuinely come first. The last-check date and time are
+     carried over from the previous report, so editing this report's date or
+     reading time can leave that moment at or after this one - which printed
+     the two readings in reverse, water of -400 m3, and "0.0 of those
+     -11.5 hrs". When that happens the newest reading before this report's own
+     moment is used instead. */
+  let openedBy = meterOpening(log, state.lastCheckDate, state.lastReadingTime, nowStamp);
+  if (openedBy && meterToAt && openedBy.at >= meterToAt) {
+    openedBy = meterBefore(log, meterToAt);
+  }
+  const meterFrom = openedBy ? num(openedBy.value) : num(state.prevMeter);
+
+  /* One record per morning, today's being whatever is on screen.
+
+     Submitting a report archives it, so from that moment the same morning
+     exists both in storage and on screen. Counting both would weight that day
+     twice - in the averages and in the measured flow rate alike - so the saved
+     copy of today is dropped and the live one used in its place. */
+  const periods = submitted
+    .filter(r => r.date !== state.date)
+    .concat([{
+      date: state.date, lastCheckDate: state.lastCheckDate,
+      readingTime: state.readingTime, lastReadingTime: state.lastReadingTime,
+      meter: meterTo, prevMeter: meterFrom,
+      values: state.values
+    }]);
+
+  const flowRate = daf.length ? dosingFlowRate(periods, daf, log) : null;
+
+  /* The stretch the water figures describe: exactly the two readings shown.
+
+     Hours and water must come from the same two moments. They used to be
+     measured over different periods - the water from the meter readings, the
+     hours from the tank-check date - so the report could print a water figure
+     next to "dosing was on 0.0 hrs", which reads as nonsense. */
+  const spanFrom = openedBy ? openedBy.at
+    : (state.lastCheckDate ? readingStamp(state.lastCheckDate, state.lastReadingTime) : null);
+  const spanTo = meterToAt || nowStamp;
+  const spanHours = (spanFrom && toMs(spanFrom) !== null && toMs(spanTo) !== null)
+    ? Math.round(((toMs(spanTo) - toMs(spanFrom)) / 3600000) * 100) / 100
+    : null;
+  /* Both ends must be known, the period must run forwards, and the meter must
+     not have gone backwards across it. Reporting any of those anyway is what
+     produced blocks that made no sense. */
+  const spanWhole = !!(spanFrom && spanTo && meterFrom !== null && meterTo !== null
+    && spanHours !== null && spanHours > 0 && meterTo >= meterFrom);
+  /* The on/off switches inside the period, with the meter reading at each.
+
+     Without these the report shows only the two period readings, so the
+     reading the dosed volume is actually measured from never appears anywhere
+     - which makes the dosed figure look as though it came from the wrong
+     number. */
+  /* Strictly before the closing moment. A switch at the exact end of a period
+     starts or stops the dosing for the *next* one and contributes nothing
+     here, so listing it put "Dosing switched on 7:30pm" directly above
+     "0.0 hrs dosing" and read as a contradiction. */
+  const switches = spanFrom
+    ? daf
+      .filter(e => e && e.at && e.at >= spanFrom && e.at < spanTo)
+      .slice()
+      .sort((a, b) => (a.at < b.at ? -1 : 1))
+      .map(e => {
+        const logged = meterAtStamp(log, e.at);
+        return { at: e.at, on: !!e.on, meter: logged !== null ? logged : num(e.meter) };
+      })
+    : [];
+
+  const dosingHours = (daf.length && spanWhole)
+    ? dosingHoursBetween(daf, spanFrom, spanTo) : null;
+  const waterNow = (daf.length && spanWhole)
+    ? dosedWater(spanFrom, spanTo, meterFrom, meterTo, daf, flowRate, log) : null;
+
+  const result = {
+    items: {}, counts: { ok: 0, watch: 0, fault: 0, todo: 0, blank: 0 },
+    actions: {}, gapDays, dosingHours,
+    waterNow, flowRate,
+    // The two moments the water figures cover, so the report can label them.
+    spanFrom, spanTo, spanHours, switches,
+    /* Including the one at the closing moment, so the report can explain that
+       the dosing started right at the end rather than leave a bare zero. */
+    allSwitches: spanFrom
+      ? daf.filter(e => e && e.at && e.at >= spanFrom && e.at <= spanTo)
+        .map(e => ({ at: e.at, on: !!e.on }))
+      : [],
+    /* What stops the water being worked out, so the report can say so instead
+       of printing a block with holes in it - or nothing at all, which is what
+       a period that did not make sense used to produce. */
+    meterMissing: meterTo === null ? 'today'
+      : (meterFrom === null ? 'earlier' : (spanWhole ? null : 'period')),
+    /* The days the water speed is measured from, with their figures.
+
+       Carried out of here so the app can show the working. The speed is an
+       average over past days and there is no way to tell from the number alone
+       which days went into it, which makes a surprising value impossible to
+       account for without reading the stored data by hand. */
+    flowDetail: daf.length ? flowRateDays(periods, daf, log) : [],
+    flowAll: daf.length ? flowRateCandidates(periods, daf, log) : [],
+    flowDays: daf.length ? dosingFlowDays(periods, daf, log) : 0,
+    meterFrom, meterTo,
+    // When the earlier reading was actually taken. The last stock check and
+    // the last meter reading are not always the same morning, so the label has
+    // to come from the reading itself rather than from the stock date.
+    meterFromAt: openedBy ? openedBy.at : (state.prevMeterAt || null),
+    // Only a period that makes sense gets a water figure. A negative one is
+    // never a real reading of the plant, only a sign of muddled dates.
+    totalWater: spanWhole ? meterTo - meterFrom : null,
+    lastCheckDate: state.lastCheckDate || null, stock: []
+  };
+
+  CHECKLIST.forEach(section => {
+    result.actions[section.id] = [];
+    section.groups.forEach(group => {
+      group.items.forEach(item => {
+        const v = (state.values && state.values[item.id]) || {};
+        const manual = v.status && v.status !== STATUS.BLANK ? v.status : null;
+
+        let status = STATUS.BLANK;
+        let display = '-';
+        let reason = '';
+        const extra = [];
+        let sum = null;
+
+        if (item.type === 'status') {
+          status = manual || STATUS.BLANK;
+          display = STATUS_META[status].label;
+
+        } else if (item.type === 'choice') {
+          const auto = gradeChoice(item, v.choice);
+          status = manual || auto;
+          display = v.choice ? choiceLabel(item, v.choice) : (manual ? STATUS_META[status].label : '-');
+          if (v.choice && needsAction(status)) reason = choiceLabel(item, v.choice).toLowerCase();
+
+        } else if (item.type === 'number') {
+          const n = num(v.value);
+          status = manual || (n === null ? STATUS.BLANK : gradeNumber(n, item.threshold, thresholds));
+          if (n === null) {
+            display = manual ? 'No reading' : '-';
+          } else {
+            display = fmtQty(n, item.decimals) + (item.unit ? ' ' + item.unit : '');
+            reason = numberReason(item, n, item.threshold, thresholds, status);
+          }
+
+        } else if (item.type === 'multi') {
+          const readings = item.fields.map(f => num(v[f.key]));
+          const any = readings.some(r => r !== null);
+          status = manual || gradeMulti(item, v, thresholds);
+          if (!any) {
+            display = manual ? 'Not recorded' : '-';
+          } else if (item.display === 'labelled') {
+            display = item.fields
+              .map((f, i) => `${f.label} ${readings[i] === null ? '-' : fmtQty(readings[i], item.decimals)}`)
+              .join(', ');
+          } else {
+            display = readings
+              .map(r => r === null ? '-' : fmtQty(r, item.decimals)).join(' / ');
+          }
+          if (any) reason = multiReason(item, readings, thresholds, status);
+
+        } else if (item.type === 'stock') {
+          const inUse = num(v.inUse);
+          const backup = item.hasBackup ? num(v.backup) : null;
+          const onHand = stockOnHand(item, v);
+          const hasAny = onHand !== null;
+
+          const levelStatus = !hasAny ? STATUS.BLANK
+            : item.hasBackup
+              ? gradeChemical(v, thresholds)
+              : gradeNumber(v.inUse, item.threshold, thresholds);
+
+          const usage = stockUsage(item, v, gapDays);
+
+          // Average across the window, over one record per morning.
+          const stats = usageStats(item, periods,
+            avgWindow, state.date, daf, flowRate, log);
+
+          // Chemicals are judged on litres per cubic metre treated; the boiler
+          // tanks stay on calendar days.
+          const byDose = item.topUp === 'ibc' && stats.avgDose;
+          const waterLeft = byDose ? waterLeftFromDose(onHand, stats.avgDose) : null;
+          const hoursLeft = item.topUp === 'ibc' && stats.avgPerHour
+            ? hoursLeftFromAverage(onHand, stats.avgPerHour) : null;
+          const left = byDose && stats.waterPerDay
+            ? waterLeft / stats.waterPerDay
+            : (item.topUp === 'ibc' && hoursLeft !== null && stats.hoursPerDay
+                ? hoursLeft / stats.hoursPerDay
+                : daysLeftFromAverage(onHand, stats.avgPerDay));
+
+          // Levels alone decide the status. Usage and days left are information.
+          status = manual || levelStatus;
+          display = hasAny
+            ? (item.hasBackup
+                ? `${fmtQty(inUse)} ${item.unit} in use / ${fmtQty(backup)} ${item.unit} backup`
+                : `${fmtQty(inUse)} ${item.unit}`)
+            : (manual ? 'Not measured' : '-');
+
+          if (usage) {
+            sum = buildStockSum(item, v, usage, left, state, stats,
+              dosingHours, hoursLeft, waterNow, waterLeft);
+          }
+
+          const bits = [];
+          if (hasAny) {
+            if (item.hasBackup) {
+              const lvl = chemicalReason(v, thresholds);
+              if (lvl) bits.push(lvl);
+            } else {
+              const lvl = numberReason(item, inUse, item.threshold, thresholds, levelStatus);
+              if (lvl) bits.push(lvl);
+            }
+          }
+          if (usage && usage.unconfirmed) bits.push('usage not confirmed');
+          if (usage && usage.missingLitres > 0) {
+            bits.push(usage.missingIbcs > 0
+              ? `stock rose unexpectedly - at least ${plural(usage.missingIbcs, 'IBC')} not recorded`
+              : `stock rose unexpectedly - ${fmtQty(usage.missingLitres)} ${item.unit} not accounted for`);
+          }
+          reason = bits.join(', ');
+
+          result.stock.push({
+            id: item.id, label: item.label, unit: item.unit, onHand,
+            kind: item.topUp === 'ibc' ? 'chemical' : 'boiler',
+            avgPerDay: stats.avgPerDay, avgPerHour: stats.avgPerHour,
+            avgDose: stats.avgDose, waterCovered: stats.waterCovered,
+            waterExact: stats.waterExact, waterLeft,
+            daysCovered: stats.daysCovered, hoursCovered: stats.hoursCovered,
+            hoursLeft, daysLeft: left,
+            unconfirmed: !!(usage && usage.unconfirmed),
+            status
+          });
+
+        } else if (item.type === 'date') {
+          // Recorded for the record only - no automatic grading. A date that
+          // cannot be read counts as nothing recorded.
+          const iso = v.date;
+          const valid = !!iso && !isNaN(new Date(iso + 'T00:00:00').getTime());
+          status = manual || (valid ? STATUS.OK : STATUS.BLANK);
+          if (valid) {
+            display = `sampled to ${shortDate(iso)}`;
+          } else {
+            display = manual ? 'No date recorded' : '-';
+          }
+        }
+
+        if (!reason && needsAction(status)) {
+          if (status === STATUS.FAULT) reason = 'fault reported';
+          else if (status === STATUS.WATCH) reason = 'needs monitoring';
+          else if (status === STATUS.TODO) reason = 'not completed';
+        }
+
+        result.counts[status] = (result.counts[status] || 0) + 1;
+        const photos = (v.photos || []).filter(id => state.photos && state.photos[id]);
+        const optBadge = item.type === 'choice' ? optionBadge(item, v.choice) : null;
+        const badge = item.type === 'stock'
+          ? stockBadge(item, status, reason)
+          : (optBadge || STATUS_META[status].short);
+        result.items[item.id] = {
+          status, badge, display, reason, extra, sum,
+          // A red badge should never be a mystery, so the explanation is
+          // printed - unless it is generic, or just repeats the value already
+          // shown on the row.
+          showReason: needsAction(status) && !!reason
+            && !GENERIC_REASONS.has(reason)
+            && reason.toLowerCase() !== String(display).toLowerCase(),
+          // When the badge spells out the action, repeating the value beside it
+          // is noise - and on a narrow row the two would collide.
+          hideDisplay: !!optBadge,
+          note: v.note || '', photos
+        };
+
+        if (needsAction(status)) {
+          result.actions[section.id].push({
+            label: item.label, group: group.title, groupNumber: group.number,
+            status, display, reason: reason || STATUS_META[status].label.toLowerCase(),
+            note: v.note || ''
+          });
+        }
+      });
+    });
+  });
+
+  Object.keys(result.actions).forEach(k => {
+    result.actions[k].sort((a, b) =>
+      SEVERITY_ORDER.indexOf(b.status) - SEVERITY_ORDER.indexOf(a.status));
+  });
+
+  // Worst first: fewest days of stock, unconfirmed last.
+  result.stock.sort((a, b) => {
+    if (a.daysLeft === null && b.daysLeft === null) return 0;
+    if (a.daysLeft === null) return 1;
+    if (b.daysLeft === null) return -1;
+    return a.daysLeft - b.daysLeft;
+  });
+
+  result.verdict = buildVerdict(result);
+  return result;
+}
+
+/* Joins the footer parts as sentences.
+
+   They are written as fragments so they can be assembled in whatever
+   combination the day calls for, which is why the first letter is raised here
+   rather than in each one. Separating with full stops rather than dots reads
+   as English instead of a list of readings. */
+function sentences(parts) {
+  return parts
+    .filter(Boolean)
+    .map(p => p.charAt(0).toUpperCase() + p.slice(1))
+    .join('. ') + '.';
+}
+
+/* The lines of the stock sum, ready to print as a block. */
+function buildStockSum(item, v, usage, left, state, stats, dosingHours, hoursLeft, waterNow, waterLeft) {
+  const u = item.unit;
+  const lastLabel = state.lastCheckDate
+    ? `Last check (${shortDate(state.lastCheckDate)})`
+    : 'Last check';
+
+  const rows = [];
+  rows.push({
+    label: lastLabel,
+    detail: item.hasBackup
+      ? `${fmtQty(num(v.prevInUse) || 0)} + ${fmtQty(num(v.prevBackup) || 0)}`
+      : '',
+    value: `${fmtQty(usage.prevTotal)} ${u}`
+  });
+
+  if (usage.unconfirmed) {
+    rows.push({ label: 'Delivered since', detail: 'not known', value: '?' });
+  } else if (item.topUp === 'ibc') {
+    rows.push({
+      label: 'Delivered since',
+      detail: usage.ibcs > 0 ? plural(usage.ibcs, 'IBC') : 'none',
+      value: `+${fmtQty(usage.topUp)} ${u}`
+    });
+  } else {
+    rows.push({
+      label: 'Added since',
+      detail: '',
+      value: `+${fmtQty(usage.topUp)} ${u}`
+    });
+  }
+
+  rows.push({
+    label: 'On site now',
+    detail: item.hasBackup
+      ? `${fmtQty(num(v.inUse) || 0)} + ${fmtQty(num(v.backup) || 0)}`
+      : '',
+    value: `${fmtQty(usage.todayTotal)} ${u}`
+  });
+
+  const period = usage.days > 1 ? ` over ${plural(usage.days, 'day')}` : '';
+  let total, footer = '';
+
+  if (usage.unconfirmed) {
+    total = { label: 'Usage not confirmed', value: '-' };
+    footer = 'Deliveries during this period are unknown, so usage cannot be worked out.';
+  } else if (usage.missingLitres > 0) {
+    total = { label: 'Usage not confirmed', value: '-' };
+    footer = usage.missingIbcs > 0
+      ? `Stock is higher than it should be - at least ${plural(usage.missingIbcs, 'IBC')} arrived without being recorded.`
+      : `Stock is higher than it should be - ${fmtQty(usage.missingLitres)} ${item.unit} was added without being recorded.`;
+  } else {
+    // Chemicals are reported per cubic metre of water treated - the only
+    // figure that stays comparable whatever the plant was doing.
+    if (item.topUp === 'ibc' && waterNow && waterNow.volume > 0) {
+      rows.push({
+        label: 'Water dosed',
+        detail: `${fmtQty(dosingHours || 0, 1)} hrs dosing${waterNow.exact ? '' : ', estimated'}`,
+        value: `${fmtQty(waterNow.volume, 0)} m\u00B3`
+      });
+    }
+    total = { label: `Used${period}`, value: `${fmtQty(usage.used)} ${u}` };
+
+    /* Said in plain words, in the order a reader needs them: what it used
+       today, what it normally uses, and how long the stock will last. The old
+       wording ("average 1.45 L/m3 over 3196 m3") packed three different ideas
+       into one line of shorthand and read as jargon. */
+    const parts = [];
+    if (item.topUp === 'ibc' && waterNow && waterNow.volume > 0) {
+      parts.push(`That is ${fmtQty(usage.used / waterNow.volume, 2)} ${u} of chemical `
+        + `for every 1 m\u00B3 of water treated`);
+    }
+    if (item.topUp === 'ibc' && stats && stats.avgDose) {
+      parts.push(`Normally ${fmtQty(stats.avgDose, 2)} ${u} per m\u00B3`);
+      if (waterLeft !== null) {
+        let bit = `the stock on site will treat about ${fmtQty(waterLeft, 0)} m\u00B3 more water`;
+        if (left !== null) bit += `, roughly ${fmtDays(left)}`;
+        parts.push(bit);
+      }
+      if (!stats.waterExact) parts.push('some water amounts are estimates');
+    } else if (stats && stats.avgPerDay && stats.daysCovered >= 2) {
+      parts.push(`Average use ${fmtQty(stats.avgPerDay)} ${u}/day over ${plural(stats.daysCovered, 'day')}`);
+      if (left !== null) parts.push(`about ${fmtDays(left)} left`);
+    } else if (usage.days > 1 && usage.used > 0) {
+      parts.push(`That is ${fmtQty(usage.perDay)} ${u} per day`);
+      parts.push('not enough history yet for an average');
+    } else {
+      parts.push('Not enough history yet for an average');
+    }
+    footer = sentences(parts);
+  }
+  return { rows, total, footer };
+}
+
+function buildVerdict(result) {
+  const all = [].concat(...Object.values(result.actions));
+  const faults = all.filter(a => a.status === STATUS.FAULT);
+  const others = all.filter(a => a.status !== STATUS.FAULT);
+  if (!all.length) {
+    return { tone: 'ok', text: 'All checks clear - nothing needs action today.' };
+  }
+  // Name the most serious few, keeping their proper labels.
+  const headline = faults.length ? faults : others;
+  const named = headline.slice(0, 3).map(a => a.label);
+  const faultCount = faults.length;
+
+  let text = faultCount
+    ? `${plural(faultCount, 'fault')} to deal with`
+    : `${plural(all.length, 'item')} to watch`;
+  if (named.length) text += `: ${named.join(', ')}`;
+  const remaining = all.length - named.length;
+  if (remaining > 0) text += `, plus ${remaining} more needing attention`;
+  return { tone: faultCount ? 'fault' : 'watch', text: text + '.' };
+}
+
+function numberReason(item, n, thresholdKey, thresholds, status) {
+  if (!needsAction(status)) return '';
+  const t = thresholds[thresholdKey];
+  const d = item.decimals || 0;
+  const unit = item.unit ? ' ' + item.unit : '';
+  if (!t) return 'out of range';
+  if (t.critLow !== undefined) {
+    if (n <= t.critLow) return `${fmtQty(n, d)}${unit} - at or below the ${fmtQty(t.critLow, d)} limit`;
+    if (n >= t.critHigh) return `${fmtQty(n, d)}${unit} - at or above the ${fmtQty(t.critHigh, d)} limit`;
+    if (n <= t.warnLow) return `${fmtQty(n, d)}${unit} - drifting low`;
+    if (n >= t.warnHigh) return `${fmtQty(n, d)}${unit} - drifting high`;
+  } else if (t.crit !== undefined) {
+    if (n <= t.crit) return `only ${fmtQty(n, d)}${unit} left`;
+    if (n <= t.warn) return `running low at ${fmtQty(n, d)}${unit}`;
+  }
+  return 'out of range';
+}
+
+/* Names the readings in a multi-field row that are out of range, using each
+   field's own limits. */
+function multiReason(item, readings, thresholds, status) {
+  if (!needsAction(status)) return '';
+  const d = item.decimals || 0;
+  const faults = [], warns = [];
+  readings.forEach((r, i) => {
+    if (r === null) return;
+    const key = item.fields[i].threshold || item.threshold;
+    if (!key) return;
+    const g = gradeNumber(r, key, thresholds);
+    const tag = `reading ${item.fields[i].label} (${fmtQty(r, d)})`;
+    if (g === STATUS.FAULT) faults.push({ tag, key });
+    else if (g === STATUS.WATCH) warns.push({ tag, key });
+  });
+
+  const phrases = [];
+  if (faults.length) {
+    // Limits can differ per reading, so only quote one when they all share it.
+    const keys = new Set(faults.map(f => f.key));
+    let limit = ' the limit';
+    if (keys.size === 1) {
+      const t = thresholds[faults[0].key];
+      if (t && t.critLow !== undefined) {
+        limit = ` the ${fmtQty(t.critLow, d)}-${fmtQty(t.critHigh, d)} limit`;
+      }
+    }
+    phrases.push(`${listOf(faults.map(f => f.tag))} outside${limit}`);
+  }
+  if (warns.length) phrases.push(`${listOf(warns.map(w => w.tag))} drifting`);
+  return phrases.length ? phrases.join('; ') : 'out of range';
+}
+
+function listOf(arr) {
+  if (arr.length === 1) return arr[0];
+  return arr.slice(0, -1).join(', ') + ' and ' + arr[arr.length - 1];
+}
+
+function chemicalReason(v, thresholds) {
+  const bits = [];
+  const inUse = num(v.inUse), backup = num(v.backup);
+  // Backup first: with nothing in reserve, refilling is not an option.
+  if (backup !== null) {
+    const tb = thresholds.chemBackup;
+    if (backup <= tb.crit) bits.push('no backup stock');
+    else if (tb.warn > tb.crit && backup <= tb.warn) bits.push(`backup low (${fmtQty(backup)} L)`);
+  }
+  if (inUse !== null) {
+    const ti = thresholds.chemInUse;
+    if (inUse <= ti.crit) bits.push('usage tank empty');
+    else if (inUse <= ti.warn) bits.push(`usage tank low (${fmtQty(inUse)} L)`);
+  }
+  return bits.join(', ');
+}
+
+/* ------------------------------------------------------------------
+   PDF
+   ------------------------------------------------------------------ */
+
+function buildPdf(state, evaluated, previous) {
+  const doc = new PdfDoc();
+  const L = PT.margin;
+  const R = PT.pageW - PT.margin;
+  const W = doc.contentWidth;
+
+  /* ---- 1. header band (first page only) ---- */
+  const bandH = 84;
+  doc.rect(0, 0, PT.pageW, bandH, { fill: BRAND.green });
+  doc.rect(0, bandH, PT.pageW, 3.2, { fill: BRAND.gold });   // brand accent rule
+
+  let textX = L;
+  if (state.logo && state.logo.bytes) {
+    const boxH = 46;
+    const scale = Math.min(boxH / state.logo.height, boxH / state.logo.width);
+    const lw = state.logo.width * scale;
+    const lh = state.logo.height * scale;
+    const pad = 4;
+    doc.rect(L, (bandH - lh) / 2 - pad, lw + pad * 2, lh + pad * 2, { fill: [255, 255, 255] });
+    const name = doc.addImage(state.logo.bytes, state.logo.width, state.logo.height);
+    doc.drawImage(name, L + pad, (bandH - lh) / 2, lw, lh);
+    textX = L + lw + pad * 2 + 14;
+  }
+
+  doc.text((state.site || DEFAULT_SITE).toUpperCase(), textX, 33,
+    { size: 13.5, bold: true, colour: [255, 255, 255], tracking: 0.5 });
+  doc.text('DAILY OPERATIONS REPORT', textX, 49,
+    { size: 8, colour: BRAND.gold, tracking: 1.5 });
+  doc.text(reportNumber(state), textX, 64, { size: 7.6, colour: [196, 222, 206] });
+  doc.text(prettyDate(state.date), R, 39,
+    { size: 11, bold: true, colour: [255, 255, 255], align: 'right' });
+  doc.text(state.reporter || DEFAULT_REPORTER, R, 54,
+    { size: 7.8, colour: [196, 222, 206], align: 'right' });
+  doc.y = bandH + 19;
+
+  /* ---- 2. one-line verdict ---- */
+  const v = evaluated.verdict;
+  const vColour = v.tone === 'fault' ? BRAND.fault : v.tone === 'watch' ? BRAND.watch : BRAND.ok;
+  const vLines = wrapText(v.text, 10, true, W - 40);
+  const vH = 14 + vLines.length * 13;
+  const vBg = v.tone === 'fault' ? BRAND.redBg : v.tone === 'watch' ? BRAND.amberBg : BRAND.okBg;
+  doc.roundRect(L, doc.y, W, vH, 7, { fill: vBg, stroke: vColour, lineWidth: 0.8 });
+  doc.icon(STATUS_ICON[v.tone === 'ok' ? 'ok' : v.tone], L + 16, doc.y + vH / 2, 11, vColour);
+  vLines.forEach((line, i) => {
+    doc.text(line, L + 30, doc.y + 17 + i * 13, { size: 10, bold: true, colour: vColour });
+  });
+  doc.y += vH + 13;
+
+  /* ---- 3. counters ---- */
+  const cards = [
+    ['OK', evaluated.counts.ok || 0, BRAND.ok],
+    ['MONITOR', evaluated.counts.watch || 0, BRAND.watch],
+    ['FAULT', evaluated.counts.fault || 0, BRAND.fault],
+    ['NOT DONE', (evaluated.counts.todo || 0) + (evaluated.counts.blank || 0), BRAND.todo]
+  ];
+  const gap = 8;
+  const cw = (W - gap * (cards.length - 1)) / cards.length;
+  cards.forEach(([label, count, colour], i) => {
+    const x = L + i * (cw + gap);
+    doc.roundRect(x, doc.y, cw, 42, 6, { fill: [253, 254, 253], stroke: BRAND.hairline });
+    doc.roundRect(x, doc.y, 3.4, 42, 1.7, { fill: colour });
+    doc.text(String(count), x + 12, doc.y + 24, { size: 17, bold: true, colour });
+    doc.text(label, x + 12, doc.y + 35, { size: 6.4, bold: true, colour: BRAND.slate, tracking: 0.5 });
+  });
+  doc.y += 42 + 10;
+
+  // One slim bar showing the whole split at a glance.
+  const totalChecks = cards.reduce((a, c) => a + c[1], 0) || 1;
+  const barH = 6;
+  doc.roundRect(L, doc.y, W, barH, barH / 2, { fill: [238, 241, 239] });
+  let bx = L;
+  cards.forEach(([, count, colour]) => {
+    if (!count) return;
+    const seg = (count / totalChecks) * W;
+    doc.rect(bx, doc.y, seg, barH, { fill: colour });
+    bx += seg;
+  });
+  // tidy the rounded ends back over the square segments
+  doc.y += barH + 16;
+
+  /* ---- 4. action required ---- */
+  CHECKLIST.forEach(section => {
+    const actions = evaluated.actions[section.id];
+    if (!actions.length) return;
+    const faults = actions.filter(a => a.status === STATUS.FAULT);
+
+    const lines = actions.map(a => {
+      let s = a.reason ? `${a.label} - ${a.reason}` : a.label;
+      if (a.note) s += ` (${a.note})`;
+      return { text: s, status: a.status };
+    });
+
+    let bodyH = 0;
+    const wrapped = lines.map(l => wrapText(l.text, 9, false, W - 46));
+    wrapped.forEach(w => { bodyH += w.length * 12.5; });
+    const boxH = 27 + bodyH + 8;
+    doc.ensure(boxH + 10);
+
+    const bg = faults.length ? BRAND.redBg : BRAND.amberBg;
+    const edge = faults.length ? BRAND.fault : BRAND.watch;
+    doc.roundRect(L, doc.y, W, boxH, 7, { fill: bg, stroke: edge, lineWidth: 0.8 });
+    doc.roundRect(L, doc.y, 3.6, boxH, 1.8, { fill: edge });
+    doc.text(`ACTION REQUIRED \u00B7 ${section.owner.toUpperCase()}`, L + 15, doc.y + 17,
+      { size: 8.6, bold: true, colour: edge, tracking: 0.7 });
+
+    let ay = doc.y + 31;
+    lines.forEach((l, i) => {
+      doc.rect(L + 16, ay - 5.5, 5, 5, { fill: STATUS_META[l.status].colour });
+      wrapped[i].forEach((w, j) => {
+        doc.text(w, L + 27, ay + j * 12.5, { size: 9, colour: BRAND.ink });
+      });
+      ay += wrapped[i].length * 12.5;
+    });
+    doc.y += boxH + 12;
+  });
+
+  /* ---- 4b. DAF water, told in the order it happens ---- */
+  if (evaluated.meterMissing) {
+    /* Nothing can be worked out from one reading, so the block says which one
+       is missing rather than printing the few figures it does have. Half a
+       period reads as though the plant did something odd, when in fact a
+       reading simply has not been entered. */
+    let ask;
+    if (evaluated.meterMissing === 'today') {
+      ask = 'No DAF meter reading has been entered for this report, so the water '
+        + 'treated and the chemical doses cannot be worked out. Enter this '
+        + "morning's reading in the app and the figures will appear.";
+    } else if (evaluated.meterMissing === 'earlier') {
+      // Accurate whether no reading exists at all or none falls before this
+      // report's own moment, which are both this case.
+      ask = 'There is no earlier DAF meter reading to measure this report '
+        + 'against, so the water treated and the chemical doses cannot be '
+        + 'worked out yet. From the next report on they will be.';
+    } else {
+      ask = 'The meter readings for this report do not make a period that can '
+        + 'be measured - check the report date and the time the readings were '
+        + 'taken, and that each reading is higher than the one before it.';
+    }
+    const askLines = wrapText(ask, 8.4, false, W - 28);
+    const boxH = 12 + askLines.length * 12 + 6;
+    doc.ensure(20 + boxH + 14);
+
+    doc.text('WATER TREATED SINCE THE LAST REPORT', L, doc.y + 10,
+      { size: 8.6, bold: true, colour: BRAND.green, tracking: 0.9 });
+    doc.y += 15;
+    doc.rect(L, doc.y, 26, 2, { fill: BRAND.gold });
+    doc.y += 6;
+    doc.roundRect(L, doc.y, W, boxH, 6,
+      { fill: BRAND.amberBg, stroke: BRAND.watch, lineWidth: 0.7 });
+    askLines.forEach((t, i) => {
+      doc.text(t, L + 14, doc.y + 18 + i * 12, { size: 8.4, colour: BRAND.ink });
+    });
+    doc.y += boxH + 14;
+
+  } else if (evaluated.dosingHours !== null && evaluated.dosingHours !== undefined) {
+    const fromDate = String(evaluated.spanFrom).split('T')[0];
+    const toDate = String(evaluated.spanTo || state.date).split('T')[0];
+    const dosed = evaluated.waterNow && evaluated.waterNow.volume > 0
+      ? evaluated.waterNow.volume : null;
+
+    /* Every moment carries its date as well as its time.
+
+       A report can span two days, so a bare "7:30pm" does not say which one -
+       and when both meter readings fall on the same date, two rows both
+       labelled "4 Oct" are impossible to tell apart. */
+    const stamp = (s) => `${dayMonth(String(s).split('T')[0])} ${clockTime(s)}`;
+
+    const lines = [];
+    lines.push([`Meter at ${stamp(evaluated.spanFrom)}`,
+      `${fmtQty(evaluated.meterFrom, 1)} m\u00B3`, false]);
+    lines.push([`Meter at ${stamp(evaluated.spanTo)}`,
+      `${fmtQty(evaluated.meterTo, 1)} m\u00B3`, false]);
+    if (evaluated.totalWater !== null) {
+      lines.push(['Water through the plant', `${fmtQty(evaluated.totalWater, 1)} m\u00B3`, false]);
+    }
+    // Spelling out the whole period makes the dosing hours readable: "14 hrs"
+    // means nothing until you know the period was 24.
+    lines.push(['Chemical was dosing for',
+      evaluated.spanHours
+        ? `${fmtQty(evaluated.dosingHours, 1)} of those ${fmtQty(evaluated.spanHours, 1)} hrs`
+        : `${fmtQty(evaluated.dosingHours, 1)} hrs`, false]);
+
+    /* Each switch inside the period, naming the reading the dosed volume is
+       measured from. This is the line whose absence made the dosed figure look
+       as though it had been worked out from the wrong reading. The moment goes
+       in the label so the reading itself lines up with the other figures. */
+    (evaluated.switches || []).slice(0, 3).forEach(s => {
+      lines.push([`Dosing ${s.on ? 'on' : 'off'} at ${stamp(s.at)}`,
+        s.meter !== null && s.meter !== undefined
+          ? `${fmtQty(s.meter, 1)} m\u00B3`
+          : 'meter not noted', false]);
+    });
+    if (dosed !== null) {
+      lines.push(['Water that got chemical',
+        `${fmtQty(dosed, 0)} m\u00B3${evaluated.waterNow.exact ? '' : '  (estimated)'}`, true]);
+    }
+    // Only worth printing when something was actually dosed. "Speed while
+    // dosing" sitting under "dosing for 0.0 hrs" invites the question of which
+    // of the two is wrong, when neither is.
+    if (evaluated.flowRate && evaluated.dosingHours > 0) {
+      lines.push(['Water speed while dosing',
+        `${fmtQty(evaluated.flowRate, 1)} m\u00B3 per hour`, false]);
+    }
+
+    /* The closing sentence has to make sense of whatever the figures say,
+       including the awkward cases - dosing switched off for the whole period
+       used to print a bare "0.0 hrs" with no hint of what that meant. */
+    let note;
+    if (evaluated.dosingHours <= 0) {
+      note = 'The chemical dosing was off for this whole period, so none of this '
+        + 'water was dosed and there are no dose figures below.';
+      // Said plainly, because "off all period" next to a dosing start earlier
+      // the same day is otherwise read as a contradiction.
+      const startsNext = (evaluated.allSwitches || [])
+        .find(s => s.on && s.at >= evaluated.spanTo);
+      if (startsNext) {
+        note += ` The dosing was switched on at ${clockTime(startsNext.at)}, at the`
+          + ' very end of this period, so it counts towards the next report.';
+      }
+    } else if (dosed !== null) {
+      note = `Each "Dose" figure below is the litres of chemical used for every `
+        + `1 m\u00B3 of that ${fmtQty(dosed, 0)} m\u00B3.`;
+      if (!evaluated.waterNow.exact) {
+        note += ' The meter was not noted when the dosing was switched, so this'
+          + ' volume is the dosing hours times the speed above';
+        note += evaluated.flowDays
+          ? `, which is measured from ${plural(evaluated.flowDays, 'earlier day')} `
+            + 'when the dosing ran right through.'
+          : '.';
+        note += ' Noting the meter at the switch makes it exact.';
+      }
+    } else {
+      note = 'Add a meter reading for each morning and the water dosed can be '
+        + 'worked out.';
+    }
+    const noteLines = wrapText(note, 7.8, false, W - 4);
+
+    /* Two columns rather than one long list.
+
+       Seven stacked rows took up as much of the page as a whole checklist
+       section, which pushed the figures a reader actually compares far apart.
+       Side by side they fit in half the height and stay on one screen. */
+    const rowH = 14;
+    const half = Math.ceil(lines.length / 2);
+    const boxH = 10 + half * rowH + 8;
+    doc.ensure(20 + boxH + 10 + noteLines.length * 10 + 10);
+
+    doc.text('WATER TREATED SINCE THE LAST REPORT', L, doc.y + 10,
+      { size: 8.6, bold: true, colour: BRAND.green, tracking: 0.9 });
+    doc.y += 15;
+    doc.rect(L, doc.y, 26, 2, { fill: BRAND.gold });
+    doc.y += 6;
+
+    doc.roundRect(L, doc.y, W, boxH, 6,
+      { fill: BRAND.sumBg, stroke: BRAND.sumEdge, lineWidth: 0.7 });
+
+    const colW = W / 2;
+    const mid = L + colW;
+    // A hairline keeps the eye from reading across the two columns as one row.
+    if (lines.length > half) {
+      doc.rect(mid, doc.y + 7, 0.6, boxH - 14, { fill: BRAND.sumEdge });
+    }
+
+    lines.forEach(([label, value, strong], i) => {
+      const col = i < half ? 0 : 1;
+      const row = i < half ? i : i - half;
+      const x = L + col * colW;
+      const y = doc.y + 10 + row * rowH;
+      doc.text(label, x + 13, y, { size: 8.2, bold: strong, colour: BRAND.sumInk });
+      doc.text(value, x + colW - 13, y,
+        { size: strong ? 9 : 8.6, bold: strong, colour: BRAND.sumInk, align: 'right' });
+    });
+    doc.y += boxH + 8;
+    noteLines.forEach((t, i) => {
+      doc.text(t, L, doc.y + 8 + i * 10, { size: 7.8, colour: BRAND.slate, italic: true });
+    });
+    doc.y += 10 + noteLines.length * 10;
+  }
+
+  /* ---- 5. stock at a glance, with a daily-usage chart ---- */
+  const chemStock = evaluated.stock.filter(s => s.kind === 'chemical');
+  if (chemStock.length) {
+    const rowH = 20;
+    doc.ensure(20 + 17 + chemStock.length * rowH + 22);
+
+    doc.text('CHEMICAL STOCK AT A GLANCE', L, doc.y + 10,
+      { size: 8.6, bold: true, colour: BRAND.green, tracking: 0.9 });
+    doc.y += 15;
+    doc.rect(L, doc.y, 26, 2, { fill: BRAND.gold });
+    doc.y += 6;
+
+    const cols = {
+      label: L + 8,
+      onSite: L + W * 0.42,
+      avg: L + W * 0.62,
+      days: R - 8
+    };
+
+    doc.roundRect(L, doc.y, W, 16, 3, { fill: [240, 246, 242] });
+    doc.text('CHEMICAL', cols.label, doc.y + 11, { size: 6.6, bold: true, colour: BRAND.slate, tracking: 0.6 });
+    doc.text('ON SITE', cols.onSite, doc.y + 11, { size: 6.6, bold: true, colour: BRAND.slate, align: 'right', tracking: 0.6 });
+    doc.text('DOSE L/M\u00B3', cols.avg, doc.y + 11, { size: 6.6, bold: true, colour: BRAND.slate, align: 'right', tracking: 0.6 });
+    doc.text('DAYS LEFT', cols.days, doc.y + 11, { size: 6.6, bold: true, colour: BRAND.slate, align: 'right', tracking: 0.6 });
+    doc.y += 16;
+
+    chemStock.forEach((s, i) => {
+      if (i % 2 === 1) doc.rect(L, doc.y, W, rowH, { fill: BRAND.zebra });
+      doc.rect(L, doc.y + 3, 2.5, rowH - 6, { fill: STATUS_META[s.status].colour });
+      const mid = doc.y + 13.5;
+      doc.text(s.label, cols.label, mid, { size: 8.6, colour: BRAND.ink });
+      doc.text(`${fmtQty(s.onHand)} ${s.unit}`, cols.onSite, mid,
+        { size: 9.2, bold: true, colour: BRAND.ink, align: 'right' });
+      doc.text(s.unconfirmed ? 'n/a' : (s.avgDose ? fmtQty(s.avgDose, 2) : '-'),
+        cols.avg, mid, { size: 9.2, colour: BRAND.value, align: 'right' });
+      let leftTxt = '-';
+      if (s.daysLeft !== null && s.daysLeft !== undefined) {
+        leftTxt = fmtDays(s.daysLeft);
+        if (s.waterLeft !== null && s.waterLeft !== undefined) {
+          leftTxt += ` (${fmtQty(s.waterLeft, 0)} m\u00B3)`;
+        }
+      }
+      const strong = s.status === STATUS.FAULT || s.status === STATUS.WATCH;
+      doc.text(leftTxt, cols.days, mid, {
+        size: 9.2, bold: strong, align: 'right',
+        colour: strong ? STATUS_META[s.status].colour : BRAND.ink
+      });
+      doc.y += rowH;
+    });
+    doc.hline(L, R, doc.y, BRAND.hairline);
+    doc.y += 16;
+  }
+
+  /* ---- 6. detail sections ---- */
+  const photoOrder = [];
+
+  CHECKLIST.forEach(section => {
+    doc.ensure(64);
+    doc.roundRect(L, doc.y, W, 22, 4, { fill: BRAND.green });
+    doc.rect(L + 10, doc.y + 7, 2.4, 8, { fill: BRAND.gold });
+    doc.text(`${section.number}.  ${section.owner.toUpperCase()}`, L + 18, doc.y + 15,
+      { size: 9, bold: true, colour: [255, 255, 255], tracking: 0.8 });
+    doc.y += 22 + 11;
+
+    section.groups.forEach(group => {
+      const heading = `${group.number}  ${group.title}` + (group.note ? `  (${group.note})` : '');
+      const compactItems = group.items.filter(i => i.compact && evaluated.items[i.id].sum);
+      const normalItems = group.items.filter(i => !compactItems.includes(i));
+
+      // A heading must never sit alone at the foot of a page, so the space for
+      // the heading plus whatever follows it first is reserved together.
+      const firstBlock = compactItems.length
+        ? 16 + compactItems.length * 18
+        : (normalItems.length ? itemHeight(doc, normalItems[0], evaluated.items[normalItems[0].id]) : 0);
+      doc.ensure(18 + 4 + firstBlock);
+
+      doc.text(heading, L, doc.y + 9, { size: 9, bold: true, colour: BRAND.green });
+      doc.y += 13;
+      doc.hline(L, R, doc.y, BRAND.green, 0.8);
+      doc.rect(L, doc.y - 0.4, 24, 1.6, { fill: BRAND.gold });
+      doc.y += 5;
+
+      // Compact stock rows: everything on one line, in a small table.
+      if (compactItems.length) drawCompactStock(doc, compactItems, evaluated, L, R, W);
+
+      normalItems.forEach((item, idx) => {
+        const ev = evaluated.items[item.id];
+        const rowH = 19;
+        // Keep the row together with its sum block and any reason line.
+        if (doc.ensure(itemHeight(doc, item, ev))) {
+          doc.text(`${heading} (continued)`, L, doc.y + 9,
+            { size: 8.4, bold: true, colour: BRAND.slate });
+          doc.y += 16;
+        }
+        if (idx % 2 === 1) doc.rect(L, doc.y, W, rowH, { fill: BRAND.zebra });
+
+        doc.text(item.label, L + 7, doc.y + 13, { size: 8.8, colour: BRAND.ink });
+        doc.badge(ev.badge, STATUS_ICON[ev.status], R - 6, doc.y + 3.5, STATUS_META[ev.status].colour);
+
+        // Skip the value when the badge beside it already says the same thing,
+        // e.g. an OK / Fault pick.
+        const badgeSaysIt = ev.hideDisplay || String(ev.display).toLowerCase()
+          === STATUS_META[ev.status].label.toLowerCase();
+        if (item.type !== 'status' && !badgeSaysIt) {
+          doc.text(ev.display, R - 84, doc.y + 13,
+            { size: 9.2, colour: BRAND.value, align: 'right' });
+        }
+        doc.y += rowH;
+
+        // Why it is flagged, so a coloured badge is never a mystery.
+        if (ev.showReason) {
+          const h = doc.paragraph(ev.reason, L + 16, doc.y, W - 40,
+            { size: 8, colour: STATUS_META[ev.status].colour, leading: 10.5 });
+          doc.y += h + 1;
+        }
+
+        if (ev.sum) drawStockSum(doc, ev.sum, L, R, W);
+
+        if (ev.photos.length) {
+          ev.photos.forEach(pid => {
+            photoOrder.push({ photoId: pid, label: item.label, group: group.title, owner: section.owner });
+          });
+          const refs = ev.photos.map((_, i) =>
+            `Photo ${photoOrder.length - ev.photos.length + i + 1}`).join(', ');
+          doc.ensure(13);
+          doc.text(`see ${refs}`, L + 16, doc.y + 9, { size: 8.2, colour: [52, 92, 150] });
+          doc.y += 12;
+        }
+        if (ev.note) {
+          const h = doc.paragraph(`Note: ${ev.note}`, L + 16, doc.y, W - 32,
+            { size: 8.4, colour: BRAND.value, leading: 11, italic: true });
+          doc.y += h + 2;
+        }
+      });
+      doc.hline(L, R, doc.y, BRAND.hairline);
+      doc.y += 14;
+    });
+  });
+
+  /* ---- 7. notes ---- */
+  if (state.generalNote && state.generalNote.trim()) {
+    doc.ensure(50);
+    doc.text('NOTES', L, doc.y + 10, { size: 9, bold: true, colour: BRAND.navy });
+    doc.y += 16;
+    const h = doc.paragraph(state.generalNote.trim(), L, doc.y, W, { size: 8.8, colour: BRAND.ink });
+    doc.y += h + 10;
+  }
+
+  /* ---- 8. photo appendix ---- */
+  if (photoOrder.length) {
+    doc.newPage();
+    doc.rect(L, doc.y, W, 22, { fill: BRAND.navy });
+    doc.text('PHOTO APPENDIX', L + 10, doc.y + 15,
+      { size: 9.4, bold: true, colour: [255, 255, 255] });
+    doc.y += 22 + 12;
+
+    const colW = (W - 14) / 2;
+    let col = 0;
+    let rowTop = doc.y;
+
+    photoOrder.forEach((entry, i) => {
+      const photo = state.photos[entry.photoId];
+      if (!photo) return;
+      const scale = Math.min(colW / photo.width, 200 / photo.height);
+      const dw = photo.width * scale;
+      const dh = photo.height * scale;
+      const blockH = dh + 34;
+
+      if (col === 0 && rowTop + blockH > doc.bottomLimit) {
+        doc.newPage();
+        rowTop = doc.y;
+      }
+      const x = L + col * (colW + 14);
+      const name = doc.addImage(photo.bytes, photo.width, photo.height);
+      doc.rect(x, rowTop, colW, dh + 2, { fill: [246, 247, 249] });
+      doc.drawImage(name, x + (colW - dw) / 2, rowTop + 1, dw, dh);
+      doc.text(`Photo ${i + 1} \u00B7 ${entry.label}`, x, rowTop + dh + 15,
+        { size: 8, bold: true, colour: BRAND.ink });
+      doc.text(`${entry.owner} \u00B7 ${entry.group}`, x, rowTop + dh + 26,
+        { size: 7.8, colour: BRAND.value });
+
+      if (col === 1) {
+        rowTop += blockH + 14;
+        doc.y = rowTop;
+        col = 0;
+      } else {
+        col = 1;
+      }
+    });
+  }
+
+  const footer = `${state.site || DEFAULT_SITE} \u00B7 ${reportNumber(state)} \u00B7 ${prettyDate(state.date)}`;
+  return doc.build(footer);
+}
+
+/* How tall a detail row will be once its sum, reason and note are included.
+   Used to stop a row being split across a page break. */
+function itemHeight(doc, item, ev) {
+  let h = 19;
+  if (ev.showReason) h += wrapText(ev.reason, 8, false, doc.contentWidth - 40).length * 10.5 + 1;
+  if (ev.sum && !item.compact) h += sumHeight(sum_wrapWidth(doc), ev.sum) + 4;
+  if (ev.photos && ev.photos.length) h += 12;
+  if (ev.note) h += wrapText(`Note: ${ev.note}`, 8, false, doc.contentWidth - 32).length * 10.5 + 2;
+  return h;
+}
+
+function sum_wrapWidth(doc) { return doc.contentWidth; }
+
+function sumHeight(W, sum) {
+  const footerLines = sum.footer ? wrapText(sum.footer, 8.6, false, W - 60) : [];
+  return 8 + sum.rows.length * 14 + 20 + (footerLines.length * 11) + 8;
+}
+
+/* Boiler dose tanks, one line each with the whole movement on it. */
+function drawCompactStock(doc, items, evaluated, L, R, W) {
+  const rowH = 18;
+  // The badge sits hard right, so every column stops well clear of it.
+  const cols = {
+    label: L + 8,
+    last: L + W * 0.34,
+    added: L + W * 0.455,
+    now: L + W * 0.57,
+    used: L + W * 0.685,
+    avg: L + W * 0.80
+  };
+
+  doc.roundRect(L, doc.y, W, 15, 3, { fill: [240, 246, 242] });
+  doc.text('TANK', cols.label, doc.y + 10.5, { size: 6.6, bold: true, colour: BRAND.slate, tracking: 0.6 });
+  [['LAST CHECK', cols.last], ['ADDED', cols.added], ['NOW', cols.now],
+   ['USED', cols.used], ['AVG / DAY', cols.avg]].forEach(([t, x]) => {
+      doc.text(t, x, doc.y + 10.5,
+        { size: 6.6, bold: true, colour: BRAND.slate, align: 'right', tracking: 0.6 });
+    });
+  doc.y += 15;
+
+  items.forEach((item, i) => {
+    const ev = evaluated.items[item.id];
+    const sum = ev.sum;
+    if (doc.ensure(rowH + 2)) doc.y += 2;
+    if (i % 2 === 1) doc.rect(L, doc.y, W, rowH, { fill: BRAND.zebra });
+    doc.rect(L, doc.y, 2.5, rowH, { fill: STATUS_META[ev.status].colour });
+
+    const base = { size: 8.8, colour: BRAND.ink };
+    doc.text(item.label, cols.label, doc.y + 12.5, base);
+    doc.text(sum.rows[0].value, cols.last, doc.y + 12.5, { ...base, align: 'right', colour: BRAND.value });
+    doc.text(sum.rows[1].value, cols.added, doc.y + 12.5, { ...base, align: 'right', colour: BRAND.value });
+    doc.text(sum.rows[2].value, cols.now, doc.y + 12.5, { ...base, align: 'right' });
+    doc.text(sum.total.value, cols.used, doc.y + 12.5, { ...base, align: 'right', bold: true });
+    const st = (evaluated.stock || []).find(x => x.id === item.id);
+    doc.text(st && st.avgPerDay ? `${fmtQty(st.avgPerDay)} ${item.unit}` : '-',
+      cols.avg, doc.y + 12.5, { ...base, align: 'right', colour: BRAND.value });
+    doc.badge(ev.badge, STATUS_ICON[ev.status], R - 6, doc.y + 2.5, STATUS_META[ev.status].colour);
+    doc.y += rowH;
+
+    if (ev.showReason) {
+      const h = doc.paragraph(ev.reason, cols.label + 9, doc.y, W - 60,
+        { size: 7.8, colour: STATUS_META[ev.status].colour, leading: 10 });
+      doc.y += h + 1;
+    }
+    if (ev.note) {
+      const h = doc.paragraph(`Note: ${ev.note}`, cols.label + 9, doc.y, W - 60,
+        { size: 7.8, colour: BRAND.slate, leading: 10 });
+      doc.y += h + 1;
+    }
+  });
+  doc.y += 6;
+}
+
+/* The stock sum, printed as a proper bordered block. This is the number the
+   managers act on, so it gets real size and contrast. */
+function drawStockSum(doc, sum, L, R, W) {
+  const rowH = 14;
+  const footerLines = sum.footer ? wrapText(sum.footer, 8.6, false, W - 60) : [];
+  const boxH = sumHeight(W, sum);
+  doc.ensure(boxH + 4);
+
+  const x = L + 12;
+  const w = W - 24;
+  doc.roundRect(x, doc.y, w, boxH, 6, { fill: BRAND.sumBg, stroke: BRAND.sumEdge, lineWidth: 0.7 });
+
+  const labelX = x + 12;
+  const detailX = x + w * 0.52;
+  const valueX = x + w - 12;
+  let y = doc.y + 8;
+
+  sum.rows.forEach(row => {
+    doc.text(row.label, labelX, y + 10, { size: 8.6, colour: BRAND.sumInk });
+    if (row.detail) {
+      doc.text(row.detail, detailX, y + 10,
+        { size: 8.8, colour: BRAND.sumInk, align: 'right' });
+    }
+    doc.text(row.value, valueX, y + 10,
+      { size: 9.2, bold: true, colour: BRAND.sumInk, align: 'right' });
+    y += rowH;
+  });
+
+  doc.hline(labelX, valueX, y + 2, BRAND.sumEdge, 0.8);
+  y += 4;
+  doc.text(sum.total.label, labelX, y + 12, { size: 10.5, bold: true, colour: BRAND.sumInk });
+  doc.text(sum.total.value, valueX, y + 12,
+    { size: 11.5, bold: true, colour: BRAND.sumInk, align: 'right' });
+  y += 18;
+
+  footerLines.forEach((line, i) => {
+    doc.text(line, labelX, y + 9.5 + i * 11, { size: 8.6, colour: BRAND.sumInk });
+  });
+
+  doc.y += boxH + 4;
+}
+
+/* ------------------------------------------------------------------
+   WhatsApp messages
+   ------------------------------------------------------------------ */
+
+function buildWhatsApp(state, evaluated) {
+  return CHECKLIST.map((section, sectionIndex) => {
+    const lines = [];
+    const actions = evaluated.actions[section.id];
+
+    if (sectionIndex === 0) {
+      lines.push(`*DAILY OPS REPORT* \u2014 ${prettyDate(state.date)}`);
+      lines.push(`_${reportNumber(state)} \u00B7 ${state.reporter || DEFAULT_REPORTER}_`);
+      lines.push('');
+      lines.push(`_${evaluated.verdict.text}_`);
+      lines.push('');
+    }
+    lines.push(`*\u2501\u2501\u2501 ${section.owner.toUpperCase()} \u2501\u2501\u2501*`);
+    if (sectionIndex !== 0) lines.push(`_${prettyDate(state.date)}_`);
+    lines.push('');
+
+    if (actions.length) {
+      const hasFault = actions.some(a => a.status === STATUS.FAULT);
+      lines.push(`${hasFault ? '\u274C' : '\u26A0\uFE0F'} *ACTION REQUIRED*`);
+      actions.forEach(a => {
+        let s = `\u2022 ${a.label}`;
+        if (a.reason) s += ` \u2014 *${a.reason}*`;
+        if (a.note) s += ` (${a.note})`;
+        lines.push(s);
+      });
+    } else {
+      lines.push('\u2705 *All checks clear*');
+    }
+    lines.push('');
+
+    section.groups.forEach(group => {
+      lines.push(`*${group.number} ${group.title}*${group.note ? ` _(${group.note})_` : ''}`);
+      group.items.forEach(item => {
+        const ev = evaluated.items[item.id];
+        let line = `\u2022 ${item.label}`;
+        if (item.type !== 'status' && ev.display && ev.display !== '-') {
+          line += ` \u2014 ${ev.display}`;
+        }
+        line += ` ${STATUS_META[ev.status].wa}`;
+        if (ev.photos.length) line += ' \uD83D\uDCF7';
+        lines.push(line);
+        if (ev.sum) {
+          lines.push(`   _${ev.sum.total.label}: ${ev.sum.total.value}_`);
+        }
+        if (ev.note) lines.push(`   _${ev.note}_`);
+      });
+      lines.push('');
+    });
+
+    if (sectionIndex === CHECKLIST.length - 1 && state.generalNote && state.generalNote.trim()) {
+      lines.push('*Notes*');
+      lines.push(state.generalNote.trim());
+      lines.push('');
+    }
+
+    lines.push('_\u2705 OK \u00B7 \u26A0\uFE0F Monitor \u00B7 \u274C Fault \u00B7 \u2B1C Not done_');
+    return { owner: section.owner, text: lines.join('\n').replace(/\n{3,}/g, '\n\n') };
+  });
+}
