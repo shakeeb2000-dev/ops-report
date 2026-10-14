@@ -59,8 +59,15 @@ function makeApp(seed) {
           update: () => Promise.resolve(),
           waiting: null, installing: null
         }),
+        // The app asks whether a worker is in charge and whether the page is
+        // saved. Both answer "yes" unless a case switches them off.
+        getRegistration: () => Promise.resolve(
+          sandbox.__noWorker ? undefined : { active: { state: 'activated' } }),
         addEventListener: () => {}
       }
+    },
+    caches: {
+      match: () => Promise.resolve(sandbox.__shellCached === false ? undefined : {})
     },
     window: null,
     Blob: class { constructor(parts) { this.parts = parts; } },
@@ -1131,6 +1138,190 @@ async function main() {
     check('the dates show on screen',
       app.document.querySelector('[data-date="ovine_daily"]').value === '2026-09-26',
       app.document.querySelector('[data-date="ovine_daily"]').value);
+    check('no errors logged', app.localErrors.length === 0, app.localErrors.join(' | '));
+  }
+
+  /* ================= scenario 12: the Settings sheet ================= */
+  console.log('\n12. Settings sheet');
+  {
+    const app = makeApp(null);
+    await sleep(300);
+    const doc = app.document;
+    const sheet = doc.querySelector('#settingsSheet');
+    const titles = sheet.querySelectorAll('.set-head').map(h => h.querySelector('h2').textContent.trim());
+
+    check('Start a new report is the first section', titles[0] === 'New report', titles.join(' > '));
+    check('the setup sections follow in the agreed order',
+      JSON.stringify(titles.slice(0, 9)) === JSON.stringify(['New report', 'Backup', 'App version',
+        'Your name', 'Company name', 'Report number prefix', 'Company logo', 'Trigger levels',
+        'Average usage']), titles.slice(0, 9).join(' > '));
+
+    const adv = sheet.querySelector('details');
+    check('Advanced starts folded shut', !!adv && !adv.hasAttribute('open'));
+    check('Saved reports are inside Advanced', !!doc.querySelector('#historyList').closest('details'));
+    check('so are the working-out and repair panels',
+      ['#flowDetail', '#dosingAudit', '#btnMeterRestore'].every(s => !!doc.querySelector(s).closest('details')));
+    check('the everyday settings are not inside Advanced',
+      ['#btnNewReport', '#btnBackupExport', '#btnCheckUpdate', '#fReporter', '#fSite', '#fPrefix',
+        '#thresholdForm', '#fAvgWindow'].every(s => !doc.querySelector(s).closest('details')));
+
+    const helps = sheet.querySelectorAll('[data-help]');
+    check('sections with an explanation have a ? beside the title', helps.length >= 11, String(helps.length));
+    check('every ? has an explanation to open',
+      helps.every(b => !!doc.getElementById(b.dataset.help)),
+      helps.filter(b => !doc.getElementById(b.dataset.help)).map(b => b.dataset.help).join(','));
+    check('every explanation starts hidden',
+      helps.every(b => doc.getElementById(b.dataset.help).hidden === true));
+    check('and no explanation is left lying open on the sheet',
+      sheet.querySelectorAll('.help-text').every(p => p.hidden === true));
+
+    const first = helps[0];
+    first.dispatch('click');
+    const panel = doc.getElementById(first.dataset.help);
+    check('tapping a ? shows its explanation',
+      panel.hidden === false && first.getAttribute('aria-expanded') === 'true');
+    first.dispatch('click');
+    check('tapping it again hides it',
+      panel.hidden === true && first.getAttribute('aria-expanded') === 'false');
+
+    // The ? on the morning sheet still works now that the listener is page-wide.
+    const main = doc.querySelector('[data-help="helpReport"]');
+    main.dispatch('click');
+    check('the ? on the morning sheet still works', doc.getElementById('helpReport').hidden === false);
+
+    /* Whether the phone holds its own copy of the app, which is what lets it
+       open with no signal. */
+    const line = doc.querySelector('#offlineStatus');
+    const nag = doc.querySelector('#offlineNag');
+    await run(app.ctx, 'renderOfflineStatus()');
+    check('a phone with its own copy says it works without signal',
+      /^Works without signal: yes/.test(line.textContent), line.textContent);
+    check('and shows no warning', nag.hidden === true);
+
+    app.sandbox.__shellCached = false;
+    await run(app.ctx, 'renderOfflineStatus()');
+    check('a phone that has lost its copy says so in Settings',
+      /not yet/.test(line.textContent), line.textContent);
+    check('but not in the first few seconds, while a first visit is still saving it',
+      nag.hidden === true);
+    run(app.ctx, 'bootedAt = Date.now() - 10000');
+    await run(app.ctx, 'renderOfflineStatus()');
+    check('after that it warns on the main screen', nag.hidden === false);
+    const nagText = nag.querySelectorAll('span').map(s => s.textContent).join(' ');
+    check('in plain words', /not saved its own copy/.test(nagText), nagText);
+
+    app.sandbox.__shellCached = true;
+    await run(app.ctx, 'renderOfflineStatus()');
+    check('and the warning goes away once the copy is back', nag.hidden === true);
+
+    app.sandbox.__noWorker = true;
+    await run(app.ctx, 'renderOfflineStatus()');
+    check('no worker in charge counts as no copy', /not yet/.test(line.textContent) && nag.hidden === false);
+    app.sandbox.__noWorker = false;
+
+    const kept = doc.querySelector('#storageStatus');
+    check('whether the phone protects the data stays out of sight until it is known', kept.hidden === true);
+    run(app.ctx, 'storageProtected = false');
+    await run(app.ctx, 'renderOfflineStatus()');
+    check('when it is not protected, it says so and points to the ?',
+      kept.hidden === false && /no\. Tap the \?/.test(kept.textContent), kept.textContent);
+    run(app.ctx, 'storageProtected = true');
+    await run(app.ctx, 'renderOfflineStatus()');
+    check('and says yes when it is', /yes/.test(kept.textContent), kept.textContent);
+
+    check('no errors logged', app.localErrors.length === 0, app.localErrors.join(' | '));
+  }
+
+  /* ================= scenario 13: dates, saturators, status buttons ================= */
+  console.log('\n13. Dates, saturators and buttons on the sheet');
+  {
+    const app = makeApp(null);
+    await sleep(300);
+    const doc = app.document;
+    const textOf = (inputSel) => doc.querySelector(inputSel).parentNode.querySelector('.datebox-text');
+
+    // The date at the top of the sheet
+    const dateInput = doc.querySelector('#fDate');
+    const topText = textOf('#fDate');
+    const [y, m, d] = dateInput.value.split('-');
+    const want = `${d}/${['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][Number(m) - 1]}/${y.slice(2)}`;
+    check('the date at the top is drawn as 14/OCT/26, not the phone\'s own format',
+      topText.textContent === want, `${topText.textContent} (wanted ${want})`);
+    check('the real date input is still underneath, holding the plain date', /^\d{4}-\d{2}-\d{2}$/.test(dateInput.value));
+
+    dateInput.value = '2026-09-01';
+    dateInput.dispatch('input');
+    check('picking a date redraws it at once', topText.textContent === '01/SEP/26', topText.textContent);
+
+    // Sample testing dates
+    const sampleText = textOf('[data-date="ovine_daily"]');
+    check('a sample date that was never filled in invites a pick', sampleText.textContent === 'Pick a date', sampleText.textContent);
+    check('and is marked as empty so it can be styled quieter', sampleText.classList.contains('empty'));
+    const sample = doc.querySelector('[data-date="ovine_daily"]');
+    sample.value = '2026-09-26';
+    sample.dispatch('input');
+    check('a sample date is drawn the same way', sampleText.textContent === '26/SEP/26', sampleText.textContent);
+    check('and is no longer marked empty', !sampleText.classList.contains('empty'));
+    check('the sample date is still stored as the plain date',
+      run(app.ctx, 'state.values.ovine_daily.date') === '2026-09-26');
+
+    // The two forms on the sheet
+    doc.querySelector('#btnMeterAdd').dispatch('click');
+    check('the add-a-reading form starts with no day, as it always did',
+      doc.querySelector('#meterDate').value === '' && textOf('#meterDate').textContent === 'Pick a date');
+    doc.querySelector('#meterDate').value = '2026-10-03';
+    doc.querySelector('#meterDate').dispatch('change');
+    check('and shows the day once picked', textOf('#meterDate').textContent === '03/OCT/26', textOf('#meterDate').textContent);
+    doc.querySelector('#btnMeterCancel').dispatch('click');
+
+    doc.querySelector('#btnDosingToggle').dispatch('click');
+    const dosingNow = doc.querySelector('#dosingDate').value;
+    check('the dosing form opens on today, drawn in the new format',
+      textOf('#dosingDate').textContent === run(app.ctx, `fmtDateBox('${dosingNow}')`) && textOf('#dosingDate').textContent !== 'Pick a date',
+      textOf('#dosingDate').textContent);
+    doc.querySelector('#btnDosingCancel').dispatch('click');
+
+    // A date that is refused is put back, and the text must follow it back
+    app.ctx.confirm = () => false;
+    const before = run(app.ctx, 'state.date');
+    dateInput.value = '2026-09-20';               // inside the dates recorded on paper
+    dateInput.dispatch('change');
+    await sleep(80);
+    check('a refused date goes back, and its text goes back with it',
+      dateInput.value === before && topText.textContent === run(app.ctx, `fmtDateBox('${before}')`),
+      `${dateInput.value} / ${topText.textContent}`);
+    app.ctx.confirm = () => true;
+
+    // Saturators start blank
+    const sat1 = doc.querySelector('[data-num="sat1"]');
+    const sat2 = doc.querySelector('[data-num="sat2"]');
+    check('both saturators start empty', sat1.value === '' && sat2.value === '', `${sat1.value} / ${sat2.value}`);
+    check('and are neither OK nor a fault until a reading is typed',
+      doc.querySelector('[data-pill="sat1"]').textContent === '-' && doc.querySelector('[data-pill="sat2"]').textContent === '-',
+      `${doc.querySelector('[data-pill="sat1"]').textContent} ${doc.querySelector('[data-pill="sat2"]').textContent}`);
+    sat1.value = '575';
+    sat1.dispatch('input');
+    check('typing a reading grades it', doc.querySelector('[data-pill="sat1"]').textContent === 'OK',
+      doc.querySelector('[data-pill="sat1"]').textContent);
+
+    // Buttons
+    const buttons = (id) => doc.querySelectorAll(`[data-status="${id}"]`).map(b => b.dataset.value).join(',');
+    check('the vacuum gauge no longer has a Monitor button', buttons('bio_vacuum') === 'ok,fault,todo', buttons('bio_vacuum'));
+    check('nor the pH row, which has lost OK too', buttons('ph') === 'fault,todo', buttons('ph'));
+    check('Tank 1 mixer was not on the list and keeps all four', buttons('tank1_mixer') === 'ok,watch,fault,todo', buttons('tank1_mixer'));
+    doc.querySelector('[data-status="ph"][data-value="fault"]').dispatch('click');
+    check('the buttons that remain still work', run(app.ctx, 'state.values.ph.status') === 'fault');
+
+    // The new clarity answer
+    doc.querySelector('[data-choice="daf_clarity"][data-value="notrunning"]').dispatch('click');
+    check('Not running can be chosen for the DAF clarity',
+      run(app.ctx, 'state.values.daf_clarity.choice') === 'notrunning');
+    check('and the row stays green', doc.querySelector('[data-pill="daf_clarity"]').textContent === 'OK',
+      doc.querySelector('[data-pill="daf_clarity"]').textContent);
+    check('the clarity row has five answers',
+      doc.querySelectorAll('[data-choice="daf_clarity"]').length === 5,
+      String(doc.querySelectorAll('[data-choice="daf_clarity"]').length));
+
     check('no errors logged', app.localErrors.length === 0, app.localErrors.join(' | '));
   }
 

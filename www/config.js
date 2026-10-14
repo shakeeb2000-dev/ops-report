@@ -154,11 +154,18 @@ const DONE_OPTIONS = [
 ];
 
 // Standard wastewater clarity descriptors.
+//
+// "Not running" is for the days the DAF is stopped, so there is no effluent to
+// judge. That is not a problem, so it is green - and it has no badge of its
+// own, so the report prints "Not running" beside the tick rather than
+// replacing the tick's wording. It sits beside "Clear" so the two green
+// answers are together and the ones that need attention follow.
 const CLARITY_OPTIONS = [
-  { value: 'clear',   label: 'Clear',           status: STATUS.OK },
-  { value: 'slight',  label: 'Slightly turbid', status: STATUS.WATCH },
-  { value: 'turbid',  label: 'Turbid',          status: STATUS.FAULT },
-  { value: 'offline', label: 'Out of service',  status: STATUS.FAULT }
+  { value: 'clear',      label: 'Clear',           status: STATUS.OK },
+  { value: 'notrunning', label: 'Not running',     status: STATUS.OK },
+  { value: 'slight',     label: 'Slightly turbid', status: STATUS.WATCH },
+  { value: 'turbid',     label: 'Turbid',          status: STATUS.FAULT },
+  { value: 'offline',    label: 'Out of service',  status: STATUS.FAULT }
 ];
 
 // Housekeeping grades for the underpits.
@@ -242,10 +249,13 @@ const CHECKLIST = [
             default: { choice: 'no' } },
           { id: 'waste_tanks', label: 'Waste Tanks - Overflow', type: 'choice', options: YES_NO_OPTIONS,
             default: { choice: 'no' } },
+          // No starting value: the pressure is different every morning, and a
+          // made-up 500 sat exactly on the fault level, so both saturators
+          // opened as a fault before anyone had looked at them.
           { id: 'sat1', label: 'Saturator DAF 1', type: 'number', unit: 'kPa', threshold: 'saturator',
-            decimals: 0, default: { value: 500 } },
+            decimals: 0 },
           { id: 'sat2', label: 'Saturator DAF 2', type: 'number', unit: 'kPa', threshold: 'saturator',
-            decimals: 0, default: { value: 500 } },
+            decimals: 0 },
           {
             // Each reading comes off a different point, so each has its own limits.
             id: 'ph', label: 'pH readings', type: 'multi',

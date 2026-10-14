@@ -226,6 +226,73 @@ function showsStatusButtons(item) {
   return !NO_STATUS_BUTTONS.has(item.id);
 }
 
+/* Which buttons a check offers, where that is fewer than all four.
+
+   At the operator's request the Monitor button is gone from the checks below,
+   and the pH row has lost OK as well, which is what leaves room for bigger pH
+   boxes. Anything not listed here keeps all four.
+
+   Only the button you tap by hand is removed. The app still works out Monitor
+   for itself from the typed readings and the trigger levels in Settings - a
+   saturator at 600 kPa is still flagged as drifting - and OK on the pH row
+   comes the same way, from readings inside their limits. */
+const STATUS_CHOICES = {
+  bio_vacuum:  [STATUS.OK, STATUS.FAULT, STATUS.TODO],
+  daf_pumps:   [STATUS.OK, STATUS.FAULT, STATUS.TODO],
+  daf_paddles: [STATUS.OK, STATUS.FAULT, STATUS.TODO],
+  sat1:        [STATUS.OK, STATUS.FAULT, STATUS.TODO],
+  sat2:        [STATUS.OK, STATUS.FAULT, STATUS.TODO],
+  floc_mixer:  [STATUS.OK, STATUS.FAULT, STATUS.TODO],
+  flow_rate:   [STATUS.OK, STATUS.FAULT, STATUS.TODO],
+  ph:          [STATUS.FAULT, STATUS.TODO]
+};
+
+const ALL_STATUS_BUTTONS = [
+  [STATUS.OK, 'OK'], [STATUS.WATCH, 'Monitor'],
+  [STATUS.FAULT, 'Fault'], [STATUS.TODO, 'Not done']
+];
+
+function statusButtonsFor(item) {
+  const only = STATUS_CHOICES[item.id];
+  return only ? ALL_STATUS_BUTTONS.filter(([s]) => only.includes(s)) : ALL_STATUS_BUTTONS;
+}
+
+/* ---------------- dates ----------------
+
+   The date boxes show 14/OCT/26 instead of whatever the phone's own format is
+   (10/14/2026 on this one). A date input's displayed format belongs to the
+   browser and cannot be styled, so each box is two layers: the text you read,
+   and the real date input laid invisibly over it. Tapping still opens the
+   phone's calendar, and the value underneath is still the plain YYYY-MM-DD
+   everything else reads - only what is drawn on top is different. */
+const DATE_MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+
+function fmtDateBox(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+  if (!m) return '';
+  const month = Number(m[2]) - 1;
+  if (month < 0 || month > 11) return '';
+  return `${m[3]}/${DATE_MONTHS[month]}/${m[1].slice(2)}`;
+}
+
+// The markup for one date box. `attrs` is whatever identifies the input.
+function dateBoxHtml(attrs, value) {
+  return `<span class="datebox"><span class="datebox-text" aria-hidden="true"></span>`
+    + `<input type="date" ${attrs} value="${esc(value || '')}"></span>`;
+}
+
+// Redraws the text on every date box from the date underneath it.
+function syncDateBoxes() {
+  document.querySelectorAll('.datebox').forEach(box => {
+    const input = box.querySelector('input');
+    const text = box.querySelector('.datebox-text');
+    if (!input || !text) return;
+    const shown = fmtDateBox(input.value);
+    text.textContent = shown || 'Pick a date';
+    setClass(text, 'empty', !shown);
+  });
+}
+
 function renderItem(item) {
   const v = state.values[item.id] || {};
   let control = '';
@@ -310,19 +377,12 @@ function renderItem(item) {
       </div>`;
 
   } else if (item.type === 'date') {
-    control = `
-      <div class="numrow">
-        <input type="date" data-date="${item.id}" value="${v.date ?? ''}">
-      </div>`;
+    control = dateBoxHtml(`data-date="${item.id}"`, v.date);
   }
 
-  const statuses = [
-    [STATUS.OK, 'OK'], [STATUS.WATCH, 'Monitor'],
-    [STATUS.FAULT, 'Fault'], [STATUS.TODO, 'Not done']
-  ];
   const statusRow = !showsStatusButtons(item) ? '' : `
     <div class="statusrow">
-      ${statuses.map(([s, label]) => `
+      ${statusButtonsFor(item).map(([s, label]) => `
         <button type="button" class="sbtn ${s}" data-status="${item.id}" data-value="${s}"
                 aria-pressed="${v.status === s ? 'true' : 'false'}">${label}</button>`).join('')}
     </div>`;
@@ -660,6 +720,7 @@ function refresh() {
   // The counts above can wrap the progress line onto a second row, which
   // changes how far down the sticky headers belong.
   syncTopbarHeight();
+  syncDateBoxes();
   return ev;
 }
 
@@ -1359,6 +1420,7 @@ function openDosingEntry() {
     ? 'When did you switch the dosage off? Add the meter reading if you noted it.'
     : 'When did you switch the dosage on? Add the meter reading if you noted it.';
   setClass(hint, 'problem', false);
+  syncDateBoxes();
   el('#dosingEntry').hidden = false;
 }
 
@@ -1513,6 +1575,7 @@ function openMeterEntry() {
   el('#meterDate').value = '';
   el('#meterTime').value = DEFAULT_READING_TIME;
   el('#meterValue').value = '';
+  syncDateBoxes();
   el('#meterEntry').hidden = false;
 }
 
@@ -1915,6 +1978,12 @@ function bindBackup() {
 
   el('#btnCheckUpdate').addEventListener('click', async () => {
     if (!swReg) { toast('Updates only work when opened from the web address'); return; }
+    /* Asking for an update needs signal and nothing else does. Say so, instead
+       of an error that reads as though the app itself is broken. */
+    if (navigator.onLine === false) {
+      toast('No signal right now. The app still works - check again when you have signal.');
+      return;
+    }
     toast('Checking for an update...');
     try {
       await swReg.update();
@@ -1930,7 +1999,7 @@ function bindBackup() {
       }
     } catch (err) {
       console.error('update check failed', err);
-      toast('Could not check - no connection?');
+      toast('Could not reach the internet. The app still works - try again with signal.');
     }
   });
 }
@@ -2026,6 +2095,7 @@ function hydrateFields() {
   el('#fPrefix').value = state.reportPrefix || DEFAULT_PREFIX;
   el('#fAvgWindow').value = state.avgWindowDays || DEFAULT_AVG_WINDOW;
   el('#fGeneralNote').value = state.generalNote || '';
+  syncDateBoxes();
 }
 
 function bindShell() {
@@ -2050,6 +2120,7 @@ function bindShell() {
       );
       if (!ok) {
         e.target.value = state.date;
+        syncDateBoxes();
         return;
       }
     }
@@ -2064,9 +2135,29 @@ function bindShell() {
 
   /* The "?" buttons and the fold arrows in the card headings. One listener on
      main covers both, so nothing needs re-attaching when a list is redrawn. */
-  el('main').addEventListener('click', (e) => {
+  /* A date picked on the phone redraws its text straight away, rather than
+     waiting for the next refresh. */
+  ['input', 'change'].forEach(type => document.addEventListener(type, (e) => {
+    if (e.target && e.target.closest && e.target.closest('.datebox')) syncDateBoxes();
+  }));
+
+  /* With a mouse the invisible date input would only put the cursor on a hidden
+     day/month/year segment, so the click is turned into the calendar. A finger
+     already opens it natively, and is left alone. */
+  document.addEventListener('click', (e) => {
+    const input = e.target && e.target.closest && e.target.closest('.datebox input');
+    if (!input || typeof input.showPicker !== 'function') return;
+    if (typeof window.matchMedia !== 'function' || !window.matchMedia('(pointer: fine)').matches) return;
+    try { input.showPicker(); } catch { /* already open, or not allowed right now */ }
+  });
+
+  // On the whole page, not just <main>: the Settings sheet has "?" buttons too.
+  document.addEventListener('click', (e) => {
     const help = e.target.closest('[data-help]');
     if (help) {
+      // A "?" can sit inside the Advanced heading, which must not fold open
+      // just because its help was asked for.
+      e.preventDefault();
       const panel = document.getElementById(help.dataset.help);
       if (!panel) return;
       const wasOpen = !panel.hidden;
@@ -2127,6 +2218,7 @@ function bindShell() {
   el('#btnPdf').addEventListener('click', generatePdf);
   el('#btnSettings').addEventListener('click', () => {
     renderBackupStatus();
+    renderOfflineStatus();
     renderHistory();
     renderFlowDetail(refresh());
     renderDosingAudit();
@@ -2217,27 +2309,95 @@ function showStartupProblem(detail) {
   }
 }
 
-/* Asks the browser to keep this site's storage.
+/* Asks the browser to keep this site's storage, and remembers what it said.
 
    Without it Chrome treats the readings, the cached app and everything else as
    throwaway, and can clear the lot when the phone runs short of space - which
-   takes the offline copy with it and leaves a page that only works online. */
+   takes the offline copy with it and leaves a page that only works online.
+
+   Never waited for: some browsers put a question to the user here, and a start
+   that is held up behind a question nobody sees looks like an app that will not
+   open. The answer is shown in Settings once it arrives. */
+let storageProtected = null;   // null = not known (yet)
+
 async function keepStorage() {
   try {
     if (navigator.storage && typeof navigator.storage.persist === 'function') {
-      const already = typeof navigator.storage.persisted === 'function'
+      let kept = typeof navigator.storage.persisted === 'function'
         ? await navigator.storage.persisted()
         : false;
-      if (!already) await navigator.storage.persist();
+      if (!kept) kept = await navigator.storage.persist();
+      storageProtected = !!kept;
     }
   } catch (err) {
     console.error('could not ask to keep storage', err);
   }
 }
 
+/* ---------------- does this phone hold its own copy of the app? ----------------
+
+   The app opens with no signal only because the phone saved a copy of it. That
+   copy is made by the first visit with signal, and a phone can lose it - low
+   storage, clearing the browser's data - without telling anyone. Left alone,
+   the first sign is an error page at the plant. So the phone is asked, while
+   there is still signal to fix it with, and says so plainly. */
+let offlineReady = null;       // null = not asked yet; true / false / 'n/a'
+let bootedAt = Date.now();     // not const: the tests move it to skip the wait
+
+async function checkOfflineReady() {
+  // Opened from a file, or inside the Android app: the app is already on the
+  // phone, there is nothing to download.
+  if (typeof location === 'undefined' || !String(location.protocol).startsWith('http')) return 'n/a';
+  try {
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)
+      || typeof caches === 'undefined'
+      || typeof navigator.serviceWorker.getRegistration !== 'function') return false;
+    const reg = await navigator.serviceWorker.getRegistration();
+    if (!reg || !reg.active) return false;
+    return !!(await caches.match('index.html', { ignoreSearch: true }));
+  } catch (err) {
+    console.error('could not check the saved copy', err);
+    return false;
+  }
+}
+
+async function renderOfflineStatus() {
+  offlineReady = await checkOfflineReady();
+
+  const line = el('#offlineStatus');
+  if (line) {
+    line.textContent = offlineReady === true || offlineReady === 'n/a'
+      ? 'Works without signal: yes.'
+      : 'Works without signal: not yet. Open the app once with signal.';
+    setClass(line, 'overdue', offlineReady === false);
+  }
+
+  const kept = el('#storageStatus');
+  if (kept) {
+    kept.hidden = storageProtected === null || offlineReady === 'n/a';
+    kept.textContent = storageProtected
+      ? 'Protected from phone clean-ups: yes.'
+      : 'Protected from phone clean-ups: no. Tap the ? to see how.';
+    setClass(kept, 'overdue', !storageProtected);
+  }
+
+  /* The warning strip on the main screen is only for the one case that matters:
+     the phone has no saved copy. Held back for a few seconds so it does not
+     flash up on a first visit while the copy is still being made. */
+  const nag = el('#offlineNag');
+  if (nag) nag.hidden = !(offlineReady === false && Date.now() - bootedAt > 6000);
+}
+
+// Re-asked a few times after start, so a first visit clears its own warning.
+function watchOfflineReady() {
+  [1500, 7000, 14000, 30000].forEach(ms => setTimeout(() => {
+    if (offlineReady !== true) renderOfflineStatus();
+  }, ms));
+}
+
 async function boot() {
   await checkStorage();
-  await keepStorage();
+  keepStorage().then(renderOfflineStatus);
 
   try {
     const draft = await store.get(DRAFT_ID);
@@ -2328,6 +2488,9 @@ async function boot() {
     }
   });
   if (broken.length) showStartupProblem(broken.join(', '));
+
+  renderOfflineStatus();
+  watchOfflineReady();
 
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     navigator.serviceWorker.register('sw.js').then(reg => {

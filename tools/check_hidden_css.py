@@ -30,7 +30,9 @@ def strip_comments(css):
 def find_hidden_elements(html):
     """Return [(tag, id, [classes])] for every element with a hidden attribute."""
     out = []
-    for tag in re.finditer(r"<(\w+)([^>]*\bhidden\b[^>]*)>", html):
+    # Needs whitespace before "hidden" so that aria-hidden (a screen-reader hint,
+    # not the hidden attribute) is not mistaken for it.
+    for tag in re.finditer(r"<(\w+)([^>]*\shidden(?=[\s=>/])[^>]*)>", html):
         attrs = tag.group(2)
         el_id = re.search(r'id="([^"]+)"', attrs)
         classes = re.search(r'class="([^"]+)"', attrs)

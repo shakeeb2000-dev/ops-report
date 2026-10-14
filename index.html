@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1e3a5f">
-<meta name="build-id" content="dedff0fad71a">
+<meta name="build-id" content="864649f4b6b4">
 <title>Daily Ops Report</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -389,7 +389,49 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
 /* A pressure or a flow rate is three or four digits. A field the full width of
    the phone invites a second look to check nothing is missing. */
 .item[data-type="number"] .numrow { max-width: 260px; }
-.item[data-type="date"] .numrow { max-width: 220px; }
+.item[data-type="date"] .datebox { max-width: 220px; margin-top: 8px; }
+
+/* ---- dates, drawn as 14/OCT/26 ----
+   Two layers: the text you read, and the real date input laid invisibly over
+   it. The browser's own format (10/14/2026) cannot be changed, but it can be
+   hidden - a tap lands on the invisible input, which opens the phone's calendar
+   exactly as before. */
+.datebox { position: relative; display: block; margin-top: 4px; }
+.datebox-text {
+  display: flex;
+  align-items: center;
+  min-height: 48px;          /* the same height as the time box beside it */
+  padding: 0 40px 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231e3a5f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3.5' y='5' width='17' height='15' rx='2'/%3E%3Cpath d='M3.5 10h17M8 3v4M16 3v4'/%3E%3C/svg%3E") no-repeat right 11px center / 19px;
+  font-size: 1rem;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .03em;
+}
+.datebox-text.empty { color: #8a94a1; letter-spacing: 0; }
+/* More specific than the shared input rule, so its padding, border and
+   minimum height do not push the invisible input out of line with the text. */
+.datebox input[type=date] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.datebox:focus-within .datebox-text {
+  border-color: var(--navy);
+  outline: 2px solid #9db8d8;
+  outline-offset: 1px;
+}
 
 /* ---- a short reading and its four buttons on one line ----
    Saturators (3 digits), flow rate (4) and the three pH points (3-4 each).
@@ -410,7 +452,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
 }
 .inline-row > .numrow,
 .inline-row > .multirow { flex: 0 0 auto; margin-top: 0; }
-.inline-row > .statusrow { flex: 1 1 165px; min-width: 165px; margin-top: 0; }
+.inline-row > .statusrow { flex: 1 1 150px; min-width: 150px; margin-top: 0; }
 .inline-row .sbtn {
   flex: 1 1 auto;
   min-width: auto;
@@ -431,31 +473,50 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
 .inline-row input[type=number]::-webkit-outer-spin-button,
 .inline-row input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 
-/* pH: three small boxes, each with its point number tucked into the corner
-   instead of on a line of its own above. */
-.inline-row > .multirow { gap: 4px; flex-wrap: nowrap; }
+/* pH: three big boxes, each with its point number in the corner.
+
+   The row is only Fault and Not done now - OK comes from the readings being
+   inside their limits - so the buttons take about 115px and the boxes share
+   everything else: roughly 65px each on a 412px phone, 55px on a 360px one,
+   against 40px before. The buttons stay on the same line. */
+.inline-row > .multirow {
+  /* A small starting size that then grows into whatever the buttons leave.
+     Starting from the boxes' own natural width (what "auto" means) made the row
+     look too wide to share a line with the buttons, and they dropped below. */
+  flex: 1 1 120px;
+  min-width: 0;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
 /* Three classes deep on purpose: ".multirow.narrow label" further up sets
    flex: 0 1 84px and would otherwise win. */
 .inline-row .multirow .mfield {
   position: relative;
-  flex: 0 0 40px;
-  min-width: 0;
+  flex: 1 1 0;
+  min-width: 46px;
+  max-width: 88px;
   margin: 0;
 }
 .inline-row .mfield input {
   margin-top: 0;
-  padding: 13px 2px 3px;
+  height: 54px;
+  min-height: 54px;
+  padding: 18px 4px 4px;
   text-align: center;
+  font-size: 1.2rem;
+  font-weight: 600;
 }
 .inline-row .mtag {
   position: absolute;
-  top: 3px; left: 5px;
-  font-size: .58rem;
+  top: 5px; left: 9px;
+  font-size: .68rem;
   font-weight: 800;
   line-height: 1;
   color: var(--slate);
   pointer-events: none;   /* a tap on the number still lands in the box */
 }
+.item[data-item="ph"] .inline-row > .statusrow { flex: 0 0 auto; min-width: 0; }
+.item[data-item="ph"] .inline-row .sbtn { padding: 2px 11px; }
 /* The focus ring belongs on the whole field, since overflow:hidden would
    clip a ring drawn on the input itself. */
 .numrow:focus-within { border-color: var(--navy); outline: 2px solid #9db8d8; outline-offset: 1px; }
@@ -840,8 +901,10 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
 
 /* ---------------- backup ---------------- */
 
-/* The reminder on the main screen: one line, only when a backup is due. */
-.backup-nag {
+/* A warning strip on the main screen: one short message, only when it applies.
+   Two use it - "no backup lately" and "this phone has no saved copy of the
+   app". */
+.nag {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -855,10 +918,10 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
   font-size: .82rem;
   line-height: 1.35;
 }
-/* Must stay: .backup-nag sets display, which beats the hidden attribute. */
-.backup-nag[hidden] { display: none; }
-.backup-nag span { flex: 1 1 auto; }
-.backup-nag .btn {
+/* Must stay: .nag sets display, which beats the hidden attribute. */
+.nag[hidden] { display: none; }
+.nag span { flex: 1 1 auto; }
+.nag .btn {
   flex: 0 0 auto;
   min-height: 40px;
   padding: 0 14px;
@@ -870,17 +933,38 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
 
 /* ---------------- settings ---------------- */
 
-/* Settings that belong together sit under one rule, each with its own name. */
-.sheet-inner h2.sub { margin-top: 18px; }
+/* A section heading with its "?" at the right, as on the morning sheet's
+   cards. Everything the section is for sits behind the "?". */
+.sheet-inner .set-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 30px;
+  margin: 16px 0 8px;
+}
+.sheet-inner .set-head:first-of-type { margin-top: 4px; }
+.sheet-inner .set-head > h2 { margin: 0; }
+.sheet-inner .set-head .card-tools { margin: -6px -2px -6px 0; }
+.sheet-inner .help-text { margin: 0 0 12px; }
+.sheet-inner .help-text p { margin: 0 0 8px; }
+.sheet-inner .help-text p:last-child { margin-bottom: 0; }
+.sheet-inner hr { margin: 16px 0 6px; }
+
+/* The version number is the one thing here worth reading at a glance. */
+.version-status { margin: 0 0 6px; font-size: .88rem; color: var(--ink); }
+.sheet-inner .backup-status { margin: 0 0 8px; }
+.sheet-inner .backup-status[hidden] { display: none; }
 
 /* The working-out and repair panels, folded away: needed for an odd question,
-   not day to day. */
+   not day to day. The "?" sits inside the heading, so tapping it asks for help
+   without folding the panel open (app.js calls preventDefault). */
 .advanced > summary {
   cursor: pointer;
   list-style: none;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 10px;
   min-height: var(--tap);
   font-size: .85rem;
   font-weight: 700;
@@ -888,11 +972,13 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
   letter-spacing: .05em;
   color: var(--navy);
 }
+.advanced > summary > span { flex: 1 1 auto; }
 .advanced > summary::-webkit-details-marker { display: none; }
 .advanced > summary::after {
   content: "";
+  flex: 0 0 auto;
   width: 9px; height: 9px;
-  margin-right: 6px;
+  margin: 0 8px 0 2px;
   border-right: 2.2px solid var(--slate);
   border-bottom: 2.2px solid var(--slate);
   transform: rotate(45deg) translateY(-3px);
@@ -1025,9 +1111,18 @@ body.no-scroll { overflow: hidden; }
   <!-- ---------- backup reminder ----------
        Shown by renderBackupStatus() only when a backup is overdue. Everything
        lives on this one phone, so this is the nudge that keeps a copy of it. -->
-  <div class="backup-nag" id="backupNag" hidden>
+  <div class="nag" id="backupNag" hidden>
     <span id="backupNagText">&nbsp;</span>
     <button type="button" class="btn btn-primary" id="btnBackupNag">Save a backup</button>
+  </div>
+
+  <!-- ---------- no saved copy of the app on this phone ----------
+       Shown by renderOfflineStatus() only when the phone has not saved its own
+       copy of the app. Without that copy the app will not open with no signal,
+       and this says so while there is still signal to fix it with. -->
+  <div class="nag" id="offlineNag" hidden>
+    <span>This phone has not saved its own copy of the app yet, so it will not open
+    without signal. Stay connected a moment, or open the app again with signal.</span>
   </div>
 
   <!-- ---------- report details ---------- -->
@@ -1046,7 +1141,7 @@ body.no-scroll { overflow: hidden; }
     </div>
     <div class="field-grid">
       <label>Date
-        <input type="date" id="fDate">
+        <span class="datebox"><span class="datebox-text" aria-hidden="true"></span><input type="date" id="fDate"></span>
       </label>
       <label>Time of readings
         <input type="time" id="fReadingTime">
@@ -1080,7 +1175,7 @@ body.no-scroll { overflow: hidden; }
     <div class="dosing-entry" id="meterEntry" hidden>
       <div class="field-grid">
         <label>Date
-          <input type="date" id="meterDate">
+          <span class="datebox"><span class="datebox-text" aria-hidden="true"></span><input type="date" id="meterDate"></span>
         </label>
         <label>Time
           <input type="time" id="meterTime">
@@ -1128,7 +1223,7 @@ body.no-scroll { overflow: hidden; }
     <div class="dosing-entry" id="dosingEntry" hidden>
       <div class="field-grid">
         <label>Date
-          <input type="date" id="dosingDate">
+          <span class="datebox"><span class="datebox-text" aria-hidden="true"></span><input type="date" id="dosingDate"></span>
         </label>
         <label>Time
           <input type="time" id="dosingTime">
@@ -1181,9 +1276,13 @@ body.no-scroll { overflow: hidden; }
 </nav>
 
 <!-- ---------- settings sheet ----------
-     In order of how often each part is needed: the backup first, because it is
-     the one thing that should be done regularly; then the one-off setup; the
-     working-out and repair panels last, folded away under Advanced. -->
+     Every section is its title and its controls; what the section is for sits
+     behind the "?" beside the title, as on the morning sheet. Only live
+     figures stay in view (last backup, version, whether the app works without
+     signal), because those change and are the reason to look.
+     Order: starting a new report first, then the backup (the one thing to do
+     regularly), then one-off setup, with the working-out and repair panels last
+     under Advanced. -->
 <div id="settingsSheet" class="sheet" hidden>
   <div class="sheet-inner">
     <div class="sheet-head">
@@ -1191,47 +1290,110 @@ body.no-scroll { overflow: hidden; }
       <button class="icon-btn" data-close-sheet>&times;</button>
     </div>
 
-    <h2>Backup</h2>
-    <p class="backup-status" id="backupStatus">&nbsp;</p>
-    <p class="muted small">
-      Everything is kept on this phone only. If it is lost or reset, your reports
+    <div class="set-head">
+      <h2>New report</h2>
+      <div class="card-tools">
+        <button type="button" class="help-btn" data-help="helpNew"
+                aria-expanded="false" aria-label="What this does">?</button>
+      </div>
+    </div>
+    <div class="help-text" id="helpNew" hidden>
+      Clears everything on screen so you can start again. Your name, site and
+      trigger levels are kept, and reports you have already saved are not touched.
+    </div>
+    <button id="btnNewReport" class="btn btn-ghost full">&#10227; Start a new report</button>
+
+    <hr>
+    <div class="set-head">
+      <h2>Backup</h2>
+      <div class="card-tools">
+        <button type="button" class="help-btn" data-help="helpBackup"
+                aria-expanded="false" aria-label="What this is for">?</button>
+      </div>
+    </div>
+    <div class="help-text" id="helpBackup" hidden>
+      <p>Everything is kept on this phone only. If it is lost or reset, your reports
       go with it &mdash; so save a backup now and again, somewhere off the phone
-      such as your email or Google Drive. Photos are not included.
-    </p>
+      such as your email or Google Drive. Photos are not included.</p>
+      <p><strong>Using two devices?</strong> Load the other one&rsquo;s backup here to
+      bring them together. Readings and dosing times from both are combined; where
+      the same morning exists on both, the one saved later is kept.</p>
+    </div>
+    <p class="backup-status" id="backupStatus">&nbsp;</p>
     <div class="sheet-foot">
       <button id="btnBackupExport" class="btn btn-primary">Save a backup</button>
       <button id="btnBackupImport" class="btn btn-ghost">Load a backup</button>
     </div>
-    <p class="muted small">
-      <strong>Using two devices?</strong> Load the other one&rsquo;s backup here to
-      bring them together. Readings and dosing times from both are combined; where
-      the same morning exists on both, the one saved later is kept.
-    </p>
     <input type="file" id="backupInput" accept=".json,application/json" hidden>
 
     <hr>
-    <h2>App version</h2>
-    <p class="muted small">
-      Running version <strong class="js-build-id">dev</strong>. If you have just
-      uploaded an update and this number has not changed, tap below &mdash; the
-      phone can hold on to the old copy otherwise.
-    </p>
+    <div class="set-head">
+      <h2>App version</h2>
+      <div class="card-tools">
+        <button type="button" class="help-btn" data-help="helpVersion"
+                aria-expanded="false" aria-label="What this is for">?</button>
+      </div>
+    </div>
+    <div class="help-text" id="helpVersion" hidden>
+      <p>The app keeps its own copy on this phone, so it opens with no signal. It
+      only needs signal to get the app the first time, and to pick up a new version
+      after you upload one.</p>
+      <p>If you have just uploaded an update and the version below has not changed,
+      tap <strong>Check for an update</strong> &mdash; the phone can hold on to the
+      old copy otherwise.</p>
+      <p><strong>Open it from the app&rsquo;s icon</strong> on your Home screen. An
+      address typed into Chrome without the final <strong>/</strong> cannot use the
+      saved copy, and will ask the internet instead.</p>
+      <p><strong>Protected from phone clean-ups:</strong> if this says no, the phone
+      may delete the app&rsquo;s saved copy &mdash; and your readings &mdash; when it
+      runs short of space. Adding the app to your Home screen (Chrome menu, then
+      <strong>Install app</strong>) protects them. Save a backup either way.</p>
+    </div>
+    <p class="version-status">Version <strong class="js-build-id">dev</strong></p>
+    <p class="backup-status" id="offlineStatus">&nbsp;</p>
+    <p class="backup-status" id="storageStatus" hidden>&nbsp;</p>
     <button id="btnCheckUpdate" class="btn btn-ghost full">&#10227; Check for an update</button>
 
     <hr>
-    <h2>Your name</h2>
-    <p class="muted small">Shown on every report as the person who did the checks.</p>
+    <div class="set-head">
+      <h2>Your name</h2>
+      <div class="card-tools">
+        <button type="button" class="help-btn" data-help="helpName"
+                aria-expanded="false" aria-label="What this is for">?</button>
+      </div>
+    </div>
+    <div class="help-text" id="helpName" hidden>
+      Shown on every report as the person who did the checks.
+    </div>
     <input type="text" id="fReporter" autocomplete="name" placeholder="Your name">
 
-    <h2 class="sub">Company name</h2>
+    <div class="set-head">
+      <h2>Company name</h2>
+    </div>
     <input type="text" id="fSite" placeholder="Shown in the PDF header">
 
-    <h2 class="sub">Report number prefix</h2>
-    <p class="muted small">Used for the reference on each report, e.g. ATP-DOR-2026-09-28.</p>
+    <div class="set-head">
+      <h2>Report number prefix</h2>
+      <div class="card-tools">
+        <button type="button" class="help-btn" data-help="helpPrefix"
+                aria-expanded="false" aria-label="What this is for">?</button>
+      </div>
+    </div>
+    <div class="help-text" id="helpPrefix" hidden>
+      Used for the reference on each report, e.g. ATP-DOR-2026-09-28.
+    </div>
     <input type="text" id="fPrefix" placeholder="ATP-DOR">
 
-    <h2 class="sub">Company logo</h2>
-    <p class="muted small">Appears at the top of every PDF. Pick it once and it is remembered.</p>
+    <div class="set-head">
+      <h2>Company logo</h2>
+      <div class="card-tools">
+        <button type="button" class="help-btn" data-help="helpLogo"
+                aria-expanded="false" aria-label="What this is for">?</button>
+      </div>
+    </div>
+    <div class="help-text" id="helpLogo" hidden>
+      Appears at the top of every PDF. Pick it once and it is remembered.
+    </div>
     <div class="logo-row">
       <div class="logo-preview" id="logoPreview"><span class="muted small">No logo</span></div>
       <div class="logo-actions">
@@ -1242,79 +1404,108 @@ body.no-scroll { overflow: hidden; }
     <input type="file" accept="image/*" id="logoInput" hidden>
 
     <hr>
-    <h2>Trigger levels</h2>
-    <p class="muted small">
+    <div class="set-head">
+      <h2>Trigger levels</h2>
+      <div class="card-tools">
+        <button type="button" class="help-btn" data-help="helpLevels"
+                aria-expanded="false" aria-label="What this is for">?</button>
+      </div>
+    </div>
+    <div class="help-text" id="helpLevels" hidden>
       The numbers that decide when a check is flagged. At or past
       <strong>Fault</strong> it is reported as a fault; at or past
       <strong>Monitor</strong>, as needing a watch. The four chemicals are judged
       on how many days they will last. Their litre levels are only used until the
       app has enough history to know how fast each one goes.
-    </p>
+    </div>
     <div id="thresholdForm"></div>
     <div class="sheet-foot">
       <button id="btnResetThresholds" class="btn btn-ghost">Reset to defaults</button>
     </div>
 
     <hr>
-    <h2>Average usage</h2>
-    <p class="muted small">
+    <div class="set-head">
+      <h2>Average usage</h2>
+      <div class="card-tools">
+        <button type="button" class="help-btn" data-help="helpAverage"
+                aria-expanded="false" aria-label="What this is for">?</button>
+      </div>
+    </div>
+    <div class="help-text" id="helpAverage" hidden>
       How far back to look when working out average daily use. Reports older than
       this are ignored. Because a report can cover several days &mdash; a weekend
       or a few days off &mdash; the average may end up covering slightly more days
       than this number.
-    </p>
+    </div>
     <label>Look back this many days
       <input type="number" id="fAvgWindow" inputmode="numeric" step="1" min="1" placeholder="14">
     </label>
 
     <hr>
-    <h2>Saved reports</h2>
-    <div id="historyList" class="history"></div>
-
-    <hr>
-    <h2>New report</h2>
-    <p class="muted small">
-      Clears everything on screen so you can start again. Your name, site and
-      trigger levels are kept, and reports you have already saved are not touched.
-    </p>
-    <button id="btnNewReport" class="btn btn-ghost full">&#10227; Start a new report</button>
-
-    <hr>
     <details class="advanced">
-      <summary>Advanced</summary>
-      <p class="muted small">How the figures are worked out, and repairs. Not needed day to day.</p>
+      <summary>
+        <span>Advanced</span>
+        <button type="button" class="help-btn" data-help="helpAdvanced"
+                aria-expanded="false" aria-label="What this is for">?</button>
+      </summary>
+      <div class="help-text" id="helpAdvanced" hidden>
+        Saved reports, how the figures are worked out, and repairs. Not needed day to day.
+      </div>
 
-      <h2>Where the average flow comes from</h2>
-    <p class="muted small">
-      The water the meter recorded, divided by the hours, over past days when
-      the dosing ran right through from one meter reading to the next. Only
-      those days can be measured exactly, so only those are used. Your Flow
-      rate check is not part of this - it is reported as you type it.
-    </p>
-    <div id="flowDetail"></div>
+      <div class="set-head">
+        <h2>Saved reports</h2>
+      </div>
+      <div id="historyList" class="history"></div>
 
-    <hr>
-    <h2>Every dosing entry</h2>
-    <p class="muted small">
-      The full list, newest first. An extra entry in the middle of a day stops
-      that day counting towards the average flow above. Remove any wrong ones from the
-      Chemical dosing card on the main screen.
-    </p>
-    <div id="dosingAudit"></div>
-    <p class="muted small">
-      Deleting <strong>every</strong> entry and reopening the app brings back the
-      seven times recorded on paper.
-    </p>
+      <hr>
+      <div class="set-head">
+        <h2>Where the average flow comes from</h2>
+        <div class="card-tools">
+          <button type="button" class="help-btn" data-help="helpFlow"
+                  aria-expanded="false" aria-label="What this is for">?</button>
+        </div>
+      </div>
+      <div class="help-text" id="helpFlow" hidden>
+        The water the meter recorded, divided by the hours, over past days when
+        the dosing ran right through from one meter reading to the next. Only
+        those days can be measured exactly, so only those are used. Your Flow
+        rate check is not part of this &mdash; it is reported as you type it.
+      </div>
+      <div id="flowDetail"></div>
 
-      <h2>Recorded readings and reports</h2>
-    <p class="muted small">
-      Puts back everything written down before the app existed &mdash; the meter
-      readings <em>and</em> the reports for 11 Sep to 2 Oct 2026. Use this if the
-      average flow looks wrong, or if the panel above says
-      <strong>meter reading missing</strong> for any of those days. Anything
-      saved for those dates is replaced; other dates are untouched.
-    </p>
-    <button id="btnMeterRestore" class="btn btn-ghost full">&#10227; Put back the recorded readings and reports</button>
+      <hr>
+      <div class="set-head">
+        <h2>Every dosing entry</h2>
+        <div class="card-tools">
+          <button type="button" class="help-btn" data-help="helpAudit"
+                  aria-expanded="false" aria-label="What this is for">?</button>
+        </div>
+      </div>
+      <div class="help-text" id="helpAudit" hidden>
+        <p>The full list, newest first. An extra entry in the middle of a day stops
+        that day counting towards the average flow above. Remove any wrong ones from
+        the Chemical dosing card on the main screen.</p>
+        <p>Deleting <strong>every</strong> entry and reopening the app brings back
+        the seven times recorded on paper.</p>
+      </div>
+      <div id="dosingAudit"></div>
+
+      <hr>
+      <div class="set-head">
+        <h2>Recorded readings and reports</h2>
+        <div class="card-tools">
+          <button type="button" class="help-btn" data-help="helpRecorded"
+                  aria-expanded="false" aria-label="What this is for">?</button>
+        </div>
+      </div>
+      <div class="help-text" id="helpRecorded" hidden>
+        Puts back everything written down before the app existed &mdash; the meter
+        readings <em>and</em> the reports for 11 Sep to 2 Oct 2026. Use this if the
+        average flow looks wrong, or if the panel above says
+        <strong>meter reading missing</strong> for any of those days. Anything
+        saved for those dates is replaced; other dates are untouched.
+      </div>
+      <button id="btnMeterRestore" class="btn btn-ghost full">&#10227; Put back the recorded readings and reports</button>
     </details>
   </div>
 </div>
@@ -1479,11 +1670,18 @@ const DONE_OPTIONS = [
 ];
 
 // Standard wastewater clarity descriptors.
+//
+// "Not running" is for the days the DAF is stopped, so there is no effluent to
+// judge. That is not a problem, so it is green - and it has no badge of its
+// own, so the report prints "Not running" beside the tick rather than
+// replacing the tick's wording. It sits beside "Clear" so the two green
+// answers are together and the ones that need attention follow.
 const CLARITY_OPTIONS = [
-  { value: 'clear',   label: 'Clear',           status: STATUS.OK },
-  { value: 'slight',  label: 'Slightly turbid', status: STATUS.WATCH },
-  { value: 'turbid',  label: 'Turbid',          status: STATUS.FAULT },
-  { value: 'offline', label: 'Out of service',  status: STATUS.FAULT }
+  { value: 'clear',      label: 'Clear',           status: STATUS.OK },
+  { value: 'notrunning', label: 'Not running',     status: STATUS.OK },
+  { value: 'slight',     label: 'Slightly turbid', status: STATUS.WATCH },
+  { value: 'turbid',     label: 'Turbid',          status: STATUS.FAULT },
+  { value: 'offline',    label: 'Out of service',  status: STATUS.FAULT }
 ];
 
 // Housekeeping grades for the underpits.
@@ -1567,10 +1765,13 @@ const CHECKLIST = [
             default: { choice: 'no' } },
           { id: 'waste_tanks', label: 'Waste Tanks - Overflow', type: 'choice', options: YES_NO_OPTIONS,
             default: { choice: 'no' } },
+          // No starting value: the pressure is different every morning, and a
+          // made-up 500 sat exactly on the fault level, so both saturators
+          // opened as a fault before anyone had looked at them.
           { id: 'sat1', label: 'Saturator DAF 1', type: 'number', unit: 'kPa', threshold: 'saturator',
-            decimals: 0, default: { value: 500 } },
+            decimals: 0 },
           { id: 'sat2', label: 'Saturator DAF 2', type: 'number', unit: 'kPa', threshold: 'saturator',
-            decimals: 0, default: { value: 500 } },
+            decimals: 0 },
           {
             // Each reading comes off a different point, so each has its own limits.
             id: 'ph', label: 'pH readings', type: 'multi',
@@ -4557,6 +4758,73 @@ function showsStatusButtons(item) {
   return !NO_STATUS_BUTTONS.has(item.id);
 }
 
+/* Which buttons a check offers, where that is fewer than all four.
+
+   At the operator's request the Monitor button is gone from the checks below,
+   and the pH row has lost OK as well, which is what leaves room for bigger pH
+   boxes. Anything not listed here keeps all four.
+
+   Only the button you tap by hand is removed. The app still works out Monitor
+   for itself from the typed readings and the trigger levels in Settings - a
+   saturator at 600 kPa is still flagged as drifting - and OK on the pH row
+   comes the same way, from readings inside their limits. */
+const STATUS_CHOICES = {
+  bio_vacuum:  [STATUS.OK, STATUS.FAULT, STATUS.TODO],
+  daf_pumps:   [STATUS.OK, STATUS.FAULT, STATUS.TODO],
+  daf_paddles: [STATUS.OK, STATUS.FAULT, STATUS.TODO],
+  sat1:        [STATUS.OK, STATUS.FAULT, STATUS.TODO],
+  sat2:        [STATUS.OK, STATUS.FAULT, STATUS.TODO],
+  floc_mixer:  [STATUS.OK, STATUS.FAULT, STATUS.TODO],
+  flow_rate:   [STATUS.OK, STATUS.FAULT, STATUS.TODO],
+  ph:          [STATUS.FAULT, STATUS.TODO]
+};
+
+const ALL_STATUS_BUTTONS = [
+  [STATUS.OK, 'OK'], [STATUS.WATCH, 'Monitor'],
+  [STATUS.FAULT, 'Fault'], [STATUS.TODO, 'Not done']
+];
+
+function statusButtonsFor(item) {
+  const only = STATUS_CHOICES[item.id];
+  return only ? ALL_STATUS_BUTTONS.filter(([s]) => only.includes(s)) : ALL_STATUS_BUTTONS;
+}
+
+/* ---------------- dates ----------------
+
+   The date boxes show 14/OCT/26 instead of whatever the phone's own format is
+   (10/14/2026 on this one). A date input's displayed format belongs to the
+   browser and cannot be styled, so each box is two layers: the text you read,
+   and the real date input laid invisibly over it. Tapping still opens the
+   phone's calendar, and the value underneath is still the plain YYYY-MM-DD
+   everything else reads - only what is drawn on top is different. */
+const DATE_MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+
+function fmtDateBox(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+  if (!m) return '';
+  const month = Number(m[2]) - 1;
+  if (month < 0 || month > 11) return '';
+  return `${m[3]}/${DATE_MONTHS[month]}/${m[1].slice(2)}`;
+}
+
+// The markup for one date box. `attrs` is whatever identifies the input.
+function dateBoxHtml(attrs, value) {
+  return `<span class="datebox"><span class="datebox-text" aria-hidden="true"></span>`
+    + `<input type="date" ${attrs} value="${esc(value || '')}"></span>`;
+}
+
+// Redraws the text on every date box from the date underneath it.
+function syncDateBoxes() {
+  document.querySelectorAll('.datebox').forEach(box => {
+    const input = box.querySelector('input');
+    const text = box.querySelector('.datebox-text');
+    if (!input || !text) return;
+    const shown = fmtDateBox(input.value);
+    text.textContent = shown || 'Pick a date';
+    setClass(text, 'empty', !shown);
+  });
+}
+
 function renderItem(item) {
   const v = state.values[item.id] || {};
   let control = '';
@@ -4641,19 +4909,12 @@ function renderItem(item) {
       </div>`;
 
   } else if (item.type === 'date') {
-    control = `
-      <div class="numrow">
-        <input type="date" data-date="${item.id}" value="${v.date ?? ''}">
-      </div>`;
+    control = dateBoxHtml(`data-date="${item.id}"`, v.date);
   }
 
-  const statuses = [
-    [STATUS.OK, 'OK'], [STATUS.WATCH, 'Monitor'],
-    [STATUS.FAULT, 'Fault'], [STATUS.TODO, 'Not done']
-  ];
   const statusRow = !showsStatusButtons(item) ? '' : `
     <div class="statusrow">
-      ${statuses.map(([s, label]) => `
+      ${statusButtonsFor(item).map(([s, label]) => `
         <button type="button" class="sbtn ${s}" data-status="${item.id}" data-value="${s}"
                 aria-pressed="${v.status === s ? 'true' : 'false'}">${label}</button>`).join('')}
     </div>`;
@@ -4991,6 +5252,7 @@ function refresh() {
   // The counts above can wrap the progress line onto a second row, which
   // changes how far down the sticky headers belong.
   syncTopbarHeight();
+  syncDateBoxes();
   return ev;
 }
 
@@ -5690,6 +5952,7 @@ function openDosingEntry() {
     ? 'When did you switch the dosage off? Add the meter reading if you noted it.'
     : 'When did you switch the dosage on? Add the meter reading if you noted it.';
   setClass(hint, 'problem', false);
+  syncDateBoxes();
   el('#dosingEntry').hidden = false;
 }
 
@@ -5844,6 +6107,7 @@ function openMeterEntry() {
   el('#meterDate').value = '';
   el('#meterTime').value = DEFAULT_READING_TIME;
   el('#meterValue').value = '';
+  syncDateBoxes();
   el('#meterEntry').hidden = false;
 }
 
@@ -6246,6 +6510,12 @@ function bindBackup() {
 
   el('#btnCheckUpdate').addEventListener('click', async () => {
     if (!swReg) { toast('Updates only work when opened from the web address'); return; }
+    /* Asking for an update needs signal and nothing else does. Say so, instead
+       of an error that reads as though the app itself is broken. */
+    if (navigator.onLine === false) {
+      toast('No signal right now. The app still works - check again when you have signal.');
+      return;
+    }
     toast('Checking for an update...');
     try {
       await swReg.update();
@@ -6261,7 +6531,7 @@ function bindBackup() {
       }
     } catch (err) {
       console.error('update check failed', err);
-      toast('Could not check - no connection?');
+      toast('Could not reach the internet. The app still works - try again with signal.');
     }
   });
 }
@@ -6357,6 +6627,7 @@ function hydrateFields() {
   el('#fPrefix').value = state.reportPrefix || DEFAULT_PREFIX;
   el('#fAvgWindow').value = state.avgWindowDays || DEFAULT_AVG_WINDOW;
   el('#fGeneralNote').value = state.generalNote || '';
+  syncDateBoxes();
 }
 
 function bindShell() {
@@ -6381,6 +6652,7 @@ function bindShell() {
       );
       if (!ok) {
         e.target.value = state.date;
+        syncDateBoxes();
         return;
       }
     }
@@ -6395,9 +6667,29 @@ function bindShell() {
 
   /* The "?" buttons and the fold arrows in the card headings. One listener on
      main covers both, so nothing needs re-attaching when a list is redrawn. */
-  el('main').addEventListener('click', (e) => {
+  /* A date picked on the phone redraws its text straight away, rather than
+     waiting for the next refresh. */
+  ['input', 'change'].forEach(type => document.addEventListener(type, (e) => {
+    if (e.target && e.target.closest && e.target.closest('.datebox')) syncDateBoxes();
+  }));
+
+  /* With a mouse the invisible date input would only put the cursor on a hidden
+     day/month/year segment, so the click is turned into the calendar. A finger
+     already opens it natively, and is left alone. */
+  document.addEventListener('click', (e) => {
+    const input = e.target && e.target.closest && e.target.closest('.datebox input');
+    if (!input || typeof input.showPicker !== 'function') return;
+    if (typeof window.matchMedia !== 'function' || !window.matchMedia('(pointer: fine)').matches) return;
+    try { input.showPicker(); } catch { /* already open, or not allowed right now */ }
+  });
+
+  // On the whole page, not just <main>: the Settings sheet has "?" buttons too.
+  document.addEventListener('click', (e) => {
     const help = e.target.closest('[data-help]');
     if (help) {
+      // A "?" can sit inside the Advanced heading, which must not fold open
+      // just because its help was asked for.
+      e.preventDefault();
       const panel = document.getElementById(help.dataset.help);
       if (!panel) return;
       const wasOpen = !panel.hidden;
@@ -6458,6 +6750,7 @@ function bindShell() {
   el('#btnPdf').addEventListener('click', generatePdf);
   el('#btnSettings').addEventListener('click', () => {
     renderBackupStatus();
+    renderOfflineStatus();
     renderHistory();
     renderFlowDetail(refresh());
     renderDosingAudit();
@@ -6548,27 +6841,95 @@ function showStartupProblem(detail) {
   }
 }
 
-/* Asks the browser to keep this site's storage.
+/* Asks the browser to keep this site's storage, and remembers what it said.
 
    Without it Chrome treats the readings, the cached app and everything else as
    throwaway, and can clear the lot when the phone runs short of space - which
-   takes the offline copy with it and leaves a page that only works online. */
+   takes the offline copy with it and leaves a page that only works online.
+
+   Never waited for: some browsers put a question to the user here, and a start
+   that is held up behind a question nobody sees looks like an app that will not
+   open. The answer is shown in Settings once it arrives. */
+let storageProtected = null;   // null = not known (yet)
+
 async function keepStorage() {
   try {
     if (navigator.storage && typeof navigator.storage.persist === 'function') {
-      const already = typeof navigator.storage.persisted === 'function'
+      let kept = typeof navigator.storage.persisted === 'function'
         ? await navigator.storage.persisted()
         : false;
-      if (!already) await navigator.storage.persist();
+      if (!kept) kept = await navigator.storage.persist();
+      storageProtected = !!kept;
     }
   } catch (err) {
     console.error('could not ask to keep storage', err);
   }
 }
 
+/* ---------------- does this phone hold its own copy of the app? ----------------
+
+   The app opens with no signal only because the phone saved a copy of it. That
+   copy is made by the first visit with signal, and a phone can lose it - low
+   storage, clearing the browser's data - without telling anyone. Left alone,
+   the first sign is an error page at the plant. So the phone is asked, while
+   there is still signal to fix it with, and says so plainly. */
+let offlineReady = null;       // null = not asked yet; true / false / 'n/a'
+let bootedAt = Date.now();     // not const: the tests move it to skip the wait
+
+async function checkOfflineReady() {
+  // Opened from a file, or inside the Android app: the app is already on the
+  // phone, there is nothing to download.
+  if (typeof location === 'undefined' || !String(location.protocol).startsWith('http')) return 'n/a';
+  try {
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)
+      || typeof caches === 'undefined'
+      || typeof navigator.serviceWorker.getRegistration !== 'function') return false;
+    const reg = await navigator.serviceWorker.getRegistration();
+    if (!reg || !reg.active) return false;
+    return !!(await caches.match('index.html', { ignoreSearch: true }));
+  } catch (err) {
+    console.error('could not check the saved copy', err);
+    return false;
+  }
+}
+
+async function renderOfflineStatus() {
+  offlineReady = await checkOfflineReady();
+
+  const line = el('#offlineStatus');
+  if (line) {
+    line.textContent = offlineReady === true || offlineReady === 'n/a'
+      ? 'Works without signal: yes.'
+      : 'Works without signal: not yet. Open the app once with signal.';
+    setClass(line, 'overdue', offlineReady === false);
+  }
+
+  const kept = el('#storageStatus');
+  if (kept) {
+    kept.hidden = storageProtected === null || offlineReady === 'n/a';
+    kept.textContent = storageProtected
+      ? 'Protected from phone clean-ups: yes.'
+      : 'Protected from phone clean-ups: no. Tap the ? to see how.';
+    setClass(kept, 'overdue', !storageProtected);
+  }
+
+  /* The warning strip on the main screen is only for the one case that matters:
+     the phone has no saved copy. Held back for a few seconds so it does not
+     flash up on a first visit while the copy is still being made. */
+  const nag = el('#offlineNag');
+  if (nag) nag.hidden = !(offlineReady === false && Date.now() - bootedAt > 6000);
+}
+
+// Re-asked a few times after start, so a first visit clears its own warning.
+function watchOfflineReady() {
+  [1500, 7000, 14000, 30000].forEach(ms => setTimeout(() => {
+    if (offlineReady !== true) renderOfflineStatus();
+  }, ms));
+}
+
 async function boot() {
   await checkStorage();
-  await keepStorage();
+  keepStorage().then(renderOfflineStatus);
 
   try {
     const draft = await store.get(DRAFT_ID);
@@ -6659,6 +7020,9 @@ async function boot() {
     }
   });
   if (broken.length) showStartupProblem(broken.join(', '));
+
+  renderOfflineStatus();
+  watchOfflineReady();
 
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     navigator.serviceWorker.register('sw.js').then(reg => {

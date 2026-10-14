@@ -95,7 +95,46 @@ check('other items DO show status buttons',
   [...byType.status, ...byType.number, ...byType.multi]
     .filter(id => !noButtons.includes(id))
     .every(id => html.includes(`data-status="${id}"`)));
+/* Monitor buttons were taken off these checks at the operator's request, and
+   the pH row lost OK as well. The app still works out Monitor for itself from
+   the readings - only the button tapped by hand is gone. */
+const buttonsOf = (id) => {
+  const found = [];
+  const re = new RegExp(`data-status="${id}" data-value="([a-z]+)"`, 'g');
+  let m;
+  while ((m = re.exec(html))) found.push(m[1]);
+  return found.join(',');
+};
+['bio_vacuum', 'daf_pumps', 'daf_paddles', 'sat1', 'sat2', 'floc_mixer', 'flow_rate'].forEach(id => {
+  check(`${id} offers OK, Fault and Not done - and no Monitor`, buttonsOf(id) === 'ok,fault,todo', buttonsOf(id));
+});
+check('pH offers only Fault and Not done', buttonsOf('ph') === 'fault,todo', buttonsOf('ph'));
+['tank1_mixer', 'pit_pump', 'duct_lamb_cooker', 'duct_drier3'].forEach(id => {
+  check(`${id} was not on the list, so keeps all four buttons`,
+    buttonsOf(id) === 'ok,watch,fault,todo', buttonsOf(id));
+});
+check('Monitor is still worked out automatically for a reading that drifts',
+  run(`(() => { state = blankState(); state.values.sat1 = { value: 610 };
+    return evaluate(state, null, [], []).items.sat1.status; })()`) === 'watch');
+check('and a pH set inside its limits is ok with no OK button to tap',
+  run(`(() => { state = blankState(); state.values.ph = { a: 5.2, b: 6.3, c: 7.0 };
+    return evaluate(state, null, [], []).items.ph.status; })()`) === 'ok');
+
 check('no template leftovers', !html.includes('undefined') && !html.includes('[object'));
+
+/* Dates are drawn as 14/OCT/26. The phone's own format (10/14/2026) cannot be
+   changed, so each box is the text you read with the real date input laid
+   invisibly over it. */
+check('every month is spelled the way the operator asked',
+  ['01/JAN/26', '01/FEB/26', '01/MAR/26', '01/APR/26', '01/MAY/26', '01/JUN/26',
+    '01/JUL/26', '01/AUG/26', '01/SEP/26', '01/OCT/26', '01/NOV/26', '01/DEC/26']
+    .every((want, i) => run(`fmtDateBox('2026-${String(i + 1).padStart(2, '0')}-01')`) === want));
+check('the day keeps its leading zero and the year is two digits',
+  run("fmtDateBox('2027-03-07')") === '07/MAR/27' && run("fmtDateBox('2026-10-14')") === '14/OCT/26');
+check('nothing, or something that is not a date, shows nothing',
+  ['', null, undefined, 'tomorrow', '2026-13-01', '2026-00-10', '14/10/2026'].every(v => run(`fmtDateBox(${JSON.stringify(v)})`) === ''));
+check('every sample-date row is a date box with the real date input inside',
+  byType.date.every(id => html.includes(`<input type="date" data-date="${id}"`)) && html.split('class="datebox"').length - 1 === byType.date.length);
 
 /* ---------------- 2. the requested changes ---------------- */
 console.log('\n2. Requested changes are in place');
@@ -145,7 +184,10 @@ check('both biofilter humidity rows start as Fault',
 check('DAF clarity starts Clear', defs.daf_clarity.choice === 'clear');
 check('both overflow questions start No',
   defs.daf_overflow.choice === 'no' && defs.waste_tanks.choice === 'no');
-check('saturators start at 500', defs.sat1.value === 500 && defs.sat2.value === 500);
+// A made-up 500 sat exactly on the fault level, so both opened as a fault before
+// anyone had looked at them. They start empty, and stay blank until a reading is typed.
+check('saturators start blank', defs.sat1 === undefined && defs.sat2 === undefined,
+  JSON.stringify([defs.sat1, defs.sat2]));
 check('flow rate starts at 19.9', defs.flow_rate.value === 19.9);
 check('underpits start at minor residue',
   defs.lamb_pit.choice === 'minor' && defs.beef_pit.choice === 'minor');
@@ -183,8 +225,12 @@ check('ovine paperwork starts Updated', defs.ovine_bags.choice === 'updated');
 check('chemicals and sample dates are NOT pre-filled',
   !defs.caustic && !defs.ovine_daily && !defs.boiler1_chem,
   JSON.stringify(Object.keys(defs).filter(k => /caustic|ovine_daily|boiler/.test(k))));
-check('DAF clarity has 4 named options',
-  run("ITEM_INDEX.daf_clarity.type === 'choice' && ITEM_INDEX.daf_clarity.options.length === 4"));
+check('DAF clarity has 5 named options',
+  run("ITEM_INDEX.daf_clarity.type === 'choice' && ITEM_INDEX.daf_clarity.options.length === 5"));
+check('one of them is Not running, for the days the DAF is stopped',
+  run("ITEM_INDEX.daf_clarity.options.some(o => o.value === 'notrunning' && o.label === 'Not running')"));
+check('and it is green, with the green answers together at the front',
+  run("JSON.stringify(ITEM_INDEX.daf_clarity.options.map(o => o.status)) === '[\"ok\",\"ok\",\"watch\",\"fault\",\"fault\"]'"));
 check('clarity options include an out-of-service state',
   run("ITEM_INDEX.daf_clarity.options.some(o => o.label === 'Out of service')"));
 check('both underpits have 4 cleanliness grades',
@@ -253,6 +299,30 @@ ev = grade(`state.values.daf_clarity = { choice: 'offline' };`);
 check('out of service is a fault', ev.items.daf_clarity.status === 'fault', ev.items.daf_clarity.status);
 check('the chosen wording is what gets reported',
   ev.items.daf_clarity.display === 'Out of service', ev.items.daf_clarity.display);
+ev = grade(`state.values.daf_clarity = { choice: 'notrunning' };`);
+check('a stopped DAF is ok, not a problem', ev.items.daf_clarity.status === 'ok', ev.items.daf_clarity.status);
+check('so it raises no action for the managers',
+  !ev.actions.leighton.some(a => a.label === 'DAF effluent clarity'));
+check('and is reported as Not running', ev.items.daf_clarity.display === 'Not running', ev.items.daf_clarity.display);
+check('with no badge of its own, so the tick keeps its normal OK wording',
+  ev.items.daf_clarity.badge === 'OK', ev.items.daf_clarity.badge);
+const withClear = grade(`state.values.daf_clarity = { choice: 'clear' };`);
+check('the headline and counts are exactly what "Clear" gives - a stopped DAF adds nothing',
+  ev.verdict.text === withClear.verdict.text && JSON.stringify(ev.counts) === JSON.stringify(withClear.counts),
+  `${ev.verdict.text} | ${withClear.verdict.text}`);
+const stoppedPdf = run(`(() => { state = blankState(); state.values.daf_clarity = { choice: 'notrunning' };
+  const ev = evaluate(state, null, [], []); return String.fromCharCode(...buildPdf(state, ev, null)); })()`);
+check('the report prints Not running beside the check', stoppedPdf.indexOf('Not running') !== -1);
+
+// the saturators start empty, so nothing is flagged until a reading is typed
+ev = grade(``);
+check('a blank saturator is not flagged as a fault', ev.items.sat1.status === 'blank' && ev.items.sat2.status === 'blank',
+  `${ev.items.sat1.status} ${ev.items.sat2.status}`);
+ev = grade(`state.values.sat1 = { value: 575 };`);
+check('and a typed reading is graded as before', ev.items.sat1.status === 'ok', ev.items.sat1.status);
+ev = grade(`state.values.sat1 = { value: 500 };`);
+check('500 typed by hand is still on the fault level, as the trigger levels say',
+  ev.items.sat1.status === 'fault', ev.items.sat1.status);
 
 ev = grade(`state.values.beef_pit = { choice: 'notdone' };`);
 check('an uncleaned pit is a fault', ev.items.beef_pit.status === 'fault', ev.items.beef_pit.status);

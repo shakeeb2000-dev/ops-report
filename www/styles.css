@@ -377,7 +377,49 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
 /* A pressure or a flow rate is three or four digits. A field the full width of
    the phone invites a second look to check nothing is missing. */
 .item[data-type="number"] .numrow { max-width: 260px; }
-.item[data-type="date"] .numrow { max-width: 220px; }
+.item[data-type="date"] .datebox { max-width: 220px; margin-top: 8px; }
+
+/* ---- dates, drawn as 14/OCT/26 ----
+   Two layers: the text you read, and the real date input laid invisibly over
+   it. The browser's own format (10/14/2026) cannot be changed, but it can be
+   hidden - a tap lands on the invisible input, which opens the phone's calendar
+   exactly as before. */
+.datebox { position: relative; display: block; margin-top: 4px; }
+.datebox-text {
+  display: flex;
+  align-items: center;
+  min-height: 48px;          /* the same height as the time box beside it */
+  padding: 0 40px 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231e3a5f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3.5' y='5' width='17' height='15' rx='2'/%3E%3Cpath d='M3.5 10h17M8 3v4M16 3v4'/%3E%3C/svg%3E") no-repeat right 11px center / 19px;
+  font-size: 1rem;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .03em;
+}
+.datebox-text.empty { color: #8a94a1; letter-spacing: 0; }
+/* More specific than the shared input rule, so its padding, border and
+   minimum height do not push the invisible input out of line with the text. */
+.datebox input[type=date] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.datebox:focus-within .datebox-text {
+  border-color: var(--navy);
+  outline: 2px solid #9db8d8;
+  outline-offset: 1px;
+}
 
 /* ---- a short reading and its four buttons on one line ----
    Saturators (3 digits), flow rate (4) and the three pH points (3-4 each).
@@ -398,7 +440,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
 }
 .inline-row > .numrow,
 .inline-row > .multirow { flex: 0 0 auto; margin-top: 0; }
-.inline-row > .statusrow { flex: 1 1 165px; min-width: 165px; margin-top: 0; }
+.inline-row > .statusrow { flex: 1 1 150px; min-width: 150px; margin-top: 0; }
 .inline-row .sbtn {
   flex: 1 1 auto;
   min-width: auto;
@@ -419,31 +461,50 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
 .inline-row input[type=number]::-webkit-outer-spin-button,
 .inline-row input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 
-/* pH: three small boxes, each with its point number tucked into the corner
-   instead of on a line of its own above. */
-.inline-row > .multirow { gap: 4px; flex-wrap: nowrap; }
+/* pH: three big boxes, each with its point number in the corner.
+
+   The row is only Fault and Not done now - OK comes from the readings being
+   inside their limits - so the buttons take about 115px and the boxes share
+   everything else: roughly 65px each on a 412px phone, 55px on a 360px one,
+   against 40px before. The buttons stay on the same line. */
+.inline-row > .multirow {
+  /* A small starting size that then grows into whatever the buttons leave.
+     Starting from the boxes' own natural width (what "auto" means) made the row
+     look too wide to share a line with the buttons, and they dropped below. */
+  flex: 1 1 120px;
+  min-width: 0;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
 /* Three classes deep on purpose: ".multirow.narrow label" further up sets
    flex: 0 1 84px and would otherwise win. */
 .inline-row .multirow .mfield {
   position: relative;
-  flex: 0 0 40px;
-  min-width: 0;
+  flex: 1 1 0;
+  min-width: 46px;
+  max-width: 88px;
   margin: 0;
 }
 .inline-row .mfield input {
   margin-top: 0;
-  padding: 13px 2px 3px;
+  height: 54px;
+  min-height: 54px;
+  padding: 18px 4px 4px;
   text-align: center;
+  font-size: 1.2rem;
+  font-weight: 600;
 }
 .inline-row .mtag {
   position: absolute;
-  top: 3px; left: 5px;
-  font-size: .58rem;
+  top: 5px; left: 9px;
+  font-size: .68rem;
   font-weight: 800;
   line-height: 1;
   color: var(--slate);
   pointer-events: none;   /* a tap on the number still lands in the box */
 }
+.item[data-item="ph"] .inline-row > .statusrow { flex: 0 0 auto; min-width: 0; }
+.item[data-item="ph"] .inline-row .sbtn { padding: 2px 11px; }
 /* The focus ring belongs on the whole field, since overflow:hidden would
    clip a ring drawn on the input itself. */
 .numrow:focus-within { border-color: var(--navy); outline: 2px solid #9db8d8; outline-offset: 1px; }
@@ -828,8 +889,10 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
 
 /* ---------------- backup ---------------- */
 
-/* The reminder on the main screen: one line, only when a backup is due. */
-.backup-nag {
+/* A warning strip on the main screen: one short message, only when it applies.
+   Two use it - "no backup lately" and "this phone has no saved copy of the
+   app". */
+.nag {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -843,10 +906,10 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
   font-size: .82rem;
   line-height: 1.35;
 }
-/* Must stay: .backup-nag sets display, which beats the hidden attribute. */
-.backup-nag[hidden] { display: none; }
-.backup-nag span { flex: 1 1 auto; }
-.backup-nag .btn {
+/* Must stay: .nag sets display, which beats the hidden attribute. */
+.nag[hidden] { display: none; }
+.nag span { flex: 1 1 auto; }
+.nag .btn {
   flex: 0 0 auto;
   min-height: 40px;
   padding: 0 14px;
@@ -858,17 +921,38 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
 
 /* ---------------- settings ---------------- */
 
-/* Settings that belong together sit under one rule, each with its own name. */
-.sheet-inner h2.sub { margin-top: 18px; }
+/* A section heading with its "?" at the right, as on the morning sheet's
+   cards. Everything the section is for sits behind the "?". */
+.sheet-inner .set-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 30px;
+  margin: 16px 0 8px;
+}
+.sheet-inner .set-head:first-of-type { margin-top: 4px; }
+.sheet-inner .set-head > h2 { margin: 0; }
+.sheet-inner .set-head .card-tools { margin: -6px -2px -6px 0; }
+.sheet-inner .help-text { margin: 0 0 12px; }
+.sheet-inner .help-text p { margin: 0 0 8px; }
+.sheet-inner .help-text p:last-child { margin-bottom: 0; }
+.sheet-inner hr { margin: 16px 0 6px; }
+
+/* The version number is the one thing here worth reading at a glance. */
+.version-status { margin: 0 0 6px; font-size: .88rem; color: var(--ink); }
+.sheet-inner .backup-status { margin: 0 0 8px; }
+.sheet-inner .backup-status[hidden] { display: none; }
 
 /* The working-out and repair panels, folded away: needed for an odd question,
-   not day to day. */
+   not day to day. The "?" sits inside the heading, so tapping it asks for help
+   without folding the panel open (app.js calls preventDefault). */
 .advanced > summary {
   cursor: pointer;
   list-style: none;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 10px;
   min-height: var(--tap);
   font-size: .85rem;
   font-weight: 700;
@@ -876,11 +960,13 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
   letter-spacing: .05em;
   color: var(--navy);
 }
+.advanced > summary > span { flex: 1 1 auto; }
 .advanced > summary::-webkit-details-marker { display: none; }
 .advanced > summary::after {
   content: "";
+  flex: 0 0 auto;
   width: 9px; height: 9px;
-  margin-right: 6px;
+  margin: 0 8px 0 2px;
   border-right: 2.2px solid var(--slate);
   border-bottom: 2.2px solid var(--slate);
   transform: rotate(45deg) translateY(-3px);

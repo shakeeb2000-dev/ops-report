@@ -29,9 +29,18 @@
   <!-- ---------- backup reminder ----------
        Shown by renderBackupStatus() only when a backup is overdue. Everything
        lives on this one phone, so this is the nudge that keeps a copy of it. -->
-  <div class="backup-nag" id="backupNag" hidden>
+  <div class="nag" id="backupNag" hidden>
     <span id="backupNagText">&nbsp;</span>
     <button type="button" class="btn btn-primary" id="btnBackupNag">Save a backup</button>
+  </div>
+
+  <!-- ---------- no saved copy of the app on this phone ----------
+       Shown by renderOfflineStatus() only when the phone has not saved its own
+       copy of the app. Without that copy the app will not open with no signal,
+       and this says so while there is still signal to fix it with. -->
+  <div class="nag" id="offlineNag" hidden>
+    <span>This phone has not saved its own copy of the app yet, so it will not open
+    without signal. Stay connected a moment, or open the app again with signal.</span>
   </div>
 
   <!-- ---------- report details ---------- -->
@@ -50,7 +59,7 @@
     </div>
     <div class="field-grid">
       <label>Date
-        <input type="date" id="fDate">
+        <span class="datebox"><span class="datebox-text" aria-hidden="true"></span><input type="date" id="fDate"></span>
       </label>
       <label>Time of readings
         <input type="time" id="fReadingTime">
@@ -84,7 +93,7 @@
     <div class="dosing-entry" id="meterEntry" hidden>
       <div class="field-grid">
         <label>Date
-          <input type="date" id="meterDate">
+          <span class="datebox"><span class="datebox-text" aria-hidden="true"></span><input type="date" id="meterDate"></span>
         </label>
         <label>Time
           <input type="time" id="meterTime">
@@ -132,7 +141,7 @@
     <div class="dosing-entry" id="dosingEntry" hidden>
       <div class="field-grid">
         <label>Date
-          <input type="date" id="dosingDate">
+          <span class="datebox"><span class="datebox-text" aria-hidden="true"></span><input type="date" id="dosingDate"></span>
         </label>
         <label>Time
           <input type="time" id="dosingTime">
@@ -185,9 +194,13 @@
 </nav>
 
 <!-- ---------- settings sheet ----------
-     In order of how often each part is needed: the backup first, because it is
-     the one thing that should be done regularly; then the one-off setup; the
-     working-out and repair panels last, folded away under Advanced. -->
+     Every section is its title and its controls; what the section is for sits
+     behind the "?" beside the title, as on the morning sheet. Only live
+     figures stay in view (last backup, version, whether the app works without
+     signal), because those change and are the reason to look.
+     Order: starting a new report first, then the backup (the one thing to do
+     regularly), then one-off setup, with the working-out and repair panels last
+     under Advanced. -->
 <div id="settingsSheet" class="sheet" hidden>
   <div class="sheet-inner">
     <div class="sheet-head">
@@ -195,47 +208,110 @@
       <button class="icon-btn" data-close-sheet>&times;</button>
     </div>
 
-    <h2>Backup</h2>
-    <p class="backup-status" id="backupStatus">&nbsp;</p>
-    <p class="muted small">
-      Everything is kept on this phone only. If it is lost or reset, your reports
+    <div class="set-head">
+      <h2>New report</h2>
+      <div class="card-tools">
+        <button type="button" class="help-btn" data-help="helpNew"
+                aria-expanded="false" aria-label="What this does">?</button>
+      </div>
+    </div>
+    <div class="help-text" id="helpNew" hidden>
+      Clears everything on screen so you can start again. Your name, site and
+      trigger levels are kept, and reports you have already saved are not touched.
+    </div>
+    <button id="btnNewReport" class="btn btn-ghost full">&#10227; Start a new report</button>
+
+    <hr>
+    <div class="set-head">
+      <h2>Backup</h2>
+      <div class="card-tools">
+        <button type="button" class="help-btn" data-help="helpBackup"
+                aria-expanded="false" aria-label="What this is for">?</button>
+      </div>
+    </div>
+    <div class="help-text" id="helpBackup" hidden>
+      <p>Everything is kept on this phone only. If it is lost or reset, your reports
       go with it &mdash; so save a backup now and again, somewhere off the phone
-      such as your email or Google Drive. Photos are not included.
-    </p>
+      such as your email or Google Drive. Photos are not included.</p>
+      <p><strong>Using two devices?</strong> Load the other one&rsquo;s backup here to
+      bring them together. Readings and dosing times from both are combined; where
+      the same morning exists on both, the one saved later is kept.</p>
+    </div>
+    <p class="backup-status" id="backupStatus">&nbsp;</p>
     <div class="sheet-foot">
       <button id="btnBackupExport" class="btn btn-primary">Save a backup</button>
       <button id="btnBackupImport" class="btn btn-ghost">Load a backup</button>
     </div>
-    <p class="muted small">
-      <strong>Using two devices?</strong> Load the other one&rsquo;s backup here to
-      bring them together. Readings and dosing times from both are combined; where
-      the same morning exists on both, the one saved later is kept.
-    </p>
     <input type="file" id="backupInput" accept=".json,application/json" hidden>
 
     <hr>
-    <h2>App version</h2>
-    <p class="muted small">
-      Running version <strong class="js-build-id">dev</strong>. If you have just
-      uploaded an update and this number has not changed, tap below &mdash; the
-      phone can hold on to the old copy otherwise.
-    </p>
+    <div class="set-head">
+      <h2>App version</h2>
+      <div class="card-tools">
+        <button type="button" class="help-btn" data-help="helpVersion"
+                aria-expanded="false" aria-label="What this is for">?</button>
+      </div>
+    </div>
+    <div class="help-text" id="helpVersion" hidden>
+      <p>The app keeps its own copy on this phone, so it opens with no signal. It
+      only needs signal to get the app the first time, and to pick up a new version
+      after you upload one.</p>
+      <p>If you have just uploaded an update and the version below has not changed,
+      tap <strong>Check for an update</strong> &mdash; the phone can hold on to the
+      old copy otherwise.</p>
+      <p><strong>Open it from the app&rsquo;s icon</strong> on your Home screen. An
+      address typed into Chrome without the final <strong>/</strong> cannot use the
+      saved copy, and will ask the internet instead.</p>
+      <p><strong>Protected from phone clean-ups:</strong> if this says no, the phone
+      may delete the app&rsquo;s saved copy &mdash; and your readings &mdash; when it
+      runs short of space. Adding the app to your Home screen (Chrome menu, then
+      <strong>Install app</strong>) protects them. Save a backup either way.</p>
+    </div>
+    <p class="version-status">Version <strong class="js-build-id">dev</strong></p>
+    <p class="backup-status" id="offlineStatus">&nbsp;</p>
+    <p class="backup-status" id="storageStatus" hidden>&nbsp;</p>
     <button id="btnCheckUpdate" class="btn btn-ghost full">&#10227; Check for an update</button>
 
     <hr>
-    <h2>Your name</h2>
-    <p class="muted small">Shown on every report as the person who did the checks.</p>
+    <div class="set-head">
+      <h2>Your name</h2>
+      <div class="card-tools">
+        <button type="button" class="help-btn" data-help="helpName"
+                aria-expanded="false" aria-label="What this is for">?</button>
+      </div>
+    </div>
+    <div class="help-text" id="helpName" hidden>
+      Shown on every report as the person who did the checks.
+    </div>
     <input type="text" id="fReporter" autocomplete="name" placeholder="Your name">
 
-    <h2 class="sub">Company name</h2>
+    <div class="set-head">
+      <h2>Company name</h2>
+    </div>
     <input type="text" id="fSite" placeholder="Shown in the PDF header">
 
-    <h2 class="sub">Report number prefix</h2>
-    <p class="muted small">Used for the reference on each report, e.g. ATP-DOR-2026-09-28.</p>
+    <div class="set-head">
+      <h2>Report number prefix</h2>
+      <div class="card-tools">
+        <button type="button" class="help-btn" data-help="helpPrefix"
+                aria-expanded="false" aria-label="What this is for">?</button>
+      </div>
+    </div>
+    <div class="help-text" id="helpPrefix" hidden>
+      Used for the reference on each report, e.g. ATP-DOR-2026-09-28.
+    </div>
     <input type="text" id="fPrefix" placeholder="ATP-DOR">
 
-    <h2 class="sub">Company logo</h2>
-    <p class="muted small">Appears at the top of every PDF. Pick it once and it is remembered.</p>
+    <div class="set-head">
+      <h2>Company logo</h2>
+      <div class="card-tools">
+        <button type="button" class="help-btn" data-help="helpLogo"
+                aria-expanded="false" aria-label="What this is for">?</button>
+      </div>
+    </div>
+    <div class="help-text" id="helpLogo" hidden>
+      Appears at the top of every PDF. Pick it once and it is remembered.
+    </div>
     <div class="logo-row">
       <div class="logo-preview" id="logoPreview"><span class="muted small">No logo</span></div>
       <div class="logo-actions">
@@ -246,79 +322,108 @@
     <input type="file" accept="image/*" id="logoInput" hidden>
 
     <hr>
-    <h2>Trigger levels</h2>
-    <p class="muted small">
+    <div class="set-head">
+      <h2>Trigger levels</h2>
+      <div class="card-tools">
+        <button type="button" class="help-btn" data-help="helpLevels"
+                aria-expanded="false" aria-label="What this is for">?</button>
+      </div>
+    </div>
+    <div class="help-text" id="helpLevels" hidden>
       The numbers that decide when a check is flagged. At or past
       <strong>Fault</strong> it is reported as a fault; at or past
       <strong>Monitor</strong>, as needing a watch. The four chemicals are judged
       on how many days they will last. Their litre levels are only used until the
       app has enough history to know how fast each one goes.
-    </p>
+    </div>
     <div id="thresholdForm"></div>
     <div class="sheet-foot">
       <button id="btnResetThresholds" class="btn btn-ghost">Reset to defaults</button>
     </div>
 
     <hr>
-    <h2>Average usage</h2>
-    <p class="muted small">
+    <div class="set-head">
+      <h2>Average usage</h2>
+      <div class="card-tools">
+        <button type="button" class="help-btn" data-help="helpAverage"
+                aria-expanded="false" aria-label="What this is for">?</button>
+      </div>
+    </div>
+    <div class="help-text" id="helpAverage" hidden>
       How far back to look when working out average daily use. Reports older than
       this are ignored. Because a report can cover several days &mdash; a weekend
       or a few days off &mdash; the average may end up covering slightly more days
       than this number.
-    </p>
+    </div>
     <label>Look back this many days
       <input type="number" id="fAvgWindow" inputmode="numeric" step="1" min="1" placeholder="14">
     </label>
 
     <hr>
-    <h2>Saved reports</h2>
-    <div id="historyList" class="history"></div>
-
-    <hr>
-    <h2>New report</h2>
-    <p class="muted small">
-      Clears everything on screen so you can start again. Your name, site and
-      trigger levels are kept, and reports you have already saved are not touched.
-    </p>
-    <button id="btnNewReport" class="btn btn-ghost full">&#10227; Start a new report</button>
-
-    <hr>
     <details class="advanced">
-      <summary>Advanced</summary>
-      <p class="muted small">How the figures are worked out, and repairs. Not needed day to day.</p>
+      <summary>
+        <span>Advanced</span>
+        <button type="button" class="help-btn" data-help="helpAdvanced"
+                aria-expanded="false" aria-label="What this is for">?</button>
+      </summary>
+      <div class="help-text" id="helpAdvanced" hidden>
+        Saved reports, how the figures are worked out, and repairs. Not needed day to day.
+      </div>
 
-      <h2>Where the average flow comes from</h2>
-    <p class="muted small">
-      The water the meter recorded, divided by the hours, over past days when
-      the dosing ran right through from one meter reading to the next. Only
-      those days can be measured exactly, so only those are used. Your Flow
-      rate check is not part of this - it is reported as you type it.
-    </p>
-    <div id="flowDetail"></div>
+      <div class="set-head">
+        <h2>Saved reports</h2>
+      </div>
+      <div id="historyList" class="history"></div>
 
-    <hr>
-    <h2>Every dosing entry</h2>
-    <p class="muted small">
-      The full list, newest first. An extra entry in the middle of a day stops
-      that day counting towards the average flow above. Remove any wrong ones from the
-      Chemical dosing card on the main screen.
-    </p>
-    <div id="dosingAudit"></div>
-    <p class="muted small">
-      Deleting <strong>every</strong> entry and reopening the app brings back the
-      seven times recorded on paper.
-    </p>
+      <hr>
+      <div class="set-head">
+        <h2>Where the average flow comes from</h2>
+        <div class="card-tools">
+          <button type="button" class="help-btn" data-help="helpFlow"
+                  aria-expanded="false" aria-label="What this is for">?</button>
+        </div>
+      </div>
+      <div class="help-text" id="helpFlow" hidden>
+        The water the meter recorded, divided by the hours, over past days when
+        the dosing ran right through from one meter reading to the next. Only
+        those days can be measured exactly, so only those are used. Your Flow
+        rate check is not part of this &mdash; it is reported as you type it.
+      </div>
+      <div id="flowDetail"></div>
 
-      <h2>Recorded readings and reports</h2>
-    <p class="muted small">
-      Puts back everything written down before the app existed &mdash; the meter
-      readings <em>and</em> the reports for 11 Sep to 2 Oct 2026. Use this if the
-      average flow looks wrong, or if the panel above says
-      <strong>meter reading missing</strong> for any of those days. Anything
-      saved for those dates is replaced; other dates are untouched.
-    </p>
-    <button id="btnMeterRestore" class="btn btn-ghost full">&#10227; Put back the recorded readings and reports</button>
+      <hr>
+      <div class="set-head">
+        <h2>Every dosing entry</h2>
+        <div class="card-tools">
+          <button type="button" class="help-btn" data-help="helpAudit"
+                  aria-expanded="false" aria-label="What this is for">?</button>
+        </div>
+      </div>
+      <div class="help-text" id="helpAudit" hidden>
+        <p>The full list, newest first. An extra entry in the middle of a day stops
+        that day counting towards the average flow above. Remove any wrong ones from
+        the Chemical dosing card on the main screen.</p>
+        <p>Deleting <strong>every</strong> entry and reopening the app brings back
+        the seven times recorded on paper.</p>
+      </div>
+      <div id="dosingAudit"></div>
+
+      <hr>
+      <div class="set-head">
+        <h2>Recorded readings and reports</h2>
+        <div class="card-tools">
+          <button type="button" class="help-btn" data-help="helpRecorded"
+                  aria-expanded="false" aria-label="What this is for">?</button>
+        </div>
+      </div>
+      <div class="help-text" id="helpRecorded" hidden>
+        Puts back everything written down before the app existed &mdash; the meter
+        readings <em>and</em> the reports for 11 Sep to 2 Oct 2026. Use this if the
+        average flow looks wrong, or if the panel above says
+        <strong>meter reading missing</strong> for any of those days. Anything
+        saved for those dates is replaced; other dates are untouched.
+      </div>
+      <button id="btnMeterRestore" class="btn btn-ghost full">&#10227; Put back the recorded readings and reports</button>
     </details>
   </div>
 </div>
