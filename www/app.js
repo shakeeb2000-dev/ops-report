@@ -265,14 +265,10 @@ function statusButtonsFor(item) {
    and the real date input laid invisibly over it. Tapping still opens the
    phone's calendar, and the value underneath is still the plain YYYY-MM-DD
    everything else reads - only what is drawn on top is different. */
-const DATE_MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
-
+// The style itself - 14/OCT/26 - is styleDate() in report.js, shared with the
+// printed report so the two cannot disagree. '' means "not a date".
 function fmtDateBox(iso) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
-  if (!m) return '';
-  const month = Number(m[2]) - 1;
-  if (month < 0 || month > 11) return '';
-  return `${m[3]}/${DATE_MONTHS[month]}/${m[1].slice(2)}`;
+  return styleDate(iso);
 }
 
 // The markup for one date box. `attrs` is whatever identifies the input.

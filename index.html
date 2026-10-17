@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1e3a5f">
-<meta name="build-id" content="864649f4b6b4">
+<meta name="build-id" content="7403c281d4c5">
 <title>Daily Ops Report</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -3124,11 +3124,33 @@ function prettyDate(iso) {
   return `${DAYS[d.getDay()]} ${String(d.getDate()).padStart(2, '0')} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
 }
 
+/* The one style for a date shown as a date: 14/OCT/26.
+
+   Defined once, here, because both the report and the morning sheet use it -
+   the sheet's date boxes call this too - so the two can never drift apart.
+   Returns '' for anything that is not a real YYYY-MM-DD date. */
+function styleDate(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+  if (!m) return '';
+  const month = Number(m[2]) - 1;
+  if (month < 0 || month > 11) return '';
+  return `${m[3]}/${MONTHS[month].toUpperCase()}/${m[1].slice(2)}`;
+}
+
+// Same, for the printed page: dates in tables and sentences.
 function shortDate(iso) {
   if (!iso) return '-';
+  return styleDate(iso) || iso;
+}
+
+/* The report's own date, top and bottom of every page: the weekday, then the
+   date - "FRI 02/OCT/26". The weekday stays because a Monday report covering
+   the weekend reads differently from a Tuesday one. */
+function reportDate(iso) {
+  if (!iso) return '';
   const d = new Date(iso + 'T00:00:00');
   if (isNaN(d.getTime())) return iso;
-  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
+  return `${DAYS[d.getDay()].toUpperCase()} ${styleDate(iso) || iso}`;
 }
 
 /* "7:30pm" from a 'YYYY-MM-DDTHH:MM' stamp. The switch times are read as
@@ -3142,15 +3164,6 @@ function clockTime(stamp) {
   const suffix = h < 12 ? 'am' : 'pm';
   const h12 = h % 12 === 0 ? 12 : h % 12;
   return `${h12}:${m}${suffix}`;
-}
-
-/* "2 Oct". Used where a date is read as prose rather than scanned in a table,
-   because "02/10" has to be decoded and can be read the American way round. */
-function dayMonth(iso) {
-  if (!iso) return '-';
-  const d = new Date(iso + 'T00:00:00');
-  if (isNaN(d.getTime())) return iso;
-  return `${d.getDate()} ${MONTHS[d.getMonth()]}`;
 }
 
 function reportNumber(state) {
@@ -3862,7 +3875,7 @@ function buildPdf(state, evaluated, previous) {
   doc.text('DAILY OPERATIONS REPORT', textX, 49,
     { size: 8, colour: BRAND.gold, tracking: 1.5 });
   doc.text(reportNumber(state), textX, 64, { size: 7.6, colour: [196, 222, 206] });
-  doc.text(prettyDate(state.date), R, 39,
+  doc.text(reportDate(state.date), R, 39,
     { size: 11, bold: true, colour: [255, 255, 255], align: 'right' });
   doc.text(state.reporter || DEFAULT_REPORTER, R, 54,
     { size: 7.8, colour: [196, 222, 206], align: 'right' });
@@ -4025,7 +4038,7 @@ function buildPdf(state, evaluated, previous) {
        A report can span two days, so a bare "7:30pm" does not say which one -
        and when both meter readings fall on the same date, two rows both
        labelled "4 Oct" are impossible to tell apart. */
-    const stamp = (s) => `${dayMonth(String(s).split('T')[0])} ${clockTime(s)}`;
+    const stamp = (s) => `${shortDate(String(s).split('T')[0])} ${clockTime(s)}`;
 
     const lines = [];
     lines.push([`Meter at ${stamp(evaluated.spanFrom)}`,
@@ -4345,7 +4358,7 @@ function buildPdf(state, evaluated, previous) {
     });
   }
 
-  const footer = `${state.site || DEFAULT_SITE} \u00B7 ${reportNumber(state)} \u00B7 ${prettyDate(state.date)}`;
+  const footer = `${state.site || DEFAULT_SITE} \u00B7 ${reportNumber(state)} \u00B7 ${reportDate(state.date)}`;
   return doc.build(footer);
 }
 
@@ -4797,14 +4810,10 @@ function statusButtonsFor(item) {
    and the real date input laid invisibly over it. Tapping still opens the
    phone's calendar, and the value underneath is still the plain YYYY-MM-DD
    everything else reads - only what is drawn on top is different. */
-const DATE_MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
-
+// The style itself - 14/OCT/26 - is styleDate() in report.js, shared with the
+// printed report so the two cannot disagree. '' means "not a date".
 function fmtDateBox(iso) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
-  if (!m) return '';
-  const month = Number(m[2]) - 1;
-  if (month < 0 || month > 11) return '';
-  return `${m[3]}/${DATE_MONTHS[month]}/${m[1].slice(2)}`;
+  return styleDate(iso);
 }
 
 // The markup for one date box. `attrs` is whatever identifies the input.

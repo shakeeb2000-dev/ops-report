@@ -133,6 +133,28 @@ check('the day keeps its leading zero and the year is two digits',
   run("fmtDateBox('2027-03-07')") === '07/MAR/27' && run("fmtDateBox('2026-10-14')") === '14/OCT/26');
 check('nothing, or something that is not a date, shows nothing',
   ['', null, undefined, 'tomorrow', '2026-13-01', '2026-00-10', '14/10/2026'].every(v => run(`fmtDateBox(${JSON.stringify(v)})`) === ''));
+/* The printed report uses the same style, from the same definition. */
+check('the printed report and the sheet draw a date identically',
+  ['2026-01-01', '2026-10-14', '2027-12-31', '2026-02-28'].every(d => run(`styleDate('${d}')`) === run(`fmtDateBox('${d}')`)));
+check('the report date keeps its weekday, then the date', run("reportDate('2026-10-02')") === 'FRI 02/OCT/26', run("reportDate('2026-10-02')"));
+check('and the weekday follows the calendar', run("reportDate('2026-10-05')") === 'MON 05/OCT/26' && run("reportDate('2026-09-27')") === 'SUN 27/SEP/26');
+check('a short date in a table or a sentence is the same style', run("shortDate('2026-09-01')") === '01/SEP/26');
+check('nothing printed for a missing date, and a dash where one is expected',
+  run("styleDate('')") === '' && run("shortDate('')") === '-' && run("reportDate('')") === '');
+const dated = run(`(() => {
+  state = blankState(); state.date = '2026-10-02'; state.lastCheckDate = '2026-10-01';
+  state.values.ovine_daily = { date: '2026-09-28' };
+  state.values.caustic = { prevInUse: 800, prevBackup: 1000, inUse: 600, backup: 1000 };
+  const ev = evaluate(state, null, [], []);
+  return { text: String.fromCharCode(...buildPdf(state, ev, null)), sample: ev.items.ovine_daily.display }; })()`);
+check('the top of the report shows the date as FRI 02/OCT/26', dated.text.indexOf('(FRI 02/OCT/26)') !== -1);
+check('and so does the foot of every page', dated.text.indexOf('ATP-DOR-2026-10-02 \\267 FRI 02/OCT/26') !== -1);
+check('a sample date reads "sampled to 28/SEP/26"', dated.sample === 'sampled to 28/SEP/26', dated.sample);
+// A PDF stores brackets with a backslash in front; this reads the text as printed.
+const printed = dated.text.replace(/\\([()])/g, '$1');
+check('the stock sum names the last check the same way', printed.indexOf('Last check (01/OCT/26)') !== -1);
+check('the old wording is gone from the printed page',
+  !/Fri 02 Oct 2026|sampled to \d\d\/\d\d\)|Last check \(\d\d\/\d\d\)/.test(printed));
 check('every sample-date row is a date box with the real date input inside',
   byType.date.every(id => html.includes(`<input type="date" data-date="${id}"`)) && html.split('class="datebox"').length - 1 === byType.date.length);
 
@@ -943,8 +965,8 @@ check('the earlier reading carries the moment it was taken',
 check('the PDF prints the water block',
   waterBlock.text.indexOf('WATER TREATED SINCE THE LAST REPORT') !== -1);
 check('and names both meter readings with their date and time',
-  waterBlock.text.indexOf('Meter at 1 Oct 8:00am') !== -1
-  && waterBlock.text.indexOf('Meter at 2 Oct 8:00am') !== -1);
+  waterBlock.text.indexOf('Meter at 01/OCT/26 8:00am') !== -1
+  && waterBlock.text.indexOf('Meter at 02/OCT/26 8:00am') !== -1);
 check('and the water through the plant',
   waterBlock.text.indexOf('Water through the plant') !== -1);
 check('and how long the dosing was on',
@@ -1142,7 +1164,7 @@ check('the switch inside the period is reported',
 check('and carries the meter reading taken at it',
   switchLine.switches[0].meter === 225900, String(switchLine.switches[0].meter));
 check('the PDF prints when the dosing was switched on',
-  switchLine.text.indexOf('Dosing on at 4 Oct 6:00pm') !== -1);
+  switchLine.text.indexOf('Dosing on at 04/OCT/26 6:00pm') !== -1);
 check('and names the reading the dosed volume comes from',
   switchLine.text.indexOf('225,900.0') !== -1);
 check('the switch time reads as a time of day',
@@ -1478,9 +1500,9 @@ const twoCol = run(`
     const widest = [
       ['Chemical was dosing for', '12.5 of those 24.0 hrs', false],
       ['Water that got chemical', '1,311 m\u00B3  (estimated)', true],
-      ['Dosing on at 28 Sep 8:30am', 'meter not noted', false],
+      ['Dosing on at 28/SEP/26 8:30am', 'meter not noted', false],
       ['Average flow while dosing', '15.0 m\u00B3/h', false],
-      ['Meter at 28 Sep 8:00am', '223,460.4 m\u00B3', false]
+      ['Meter at 28/SEP/26 8:00am', '223,460.4 m\u00B3', false]
     ].map(([l, v, b]) => Math.round(measure(l, 8.2, b) + measure(v, b ? 9 : 8.6, b)));
 
     return {
@@ -1495,13 +1517,13 @@ check('no row is too wide for half the page',
   twoCol.widest.every(w => w < twoCol.room),
   `widest ${Math.max(...twoCol.widest)}pt in ${twoCol.room}pt`);
 check('the switch line carries its date, not just the time',
-  twoCol.r2Text.indexOf('Dosing on at 4 Oct 7:30pm') !== -1);
+  twoCol.r2Text.indexOf('Dosing on at 04/OCT/26 7:30pm') !== -1);
 check('both meter rows carry their date and time',
-  twoCol.r2Text.indexOf('Meter at 4 Oct 8:00am') !== -1
-  && twoCol.r2Text.indexOf('Meter at 5 Oct 8:00am') !== -1);
+  twoCol.r2Text.indexOf('Meter at 04/OCT/26 8:00am') !== -1
+  && twoCol.r2Text.indexOf('Meter at 05/OCT/26 8:00am') !== -1);
 check('two readings on the same day are told apart',
-  twoCol.sameDayText.indexOf('Meter at 4 Oct 8:00am') !== -1
-  && twoCol.sameDayText.indexOf('Meter at 4 Oct 7:30pm') !== -1);
+  twoCol.sameDayText.indexOf('Meter at 04/OCT/26 8:00am') !== -1
+  && twoCol.sameDayText.indexOf('Meter at 04/OCT/26 7:30pm') !== -1);
 check('the moment goes in the label so the reading lines up',
   twoCol.r2Switch.meter === 225900, String(twoCol.r2Switch.meter));
 
