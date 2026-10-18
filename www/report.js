@@ -1018,8 +1018,8 @@ function buildPdf(state, evaluated, previous) {
           + ' very end of this period, so it counts towards the next report.';
       }
     } else if (dosed !== null) {
-      note = `Each "Dose" figure below is the litres of chemical used for every `
-        + `1 m\u00B3 of that ${fmtQty(dosed, 0)} m\u00B3.`;
+      note = 'Further down, each chemical gives the litres of chemical used for every '
+        + `1 m\u00B3 of this ${fmtQty(dosed, 0)} m\u00B3.`;
       if (!evaluated.waterNow.exact) {
         note += ' The meter was not noted when the dosing was switched, so this'
           + ' volume is the dosing hours times the average flow above';
@@ -1077,62 +1077,14 @@ function buildPdf(state, evaluated, previous) {
     doc.y += 10 + noteLines.length * 10;
   }
 
-  /* ---- 5. stock at a glance, with a daily-usage chart ---- */
-  const chemStock = evaluated.stock.filter(s => s.kind === 'chemical');
-  if (chemStock.length) {
-    const rowH = 20;
-    doc.ensure(20 + 17 + chemStock.length * rowH + 22);
-
-    doc.text('CHEMICAL STOCK AT A GLANCE', L, doc.y + 10,
-      { size: 8.6, bold: true, colour: BRAND.green, tracking: 0.9 });
-    doc.y += 15;
-    doc.rect(L, doc.y, 26, 2, { fill: BRAND.gold });
-    doc.y += 6;
-
-    const cols = {
-      label: L + 8,
-      onSite: L + W * 0.42,
-      avg: L + W * 0.62,
-      days: R - 8
-    };
-
-    doc.roundRect(L, doc.y, W, 16, 3, { fill: [240, 246, 242] });
-    doc.text('CHEMICAL', cols.label, doc.y + 11, { size: 6.6, bold: true, colour: BRAND.slate, tracking: 0.6 });
-    doc.text('ON SITE', cols.onSite, doc.y + 11, { size: 6.6, bold: true, colour: BRAND.slate, align: 'right', tracking: 0.6 });
-    doc.text('DOSE L/M\u00B3', cols.avg, doc.y + 11, { size: 6.6, bold: true, colour: BRAND.slate, align: 'right', tracking: 0.6 });
-    doc.text('DAYS LEFT', cols.days, doc.y + 11, { size: 6.6, bold: true, colour: BRAND.slate, align: 'right', tracking: 0.6 });
-    doc.y += 16;
-
-    chemStock.forEach((s, i) => {
-      if (i % 2 === 1) doc.rect(L, doc.y, W, rowH, { fill: BRAND.zebra });
-      doc.rect(L, doc.y + 3, 2.5, rowH - 6, { fill: STATUS_META[s.status].colour });
-      const mid = doc.y + 13.5;
-      doc.text(s.label, cols.label, mid, { size: 8.6, colour: BRAND.ink });
-      doc.text(`${fmtQty(s.onHand)} ${s.unit}`, cols.onSite, mid,
-        { size: 9.2, bold: true, colour: BRAND.ink, align: 'right' });
-      doc.text(s.unconfirmed ? 'n/a' : (s.avgDose ? fmtQty(s.avgDose, 2) : '-'),
-        cols.avg, mid, { size: 9.2, colour: BRAND.value, align: 'right' });
-      let leftTxt = '-';
-      if (s.daysLeft !== null && s.daysLeft !== undefined) {
-        leftTxt = fmtDays(s.daysLeft);
-        if (s.waterLeft !== null && s.waterLeft !== undefined) {
-          leftTxt += ` (${fmtQty(s.waterLeft, 0)} m\u00B3)`;
-        }
-      }
-      /* The days figure is coloured by how urgent the days are, not by the
-         row's overall status. A usage tank needing a refill made "15 days" of
-         stock print in red, which read as an emergency that was not there.
-         The bar at the left of the row still carries the overall status. */
-      const daysTone = s.daysStatus || s.status;
-      const strong = daysTone === STATUS.FAULT || daysTone === STATUS.WATCH;
-      doc.text(leftTxt, cols.days, mid, {
-        size: 9.2, bold: strong, align: 'right',
-        colour: strong ? STATUS_META[daysTone].colour : BRAND.ink
-      });
-      doc.y += rowH;
-    });
-    doc.hline(L, R, doc.y, BRAND.hairline);
-    doc.y += 16;
+  /* ---- 5. stock at a glance, as IBCs ----
+     Each chemical as its own IBCs: a big one for the usage tank filled to its
+     level, with a black arrow at the level, and small ones beside it for the
+     backup. The two levels are what this section is for; the dose and days
+     left are given under each chemical further down. It takes exactly the
+     space the table did, so nothing after it moves. */
+  if (evaluated.stock.some(s => s.kind === 'chemical')) {
+    drawStockIbcs(doc, evaluated, state);
   }
 
   /* ---- 6. detail sections ---- */
@@ -1461,4 +1413,183 @@ function drawStockSum(doc, sum, L, R, W) {
   });
 
   doc.y += boxH + 4;
+}
+
+/* ------------------------------------------------------------------
+   Chemical stock at a glance, as IBCs
+   ------------------------------------------------------------------
+   Reads only what the report already has: the usage tank and backup levels
+   as typed on the sheet, and each chemical's status from evaluate(), whose
+   OK / Monitor / Fault colours tint the liquid. */
+
+const STOCK_BLOCK_H = 133;   // exactly the height the table took
+const STOCK_CARD_TOP = 21;   // below the heading and its gold rule
+const STOCK_CARD_H = 96;
+
+const IBC_LOOK = {
+  body: [244, 247, 245], cage: [178, 188, 182], frame: [104, 114, 108],
+  cap: [96, 104, 100], pallet: [120, 128, 124], pill: [255, 255, 255],
+  liquid: {
+    ok: [96, 184, 128], watch: [242, 182, 60], fault: [228, 110, 104],
+    todo: [190, 196, 200], blank: [190, 196, 200]
+  },
+  surface: {
+    ok: [52, 140, 86], watch: [196, 136, 18], fault: [186, 60, 56],
+    todo: [150, 156, 160], blank: [150, 156, 160]
+  }
+};
+
+function pdfNum(n) { return n.toFixed(2); }
+
+// A rounded rectangle as a bare path, to be clipped to.
+function roundRectPath(doc, x, y, w, h, r) {
+  const yb = doc.flip(y + h);
+  const rad = Math.max(0, Math.min(r, w / 2, h / 2));
+  const k = 0.5523 * rad;
+  const f = pdfNum;
+  doc.op(`${f(x + rad)} ${f(yb)} m`);
+  doc.op(`${f(x + w - rad)} ${f(yb)} l`);
+  doc.op(`${f(x + w - rad + k)} ${f(yb)} ${f(x + w)} ${f(yb + rad - k)} ${f(x + w)} ${f(yb + rad)} c`);
+  doc.op(`${f(x + w)} ${f(yb + h - rad)} l`);
+  doc.op(`${f(x + w)} ${f(yb + h - rad + k)} ${f(x + w - rad + k)} ${f(yb + h)} ${f(x + w - rad)} ${f(yb + h)} c`);
+  doc.op(`${f(x + rad)} ${f(yb + h)} l`);
+  doc.op(`${f(x + rad - k)} ${f(yb + h)} ${f(x)} ${f(yb + h - rad + k)} ${f(x)} ${f(yb + h - rad)} c`);
+  doc.op(`${f(x)} ${f(yb + rad)} l`);
+  doc.op(`${f(x)} ${f(yb + rad - k)} ${f(x + rad - k)} ${f(yb)} ${f(x + rad)} ${f(yb)} c`);
+  doc.op('h');
+}
+
+function clipTo(doc, x, y, w, h, r, draw) {
+  doc.op('q');
+  roundRectPath(doc, x, y, w, h, r);
+  doc.op('W n');
+  draw();
+  doc.op('Q');
+}
+
+function strokeLine(doc, x1, y1, x2, y2, colour, width) {
+  doc.op(`${fmtColour(colour)} RG`);
+  doc.op(`${pdfNum(width)} w`);
+  doc.op(`${pdfNum(x1)} ${pdfNum(doc.flip(y1))} m ${pdfNum(x2)} ${pdfNum(doc.flip(y2))} l S`);
+}
+
+/* One IBC seen from the front - cap, bottle, steel cage, valve, pallet - with
+   the bottle filled to `level` (0 to 1). (x, y) is the top left; h includes
+   the pallet. Returns where the bottle is, so an arrow can point at the level. */
+function drawIbcShape(doc, x, y, w, h, level, status) {
+  const t = IBC_LOOK;
+  const capH = Math.max(2, h * 0.06);
+  const capW = w * 0.24;
+  const palletH = h * 0.14;
+  const bodyY = y + capH;
+  const bodyH = h - capH - palletH;
+  const r = Math.max(1.5, w * 0.07);
+  const lv = Math.max(0, Math.min(1, level || 0));
+
+  doc.roundRect(x + (w - capW) / 2, y, capW, capH + 1.5, 1, { fill: t.cap });
+  doc.roundRect(x, bodyY, w, bodyH, r, { fill: t.body });
+  if (lv > 0) {
+    clipTo(doc, x, bodyY, w, bodyH, r, () => {
+      const top = bodyY + bodyH * (1 - lv);
+      doc.rect(x, top, w, bodyY + bodyH - top, { fill: t.liquid[status] || t.liquid.blank });
+      doc.rect(x, top, w, Math.min(1.4, bodyH * lv), { fill: t.surface[status] || t.surface.blank });
+    });
+  }
+  const lw = Math.max(0.45, w * 0.012);
+  [1, 2].forEach(i => strokeLine(doc, x + (w * i) / 3, bodyY + 0.6, x + (w * i) / 3, bodyY + bodyH - 0.6, t.cage, lw));
+  [1, 2].forEach(i => strokeLine(doc, x + 0.6, bodyY + (bodyH * i) / 3, x + w - 0.6, bodyY + (bodyH * i) / 3, t.cage, lw));
+  doc.roundRect(x, bodyY, w, bodyH, r, { stroke: t.frame, lineWidth: Math.max(0.7, w * 0.022) });
+  doc.rect(x + w / 2 - w * 0.07, bodyY + bodyH - 1, w * 0.14, palletH * 0.42, { fill: t.cap });
+  const deckY = y + h - palletH + palletH * 0.22;
+  doc.rect(x - w * 0.02, deckY, w * 1.04, palletH * 0.36, { fill: t.pallet });
+  const footW = w * 0.15;
+  [x + w * 0.03, x + (w - footW) / 2, x + w * 0.97 - footW].forEach(fx => {
+    doc.rect(fx, deckY, footW, y + h - deckY, { fill: t.pallet });
+  });
+  return { bodyY, bodyH, surfaceY: bodyY + bodyH * (1 - lv) };
+}
+
+/* The backup: one small IBC per 1,000 L, stacked two high as they stand in
+   the store, each filled to its share. No backup is one empty IBC, the same
+   as an empty usage tank. More than two shows two, marked with the count. */
+function drawBackupIbcs(doc, x, bottom, w, hEach, litres, status) {
+  const gap = 2;
+  const b = litres && litres > 0 ? litres : 0;
+  if (!b) {
+    drawIbcShape(doc, x, bottom - hEach, w, hEach, 0, status);
+    return;
+  }
+  const n = Math.ceil(b / IBC_LITRES - 1e-9);
+  const full = Math.floor(b / IBC_LITRES + 1e-9);
+  for (let i = 0; i < Math.min(n, 2); i++) {
+    const level = i < full ? 1 : (b - full * IBC_LITRES) / IBC_LITRES;
+    drawIbcShape(doc, x, bottom - (i + 1) * hEach - i * gap, w, hEach, level, status);
+  }
+  if (n > 2) {
+    const label = `x${n}`;
+    const pw = measure(label, 6, true) + 7;
+    const cy = bottom - 2 * hEach - gap + hEach * 0.45;
+    doc.roundRect(x + (w - pw) / 2, cy - 5, pw, 10, 5,
+      { fill: IBC_LOOK.pill, stroke: IBC_LOOK.frame, lineWidth: 0.5 });
+    doc.text(label, x + w / 2, cy + 2.2, { size: 6, bold: true, colour: BRAND.ink, align: 'center' });
+  }
+}
+
+// A small black arrow, pointing right at the level in the usage tank.
+function levelArrow(doc, tipX, y) {
+  doc.op(`${fmtColour(BRAND.ink)} rg`);
+  doc.op(`${pdfNum(tipX)} ${pdfNum(doc.flip(y))} m `
+    + `${pdfNum(tipX - 6)} ${pdfNum(doc.flip(y - 3.4))} l `
+    + `${pdfNum(tipX - 6)} ${pdfNum(doc.flip(y + 3.4))} l h f`);
+}
+
+function drawStockIbcs(doc, evaluated, state) {
+  doc.ensure(STOCK_BLOCK_H + 6);
+  const L = PT.margin;
+  const W = doc.contentWidth;
+  const y0 = doc.y;
+
+  doc.text('CHEMICAL STOCK AT A GLANCE', L, y0 + 10,
+    { size: 8.6, bold: true, colour: BRAND.green, tracking: 0.9 });
+  doc.text('Large: usage tank  \u00B7  Small: backup', L + W, y0 + 10,
+    { size: 6.8, colour: BRAND.slate, align: 'right' });
+  doc.rect(L, y0 + 15, 26, 2, { fill: BRAND.gold });
+
+  const gap = 8;
+  const cw = (W - gap * 3) / 4;
+  const cy = y0 + STOCK_CARD_TOP;
+  const ch = STOCK_CARD_H;
+  // Always the same order, so each chemical is in the same place every day.
+  chemicalItems().forEach((item, i) => {
+    const v = (state.values && state.values[item.id]) || {};
+    const inUse = num(v.inUse);
+    const backup = item.hasBackup ? num(v.backup) : null;
+    const status = (evaluated.items[item.id] && evaluated.items[item.id].status) || STATUS.BLANK;
+    const colour = STATUS_META[status].colour;
+    const strong = status === STATUS.FAULT || status === STATUS.WATCH;
+    const cx = L + i * (cw + gap);
+
+    doc.roundRect(cx, cy, cw, ch, 6, { fill: [252, 253, 252], stroke: BRAND.hairline, lineWidth: 0.7 });
+    doc.roundRect(cx, cy, 3.4, ch, 1.7, { fill: colour });
+    doc.text(fitText(item.label, 8.2, true, cw - 18), cx + 11, cy + 13,
+      { size: 8.2, bold: true, colour: BRAND.ink });
+
+    const bigW = 54, bigH = 56, smallW = 28, smallH = 27;
+    const gx = cx + 3 + (cw - 3 - (bigW + 9 + smallW)) / 2;
+    const tank = drawIbcShape(doc, gx, cy + 19, bigW, bigH, (inUse || 0) / IBC_LITRES, status);
+    // Only when there is a level to point at - not for one never typed in.
+    if (inUse !== null) levelArrow(doc, gx - 1.8, tank.surfaceY);
+    drawBackupIbcs(doc, gx + bigW + 9, cy + 19 + bigH, smallW, smallH, backup, status);
+
+    const amount = (n) => (n === null ? '-' : `${fmtQty(n)} ${item.unit}`);
+    doc.text(amount(inUse), gx + bigW / 2, cy + 86,
+      { size: 9.6, bold: true, colour: strong ? colour : BRAND.ink, align: 'center' });
+    doc.text(amount(backup), gx + bigW + 9 + smallW / 2, cy + 86,
+      { size: 7.8, bold: true, colour: backup ? BRAND.ink : BRAND.slate, align: 'center' });
+    doc.text('IN USE', gx + bigW / 2, cy + 93.5,
+      { size: 5.4, bold: true, colour: BRAND.slate, align: 'center', tracking: 0.5 });
+    doc.text('BACKUP', gx + bigW + 9 + smallW / 2, cy + 93.5,
+      { size: 5.4, bold: true, colour: BRAND.slate, align: 'center', tracking: 0.5 });
+  });
+  doc.y = y0 + STOCK_BLOCK_H;
 }
