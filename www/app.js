@@ -711,6 +711,8 @@ function refresh() {
     `${prettyDate(state.date)}${state.reporter ? ' \u00B7 ' + state.reporter : ''}`;
 
   renderSummary(ev);
+  lastEv = ev;
+  renderDashboard(ev);
   // The counts above can wrap the progress line onto a second row, which
   // changes how far down the sticky headers belong.
   syncTopbarHeight();
@@ -904,6 +906,7 @@ function renderSendStatus() {
   line.hidden = !s;
   setClass(line, 'notsent', s === 'notsent');
   setClass(line, 'shared', s === 'shared');
+  if (lastEv) renderDashboard(lastEv);
   if (!s) return;
   line.textContent = s === 'shared'
     ? `Shared ${whenText(state.sentAt)}`
@@ -1392,6 +1395,129 @@ async function renderHistory() {
   }));
 }
 
+/* ---------------- the plant at a glance ----------------
+
+   The dark panel at the top of the sheet. It works nothing out for itself:
+   the DAF state is decided exactly as the dosing card decides it, the tanks
+   show the levels typed on the sheet and the days left the report prints,
+   their colours are the statuses the report gives each chemical, and the
+   report tile follows the line above the PDF button. Redrawn on every refresh,
+   from the figures refresh() has just worked out. */
+let lastEv = null;
+
+const DASH_NAMES = { caustic: 'Caustic', coagulant: 'Coagulant', flocculant: 'Flocculant', sulphuric: 'Acid' };
+
+// An IBC: the cage, the pallet, and the usage tank filled to its level.
+function tankSvg(id, level) {
+  const lv = Math.max(0, Math.min(1, level || 0));
+  const top = 7;
+  const h = 38;
+  const fh = Math.round(h * lv * 10) / 10;
+  return '<svg class="tank-svg" viewBox="0 0 48 58" aria-hidden="true">'
+    + `<defs><clipPath id="tankclip-${id}"><rect x="7" y="${top}" width="34" height="${h}" rx="3"/></clipPath></defs>`
+    + `<rect class="tank-body" x="7" y="${top}" width="34" height="${h}" rx="3"/>`
+    + `<rect class="tank-fill" x="7" y="${top + h - fh}" width="34" height="${fh}" clip-path="url(#tankclip-${id})"/>`
+    + '<path class="tank-cage" d="M18.5 4v44M29.5 4v44M4 18.5h40M4 33.5h40"/>'
+    + '<rect class="tank-frame" x="4" y="4" width="40" height="44" rx="4"/>'
+    + '<rect class="tank-base" x="5" y="50" width="38" height="5" rx="1.5"/>'
+    + '</svg>';
+}
+
+// "since 8:30am" today, "since Mon 28/SEP 8:30am" any other day.
+function sinceText(stamp) {
+  const d = String(stamp).split('T')[0];
+  const time = clockTime(stamp);
+  if (d === todayISO()) return `since ${time}`;
+  const dt = new Date(d + 'T00:00:00');
+  const day = isNaN(dt.getTime()) ? '' : `${DAYS[dt.getDay()]} `;
+  return `since ${day}${styleDate(d).slice(0, 6)} ${time}`;
+}
+
+// "2.3 days", "15 days", "<1 day" - the same rounding as the report's own.
+function dashDays(days) {
+  if (days === null || days === undefined) return '-';
+  if (days < 1) return '&lt;1 <small>day</small>';
+  const r = days < 10 ? Math.round(days * 10) / 10 : Math.round(days);
+  return `${r} <small>${r === 1 ? 'day' : 'days'}</small>`;
+}
+
+function dashTank(item, st, v) {
+  const unit = esc(item.unit || 'L');
+  const inUse = num(v.inUse);
+  const backup = item.hasBackup ? num(v.backup) : null;
+  const name = `<div class="tank-name">${esc(DASH_NAMES[item.id] || item.label)}</div>`;
+
+  /* Not measured yet this morning: an empty grey tank, saying so. Nothing is
+     drawn from the last check, so nothing on it can be taken for today's
+     level. The days and the colour come once today's level is in, exactly as
+     on the sheet and the report. */
+  if (inUse === null && (backup === null || !item.hasBackup)) {
+    return `<div class="tank blank">${tankSvg(item.id, 0)}${name}`
+      + '<div class="tank-days">-</div>'
+      + '<div class="tank-litres">not measured<br>yet</div></div>';
+  }
+
+  const lines = [inUse === null ? 'in use not typed' : `${esc(fmtQty(inUse))} ${unit} in use`];
+  if (item.hasBackup) lines.push(backup ? `+${esc(fmtQty(backup))} ${unit} backup` : 'no backup');
+  return `<div class="tank ${esc(st.status || STATUS.BLANK)}">${tankSvg(item.id, (inUse || 0) / IBC_LITRES)}${name}`
+    + `<div class="tank-days">${dashDays(st.daysLeft)}</div>`
+    + `<div class="tank-litres">${lines.join('<br>')}</div></div>`;
+}
+
+function renderDashboard(ev) {
+  if (!el('#dashboard') || !ev) return;
+
+  // DAF dosing, decided exactly as the dosing card decides it.
+  const nowMs = Date.now();
+  const logged = dosingEvents.filter(e => e && e.at);
+  const happened = logged.filter(e => { const t = toMs(e.at); return t === null || t <= nowMs; });
+  const last = dosingLastEvent(happened);
+  const running = logged.length ? dosingOnNow(dosingEvents) : null;
+  setClass(el('#dashDaf'), 'on', running === true);
+  el('#dashDafState').textContent = running === null ? 'Not logged' : running ? 'RUNNING' : 'STOPPED';
+  el('#dashDafSince').textContent = last ? sinceText(last.at) : 'record a start below';
+
+  // This report: made, sent, or still being filled in.
+  const total = Object.keys(ITEM_INDEX).length;
+  const done = Object.values(ev.items).filter(i => i.status !== STATUS.BLANK).length;
+  const sent = sendState(state);
+  el('#dashReportLabel').textContent = state.date === todayISO()
+    ? 'Today\u2019s report' : `Report ${styleDate(state.date) || state.date}`;
+  setClass(el('#dashReport'), 'good', sent === 'shared');
+  setClass(el('#dashReport'), 'warn', sent === 'notsent');
+  el('#dashReportState').textContent = sent === 'shared' ? 'SHARED'
+    : sent === 'notsent' ? 'NOT SENT' : sent === 'downloaded' ? 'SAVED' : 'Not made yet';
+  el('#dashReportSub').textContent = sent === 'shared' ? whenText(state.sentAt)
+    : sent === 'notsent' ? 'made, but not sent'
+      : sent === 'downloaded' ? 'to your downloads' : `${done} of ${total} checks recorded`;
+
+  // The four chemicals, always in the same order.
+  const byId = {};
+  (ev.stock || []).forEach(st => { byId[st.id] = st; });
+  el('#dashTanks').innerHTML = chemicalItems()
+    .map(item => dashTank(item, byId[item.id] || {}, state.values[item.id] || {}))
+    .join('');
+
+  // What needs doing: the same counts as the line in the top bar.
+  const c = ev.counts;
+  const chips = [];
+  if (c.fault) chips.push(`<span class="chip fault">${c.fault} ${c.fault === 1 ? 'fault' : 'faults'}</span>`);
+  if (c.watch) chips.push(`<span class="chip watch">${c.watch} to monitor</span>`);
+  if (c.todo) chips.push(`<span class="chip todo">${c.todo} not done</span>`);
+  if (!chips.length) chips.push('<span class="chip ok">Nothing flagged</span>');
+  el('#dashIssueChips').innerHTML = chips.join('');
+}
+
+// The bottom of the panel opens Needs attention and brings it into view.
+function bindDashboard() {
+  el('#dashIssues').addEventListener('click', () => {
+    folds.summary = true;
+    applyFold('summary');
+    const card = el('#summaryCard');
+    if (card && card.scrollIntoView) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+}
+
 /* ---------------- sheets + toast ---------------- */
 
 const closeTimers = new WeakMap();
@@ -1499,6 +1625,7 @@ function renderDosing() {
     </div>`);
   el('#dosingList').innerHTML = collapsibleLog('dosing', rows);
   syncFoldButton('dosing', rows.length);
+  if (lastEv) renderDashboard(lastEv);
 }
 
 function prettyStamp(stamp) {
@@ -2625,6 +2752,7 @@ async function boot() {
     ['wire the backup buttons', bindBackup],
     ['show when the last backup was', renderBackupStatus],
     ['show whether the report was sent', renderSendStatus],
+    ['wire the dashboard', bindDashboard],
     ['draw the checklist', render],
     ['show the trigger levels', renderThresholds],
     ['size the top bar', syncTopbarHeight]

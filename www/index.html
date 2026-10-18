@@ -43,6 +43,29 @@
     without signal. Stay connected a moment, or open the app again with signal.</span>
   </div>
 
+  <!-- ---------- the plant at a glance ----------
+       Filled by renderDashboard() on every refresh. Everything on it is read
+       from figures the sheet already works out; it adds nothing to the report. -->
+  <section class="dash" id="dashboard" aria-label="The plant at a glance">
+    <div class="dash-top">
+      <div class="dash-tile" id="dashDaf">
+        <span class="dash-label">DAF dosing</span>
+        <span class="dash-state"><span class="dash-led"></span><span id="dashDafState">Not logged</span></span>
+        <span class="dash-sub" id="dashDafSince">&nbsp;</span>
+      </div>
+      <div class="dash-tile" id="dashReport">
+        <span class="dash-label" id="dashReportLabel">Today&rsquo;s report</span>
+        <span class="dash-state"><span class="dash-led"></span><span id="dashReportState">Not made yet</span></span>
+        <span class="dash-sub" id="dashReportSub">&nbsp;</span>
+      </div>
+    </div>
+    <div class="dash-tanks" id="dashTanks"></div>
+    <button type="button" class="dash-issues" id="dashIssues" aria-label="Show what needs attention">
+      <span class="dash-chips" id="dashIssueChips">&nbsp;</span>
+      <span class="dash-more">See list<svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></span>
+    </button>
+  </section>
+
   <!-- ---------- report details ---------- -->
   <section class="card">
     <div class="card-head">

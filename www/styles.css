@@ -1141,3 +1141,157 @@ body.no-scroll { overflow: hidden; }
   .icon-btn:hover { background: rgba(255,255,255,.24); }
   .group-head:hover { background: #f2f5f8; }
 }
+
+/* ================= the plant at a glance =================
+   A dark green panel at the top, read the way a car's dashboard is: is the
+   DAF dosing, did today's report go out, how much of each chemical is left,
+   and is anything wrong. Every figure on it comes from the sheet below. */
+.dash {
+  margin-bottom: 12px;
+  padding: 12px;
+  border-radius: 16px;
+  color: #fff;
+  background: linear-gradient(160deg, #10783f 0%, var(--brand) 42%, var(--brand-dark) 100%);
+  box-shadow: 0 6px 18px rgba(9, 78, 42, .22);
+}
+.dash-top { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.dash-tile {
+  min-width: 0;
+  padding: 9px 11px 8px;
+  border: 1px solid rgba(255,255,255,.14);
+  border-radius: 12px;
+  background: rgba(255,255,255,.07);
+}
+.dash-label {
+  display: block;
+  font-size: .62rem;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: #c4dece;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dash-state {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 3px;
+  font-size: .95rem;
+  font-weight: 800;
+  letter-spacing: .02em;
+  white-space: nowrap;
+}
+.dash-led {
+  flex: 0 0 10px;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: #9aa4b0;
+}
+.dash-tile.on .dash-led,
+.dash-tile.good .dash-led { background: #6fd39b; }
+.dash-tile.warn .dash-led { background: var(--watch-fill); }
+/* Running: the light breathes, like the one on the panel itself. */
+.dash-tile.on .dash-led { animation: dash-pulse 1.8s ease-in-out infinite; }
+@keyframes dash-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(111,211,155,.40); }
+  50%      { box-shadow: 0 0 0 6px rgba(111,211,155,0); }
+}
+.dash-tile.warn .dash-state { color: #ffd98a; }
+.dash-sub {
+  display: block;
+  margin-top: 1px;
+  font-size: .7rem;
+  line-height: 1.3;
+  color: #c4dece;
+}
+
+/* Four IBCs. The fill is the usage tank's level; the colour is the same
+   OK / Monitor / Fault the chemical gets on the sheet. */
+.dash-tanks { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 8px; }
+.tank {
+  min-width: 0;
+  padding: 8px 2px 7px;
+  border-radius: 12px;
+  background: rgba(255,255,255,.06);
+  text-align: center;
+}
+.tank-svg { display: block; width: 44px; height: 54px; margin: 0 auto 3px; }
+.tank-body  { fill: rgba(255,255,255,.08); }
+.tank-fill  { fill: #6fd39b; }
+.tank.watch .tank-fill { fill: var(--watch-fill); }
+.tank.fault .tank-fill { fill: #ff8f8f; }
+.tank.blank .tank-fill { fill: rgba(255,255,255,.28); }
+.tank-cage  { fill: none; stroke: rgba(255,255,255,.30); stroke-width: 1.2; }
+.tank-frame { fill: none; stroke: rgba(255,255,255,.72); stroke-width: 1.6; }
+.tank-base  { fill: rgba(255,255,255,.45); }
+.tank-name { font-size: .68rem; font-weight: 700; color: #e6f2ea; }
+.tank-days {
+  font-size: 1rem;
+  font-weight: 800;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+.tank-days small { font-size: .6rem; font-weight: 700; color: #c4dece; }
+.tank.watch .tank-days { color: #ffd98a; }
+.tank.fault .tank-days { color: #ffc9c9; }
+.tank.blank .tank-days { color: #c4dece; }
+.tank-litres { font-size: .6rem; line-height: 1.25; color: #c4dece; }
+
+/* What needs doing, with the way into the list. */
+.dash-issues {
+  width: 100%;
+  min-height: 46px;
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px 6px 11px;
+  border: 1px solid rgba(255,255,255,.14);
+  border-radius: 11px;
+  background: rgba(255,255,255,.07);
+  color: #fff;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.dash-issues:active { background: rgba(255,255,255,.13); }
+.dash-chips {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  font-size: .8rem;
+  font-weight: 700;
+}
+.dash-chips .chip { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.dash-chips .chip::before {
+  content: "";
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.dash-chips .chip.fault { color: #ffc9c9; }
+.dash-chips .chip.watch { color: #ffd98a; }
+.dash-chips .chip.todo  { color: #dde2e8; }
+.dash-chips .chip.ok    { color: #b9f0cf; }
+.dash-more {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: .74rem;
+  font-weight: 700;
+  color: #c4dece;
+}
+.dash-more .chev { width: 16px; height: 16px; stroke: #c4dece; }
+
+/* Opened from the panel, Needs attention has to land below the sticky top
+   bar rather than underneath it. */
+#summaryCard { scroll-margin-top: calc(var(--topbar-h) + 10px); }
+
+@media (prefers-reduced-motion: reduce) {
+  .dash-tile.on .dash-led { animation: none; }
+}

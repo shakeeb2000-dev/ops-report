@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0d6938">
-<meta name="build-id" content="9adcbc8fa5fe">
+<meta name="build-id" content="7ede8752049d">
 <title>Daily Ops Report</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -1154,6 +1154,160 @@ body.no-scroll { overflow: hidden; }
   .group-head:hover { background: #f2f5f8; }
 }
 
+/* ================= the plant at a glance =================
+   A dark green panel at the top, read the way a car's dashboard is: is the
+   DAF dosing, did today's report go out, how much of each chemical is left,
+   and is anything wrong. Every figure on it comes from the sheet below. */
+.dash {
+  margin-bottom: 12px;
+  padding: 12px;
+  border-radius: 16px;
+  color: #fff;
+  background: linear-gradient(160deg, #10783f 0%, var(--brand) 42%, var(--brand-dark) 100%);
+  box-shadow: 0 6px 18px rgba(9, 78, 42, .22);
+}
+.dash-top { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.dash-tile {
+  min-width: 0;
+  padding: 9px 11px 8px;
+  border: 1px solid rgba(255,255,255,.14);
+  border-radius: 12px;
+  background: rgba(255,255,255,.07);
+}
+.dash-label {
+  display: block;
+  font-size: .62rem;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: #c4dece;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dash-state {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 3px;
+  font-size: .95rem;
+  font-weight: 800;
+  letter-spacing: .02em;
+  white-space: nowrap;
+}
+.dash-led {
+  flex: 0 0 10px;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: #9aa4b0;
+}
+.dash-tile.on .dash-led,
+.dash-tile.good .dash-led { background: #6fd39b; }
+.dash-tile.warn .dash-led { background: var(--watch-fill); }
+/* Running: the light breathes, like the one on the panel itself. */
+.dash-tile.on .dash-led { animation: dash-pulse 1.8s ease-in-out infinite; }
+@keyframes dash-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(111,211,155,.40); }
+  50%      { box-shadow: 0 0 0 6px rgba(111,211,155,0); }
+}
+.dash-tile.warn .dash-state { color: #ffd98a; }
+.dash-sub {
+  display: block;
+  margin-top: 1px;
+  font-size: .7rem;
+  line-height: 1.3;
+  color: #c4dece;
+}
+
+/* Four IBCs. The fill is the usage tank's level; the colour is the same
+   OK / Monitor / Fault the chemical gets on the sheet. */
+.dash-tanks { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 8px; }
+.tank {
+  min-width: 0;
+  padding: 8px 2px 7px;
+  border-radius: 12px;
+  background: rgba(255,255,255,.06);
+  text-align: center;
+}
+.tank-svg { display: block; width: 44px; height: 54px; margin: 0 auto 3px; }
+.tank-body  { fill: rgba(255,255,255,.08); }
+.tank-fill  { fill: #6fd39b; }
+.tank.watch .tank-fill { fill: var(--watch-fill); }
+.tank.fault .tank-fill { fill: #ff8f8f; }
+.tank.blank .tank-fill { fill: rgba(255,255,255,.28); }
+.tank-cage  { fill: none; stroke: rgba(255,255,255,.30); stroke-width: 1.2; }
+.tank-frame { fill: none; stroke: rgba(255,255,255,.72); stroke-width: 1.6; }
+.tank-base  { fill: rgba(255,255,255,.45); }
+.tank-name { font-size: .68rem; font-weight: 700; color: #e6f2ea; }
+.tank-days {
+  font-size: 1rem;
+  font-weight: 800;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+.tank-days small { font-size: .6rem; font-weight: 700; color: #c4dece; }
+.tank.watch .tank-days { color: #ffd98a; }
+.tank.fault .tank-days { color: #ffc9c9; }
+.tank.blank .tank-days { color: #c4dece; }
+.tank-litres { font-size: .6rem; line-height: 1.25; color: #c4dece; }
+
+/* What needs doing, with the way into the list. */
+.dash-issues {
+  width: 100%;
+  min-height: 46px;
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px 6px 11px;
+  border: 1px solid rgba(255,255,255,.14);
+  border-radius: 11px;
+  background: rgba(255,255,255,.07);
+  color: #fff;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.dash-issues:active { background: rgba(255,255,255,.13); }
+.dash-chips {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  font-size: .8rem;
+  font-weight: 700;
+}
+.dash-chips .chip { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.dash-chips .chip::before {
+  content: "";
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.dash-chips .chip.fault { color: #ffc9c9; }
+.dash-chips .chip.watch { color: #ffd98a; }
+.dash-chips .chip.todo  { color: #dde2e8; }
+.dash-chips .chip.ok    { color: #b9f0cf; }
+.dash-more {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: .74rem;
+  font-weight: 700;
+  color: #c4dece;
+}
+.dash-more .chev { width: 16px; height: 16px; stroke: #c4dece; }
+
+/* Opened from the panel, Needs attention has to land below the sticky top
+   bar rather than underneath it. */
+#summaryCard { scroll-margin-top: calc(var(--topbar-h) + 10px); }
+
+@media (prefers-reduced-motion: reduce) {
+  .dash-tile.on .dash-led { animation: none; }
+}
+
 </style>
 </head>
 <body>
@@ -1187,6 +1341,29 @@ body.no-scroll { overflow: hidden; }
     <span>This phone has not saved its own copy of the app yet, so it will not open
     without signal. Stay connected a moment, or open the app again with signal.</span>
   </div>
+
+  <!-- ---------- the plant at a glance ----------
+       Filled by renderDashboard() on every refresh. Everything on it is read
+       from figures the sheet already works out; it adds nothing to the report. -->
+  <section class="dash" id="dashboard" aria-label="The plant at a glance">
+    <div class="dash-top">
+      <div class="dash-tile" id="dashDaf">
+        <span class="dash-label">DAF dosing</span>
+        <span class="dash-state"><span class="dash-led"></span><span id="dashDafState">Not logged</span></span>
+        <span class="dash-sub" id="dashDafSince">&nbsp;</span>
+      </div>
+      <div class="dash-tile" id="dashReport">
+        <span class="dash-label" id="dashReportLabel">Today&rsquo;s report</span>
+        <span class="dash-state"><span class="dash-led"></span><span id="dashReportState">Not made yet</span></span>
+        <span class="dash-sub" id="dashReportSub">&nbsp;</span>
+      </div>
+    </div>
+    <div class="dash-tanks" id="dashTanks"></div>
+    <button type="button" class="dash-issues" id="dashIssues" aria-label="Show what needs attention">
+      <span class="dash-chips" id="dashIssueChips">&nbsp;</span>
+      <span class="dash-more">See list<svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></span>
+    </button>
+  </section>
 
   <!-- ---------- report details ---------- -->
   <section class="card">
@@ -5327,6 +5504,8 @@ function refresh() {
     `${prettyDate(state.date)}${state.reporter ? ' \u00B7 ' + state.reporter : ''}`;
 
   renderSummary(ev);
+  lastEv = ev;
+  renderDashboard(ev);
   // The counts above can wrap the progress line onto a second row, which
   // changes how far down the sticky headers belong.
   syncTopbarHeight();
@@ -5520,6 +5699,7 @@ function renderSendStatus() {
   line.hidden = !s;
   setClass(line, 'notsent', s === 'notsent');
   setClass(line, 'shared', s === 'shared');
+  if (lastEv) renderDashboard(lastEv);
   if (!s) return;
   line.textContent = s === 'shared'
     ? `Shared ${whenText(state.sentAt)}`
@@ -6008,6 +6188,129 @@ async function renderHistory() {
   }));
 }
 
+/* ---------------- the plant at a glance ----------------
+
+   The dark panel at the top of the sheet. It works nothing out for itself:
+   the DAF state is decided exactly as the dosing card decides it, the tanks
+   show the levels typed on the sheet and the days left the report prints,
+   their colours are the statuses the report gives each chemical, and the
+   report tile follows the line above the PDF button. Redrawn on every refresh,
+   from the figures refresh() has just worked out. */
+let lastEv = null;
+
+const DASH_NAMES = { caustic: 'Caustic', coagulant: 'Coagulant', flocculant: 'Flocculant', sulphuric: 'Acid' };
+
+// An IBC: the cage, the pallet, and the usage tank filled to its level.
+function tankSvg(id, level) {
+  const lv = Math.max(0, Math.min(1, level || 0));
+  const top = 7;
+  const h = 38;
+  const fh = Math.round(h * lv * 10) / 10;
+  return '<svg class="tank-svg" viewBox="0 0 48 58" aria-hidden="true">'
+    + `<defs><clipPath id="tankclip-${id}"><rect x="7" y="${top}" width="34" height="${h}" rx="3"/></clipPath></defs>`
+    + `<rect class="tank-body" x="7" y="${top}" width="34" height="${h}" rx="3"/>`
+    + `<rect class="tank-fill" x="7" y="${top + h - fh}" width="34" height="${fh}" clip-path="url(#tankclip-${id})"/>`
+    + '<path class="tank-cage" d="M18.5 4v44M29.5 4v44M4 18.5h40M4 33.5h40"/>'
+    + '<rect class="tank-frame" x="4" y="4" width="40" height="44" rx="4"/>'
+    + '<rect class="tank-base" x="5" y="50" width="38" height="5" rx="1.5"/>'
+    + '</svg>';
+}
+
+// "since 8:30am" today, "since Mon 28/SEP 8:30am" any other day.
+function sinceText(stamp) {
+  const d = String(stamp).split('T')[0];
+  const time = clockTime(stamp);
+  if (d === todayISO()) return `since ${time}`;
+  const dt = new Date(d + 'T00:00:00');
+  const day = isNaN(dt.getTime()) ? '' : `${DAYS[dt.getDay()]} `;
+  return `since ${day}${styleDate(d).slice(0, 6)} ${time}`;
+}
+
+// "2.3 days", "15 days", "<1 day" - the same rounding as the report's own.
+function dashDays(days) {
+  if (days === null || days === undefined) return '-';
+  if (days < 1) return '&lt;1 <small>day</small>';
+  const r = days < 10 ? Math.round(days * 10) / 10 : Math.round(days);
+  return `${r} <small>${r === 1 ? 'day' : 'days'}</small>`;
+}
+
+function dashTank(item, st, v) {
+  const unit = esc(item.unit || 'L');
+  const inUse = num(v.inUse);
+  const backup = item.hasBackup ? num(v.backup) : null;
+  const name = `<div class="tank-name">${esc(DASH_NAMES[item.id] || item.label)}</div>`;
+
+  /* Not measured yet this morning: an empty grey tank, saying so. Nothing is
+     drawn from the last check, so nothing on it can be taken for today's
+     level. The days and the colour come once today's level is in, exactly as
+     on the sheet and the report. */
+  if (inUse === null && (backup === null || !item.hasBackup)) {
+    return `<div class="tank blank">${tankSvg(item.id, 0)}${name}`
+      + '<div class="tank-days">-</div>'
+      + '<div class="tank-litres">not measured<br>yet</div></div>';
+  }
+
+  const lines = [inUse === null ? 'in use not typed' : `${esc(fmtQty(inUse))} ${unit} in use`];
+  if (item.hasBackup) lines.push(backup ? `+${esc(fmtQty(backup))} ${unit} backup` : 'no backup');
+  return `<div class="tank ${esc(st.status || STATUS.BLANK)}">${tankSvg(item.id, (inUse || 0) / IBC_LITRES)}${name}`
+    + `<div class="tank-days">${dashDays(st.daysLeft)}</div>`
+    + `<div class="tank-litres">${lines.join('<br>')}</div></div>`;
+}
+
+function renderDashboard(ev) {
+  if (!el('#dashboard') || !ev) return;
+
+  // DAF dosing, decided exactly as the dosing card decides it.
+  const nowMs = Date.now();
+  const logged = dosingEvents.filter(e => e && e.at);
+  const happened = logged.filter(e => { const t = toMs(e.at); return t === null || t <= nowMs; });
+  const last = dosingLastEvent(happened);
+  const running = logged.length ? dosingOnNow(dosingEvents) : null;
+  setClass(el('#dashDaf'), 'on', running === true);
+  el('#dashDafState').textContent = running === null ? 'Not logged' : running ? 'RUNNING' : 'STOPPED';
+  el('#dashDafSince').textContent = last ? sinceText(last.at) : 'record a start below';
+
+  // This report: made, sent, or still being filled in.
+  const total = Object.keys(ITEM_INDEX).length;
+  const done = Object.values(ev.items).filter(i => i.status !== STATUS.BLANK).length;
+  const sent = sendState(state);
+  el('#dashReportLabel').textContent = state.date === todayISO()
+    ? 'Today\u2019s report' : `Report ${styleDate(state.date) || state.date}`;
+  setClass(el('#dashReport'), 'good', sent === 'shared');
+  setClass(el('#dashReport'), 'warn', sent === 'notsent');
+  el('#dashReportState').textContent = sent === 'shared' ? 'SHARED'
+    : sent === 'notsent' ? 'NOT SENT' : sent === 'downloaded' ? 'SAVED' : 'Not made yet';
+  el('#dashReportSub').textContent = sent === 'shared' ? whenText(state.sentAt)
+    : sent === 'notsent' ? 'made, but not sent'
+      : sent === 'downloaded' ? 'to your downloads' : `${done} of ${total} checks recorded`;
+
+  // The four chemicals, always in the same order.
+  const byId = {};
+  (ev.stock || []).forEach(st => { byId[st.id] = st; });
+  el('#dashTanks').innerHTML = chemicalItems()
+    .map(item => dashTank(item, byId[item.id] || {}, state.values[item.id] || {}))
+    .join('');
+
+  // What needs doing: the same counts as the line in the top bar.
+  const c = ev.counts;
+  const chips = [];
+  if (c.fault) chips.push(`<span class="chip fault">${c.fault} ${c.fault === 1 ? 'fault' : 'faults'}</span>`);
+  if (c.watch) chips.push(`<span class="chip watch">${c.watch} to monitor</span>`);
+  if (c.todo) chips.push(`<span class="chip todo">${c.todo} not done</span>`);
+  if (!chips.length) chips.push('<span class="chip ok">Nothing flagged</span>');
+  el('#dashIssueChips').innerHTML = chips.join('');
+}
+
+// The bottom of the panel opens Needs attention and brings it into view.
+function bindDashboard() {
+  el('#dashIssues').addEventListener('click', () => {
+    folds.summary = true;
+    applyFold('summary');
+    const card = el('#summaryCard');
+    if (card && card.scrollIntoView) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+}
+
 /* ---------------- sheets + toast ---------------- */
 
 const closeTimers = new WeakMap();
@@ -6115,6 +6418,7 @@ function renderDosing() {
     </div>`);
   el('#dosingList').innerHTML = collapsibleLog('dosing', rows);
   syncFoldButton('dosing', rows.length);
+  if (lastEv) renderDashboard(lastEv);
 }
 
 function prettyStamp(stamp) {
@@ -7241,6 +7545,7 @@ async function boot() {
     ['wire the backup buttons', bindBackup],
     ['show when the last backup was', renderBackupStatus],
     ['show whether the report was sent', renderSendStatus],
+    ['wire the dashboard', bindDashboard],
     ['draw the checklist', render],
     ['show the trigger levels', renderThresholds],
     ['size the top bar', syncTopbarHeight]
