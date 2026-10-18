@@ -1308,7 +1308,21 @@ async function main() {
     const buttons = (id) => doc.querySelectorAll(`[data-status="${id}"]`).map(b => b.dataset.value).join(',');
     check('the vacuum gauge no longer has a Monitor button', buttons('bio_vacuum') === 'ok,fault,todo', buttons('bio_vacuum'));
     check('nor the pH row, which has lost OK too', buttons('ph') === 'fault,todo', buttons('ph'));
-    check('Tank 1 mixer was not on the list and keeps all four', buttons('tank1_mixer') === 'ok,watch,fault,todo', buttons('tank1_mixer'));
+    check('Tank 1 mixer has lost Monitor too', buttons('tank1_mixer') === 'ok,fault,todo', buttons('tank1_mixer'));
+    check('and so have the pit pump and the fume ducting',
+      ['pit_pump', 'duct_lamb_cooker', 'duct_beef_cooker', 'duct_beef_press', 'duct_drier1', 'duct_drier2', 'duct_drier3']
+        .every(id => buttons(id) === 'ok,fault,todo'));
+    check('no row on the sheet offers a Monitor button',
+      doc.querySelectorAll('[data-status]').every(b => b.dataset.value !== 'watch'));
+    /* A Monitor tapped on one of these before the update must not vanish: it
+       still shows in the row's tag, and any of the three buttons replaces it. */
+    run(app.ctx, `state.values.tank1_mixer = { status: 'watch', photos: [] }; render();`);
+    check('a Monitor tapped before the update still shows in the tag',
+      doc.querySelector('[data-pill="tank1_mixer"]').textContent === 'WATCH',
+      doc.querySelector('[data-pill="tank1_mixer"]').textContent);
+    doc.querySelector('[data-status="tank1_mixer"][data-value="ok"]').dispatch('click');
+    check('and tapping OK replaces it', run(app.ctx, 'state.values.tank1_mixer.status') === 'ok'
+      && doc.querySelector('[data-pill="tank1_mixer"]').textContent === 'OK');
     doc.querySelector('[data-status="ph"][data-value="fault"]').dispatch('click');
     check('the buttons that remain still work', run(app.ctx, 'state.values.ph.status') === 'fault');
 
@@ -1323,6 +1337,119 @@ async function main() {
       String(doc.querySelectorAll('[data-choice="daf_clarity"]').length));
 
     check('no errors logged', app.localErrors.length === 0, app.localErrors.join(' | '));
+  }
+
+  /* ===== scenario 14: sent, or only made ===== */
+  console.log('\n14. Whether the report was actually sent');
+  {
+    /* Making the PDF used to file the report as submitted before the share
+       screen even opened, so closing that screen by accident left a report
+       that looked sent and was not. */
+    const app = makeApp(null);
+    await sleep(320);
+    const doc = app.document;
+    const line = () => doc.querySelector('#sendStatus');
+    const savedCopy = () => run(app.ctx, `store.get('report-' + state.date)`);
+    let asked = null;
+    app.ctx.confirm = (msg) => { asked = msg; return true; };
+
+    check('no sent line before a PDF is made', line().hidden === true);
+
+    // The share screen is closed without picking an app.
+    let shares = 0;
+    app.sandbox.navigator.canShare = () => true;
+    app.sandbox.navigator.share = () => {
+      shares++;
+      return Promise.reject(Object.assign(new Error('closed'), { name: 'AbortError' }));
+    };
+    run(app.ctx, 'generatePdf();');
+    await sleep(400);
+    check('the share screen was opened', shares === 1, String(shares));
+    check('closing it leaves "Not sent yet" above the button',
+      line().hidden === false && /^Not sent yet/.test(line().textContent), line().textContent);
+    check('in the warning amber', line().classList.contains('notsent'));
+    let rec = await savedCopy();
+    check('the saved copy knows it was made but not sent',
+      !!rec && !!rec.pdfMadeAt && !rec.sentAt, JSON.stringify(rec && { m: rec.pdfMadeAt, s: rec.sentAt }));
+
+    // Closing and reopening the app keeps it.
+    const reopened = makeApp(Array.from(app.indexedDB.__stores.reports.values()));
+    await sleep(320);
+    const reLine = reopened.document.querySelector('#sendStatus');
+    check('after closing and reopening the app it still says not sent',
+      reLine.hidden === false && /^Not sent yet/.test(reLine.textContent), reLine.textContent);
+
+    // Sending it: the same button again, and this time an app is picked.
+    asked = null;
+    app.sandbox.navigator.share = () => { shares++; return Promise.resolve(); };
+    run(app.ctx, 'generatePdf();');
+    await sleep(400);
+    check('sending it again asks nothing about replacing', asked === null, String(asked).slice(0, 70));
+    check('the share screen opened again', shares === 2, String(shares));
+    check('the line now says when it was shared',
+      /^Shared at \d{1,2}:\d{2}(am|pm)$/.test(line().textContent) && line().classList.contains('shared'),
+      line().textContent);
+    rec = await savedCopy();
+    check('and so does the saved copy', !!rec.sentAt && rec.sentHow === 'share',
+      JSON.stringify({ s: rec.sentAt, h: rec.sentHow }));
+    run(app.ctx, 'renderHistory();');
+    await sleep(100);
+    // Read from the markup: the stand-in page's textContent does not reach
+    // into a list drawn through innerHTML.
+    const listText = String(doc.querySelector('#historyList').innerHTML)
+      .replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+    check('Saved reports in Settings shows it as shared', /shared at \d{1,2}:\d{2}(am|pm)/.test(listText),
+      listText.slice(0, 120));
+
+    // Made again after it went out: a short check, not the warning.
+    asked = null;
+    app.ctx.confirm = (msg) => { asked = msg; return false; };
+    run(app.ctx, 'generatePdf();');
+    await sleep(300);
+    check('making it again after sharing asks first', !!asked && /already shared at/.test(asked),
+      String(asked).slice(0, 80));
+    check('without the warning about losing a period', !/no longer be recorded/.test(String(asked)));
+    check('saying no sends nothing and it stays shared',
+      shares === 2 && /^Shared at/.test(line().textContent), `${shares} / ${line().textContent}`);
+
+    // A different report filed over it still gets the full warning.
+    asked = null;
+    run(app.ctx, "state.lastCheckDate = state.date; state.lastReadingTime = '08:00';");
+    run(app.ctx, 'generatePdf();');
+    await sleep(300);
+    check('a different report for the same date still gets the full warning',
+      !!asked && /no longer be recorded/.test(asked), String(asked).slice(0, 80));
+    check('and declining it sends nothing', shares === 2, String(shares));
+    check('dates are told the same way', run(app.ctx,
+      'whenText(new Date(2026, 9, 14, 8, 42).getTime())') === 'on 14/OCT/26 at 8:42am',
+      run(app.ctx, 'whenText(new Date(2026, 9, 14, 8, 42).getTime())'));
+    check('no errors logged', app.localErrors.length === 0, app.localErrors.join(' | '));
+
+    // Starting a new report over one never sent says so.
+    let newAsk = null;
+    reopened.ctx.confirm = (msg) => { newAsk = msg; return false; };
+    run(reopened.ctx, "el('#btnNewReport').dispatch('click');");
+    await sleep(200);
+    check('starting a new report over an unsent one says so',
+      !!newAsk && /has not been sent/.test(newAsk), String(newAsk).slice(0, 80));
+    reopened.ctx.confirm = () => true;
+    run(reopened.ctx, "el('#btnNewReport').dispatch('click');");
+    await sleep(300);
+    check('and a fresh report starts with no sent line',
+      reopened.document.querySelector('#sendStatus').hidden === true);
+    check('no errors logged (reopened)', reopened.localErrors.length === 0, reopened.localErrors.join(' | '));
+
+    // A phone with no share screen saves to the downloads instead.
+    const dl = makeApp(null);
+    await sleep(320);
+    dl.ctx.confirm = () => true;
+    run(dl.ctx, 'generatePdf();');
+    await sleep(400);
+    const dlLine = dl.document.querySelector('#sendStatus');
+    check('saved to the downloads says so, without the not-sent warning',
+      /^Saved to your downloads at/.test(dlLine.textContent) && !dlLine.classList.contains('notsent'),
+      dlLine.textContent);
+    check('no errors logged (downloads)', dl.localErrors.length === 0, dl.localErrors.join(' | '));
   }
 
   console.log('\n' + '='.repeat(52));

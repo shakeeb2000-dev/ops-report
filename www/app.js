@@ -226,35 +226,33 @@ function showsStatusButtons(item) {
   return !NO_STATUS_BUTTONS.has(item.id);
 }
 
-/* Which buttons a check offers, where that is fewer than all four.
+/* Which buttons a check offers: OK, Fault and Not done.
 
-   At the operator's request the Monitor button is gone from the checks below,
-   and the pH row has lost OK as well, which is what leaves room for bigger pH
-   boxes. Anything not listed here keeps all four.
+   There is no Monitor button on any row. The operator asked for it to go in
+   two rounds - first the vacuum gauge, DAF pumps and paddles, saturators,
+   flocculant mixer, flow rate and pH; then Tank 1 mixer, the pit pump and the
+   six fume-ducting rows - which between them are every row that had one.
+   The pH row has lost OK as well, which is what leaves room for bigger pH
+   boxes.
 
-   Only the button you tap by hand is removed. The app still works out Monitor
+   Only the button you tap by hand is gone. The app still works out Monitor
    for itself from the typed readings and the trigger levels in Settings - a
    saturator at 600 kPa is still flagged as drifting - and OK on the pH row
-   comes the same way, from readings inside their limits. */
-const STATUS_CHOICES = {
-  bio_vacuum:  [STATUS.OK, STATUS.FAULT, STATUS.TODO],
-  daf_pumps:   [STATUS.OK, STATUS.FAULT, STATUS.TODO],
-  daf_paddles: [STATUS.OK, STATUS.FAULT, STATUS.TODO],
-  sat1:        [STATUS.OK, STATUS.FAULT, STATUS.TODO],
-  sat2:        [STATUS.OK, STATUS.FAULT, STATUS.TODO],
-  floc_mixer:  [STATUS.OK, STATUS.FAULT, STATUS.TODO],
-  flow_rate:   [STATUS.OK, STATUS.FAULT, STATUS.TODO],
-  ph:          [STATUS.FAULT, STATUS.TODO]
-};
-
-const ALL_STATUS_BUTTONS = [
-  [STATUS.OK, 'OK'], [STATUS.WATCH, 'Monitor'],
-  [STATUS.FAULT, 'Fault'], [STATUS.TODO, 'Not done']
+   comes the same way, from readings inside their limits. A row that had
+   Monitor tapped before this change still shows it in its coloured tag, and
+   tapping any of the three buttons replaces it. */
+const STATUS_BUTTONS = [
+  [STATUS.OK, 'OK'], [STATUS.FAULT, 'Fault'], [STATUS.TODO, 'Not done']
 ];
+
+// Rows offering fewer buttons than the three above.
+const STATUS_CHOICES = {
+  ph: [STATUS.FAULT, STATUS.TODO]
+};
 
 function statusButtonsFor(item) {
   const only = STATUS_CHOICES[item.id];
-  return only ? ALL_STATUS_BUTTONS.filter(([s]) => only.includes(s)) : ALL_STATUS_BUTTONS;
+  return only ? STATUS_BUTTONS.filter(([s]) => only.includes(s)) : STATUS_BUTTONS;
 }
 
 /* ---------------- dates ----------------
@@ -763,20 +761,18 @@ async function generatePdf() {
   /* A report is filed under its date, so saving a second one for the same day
      replaces the first. The period it covered then exists nowhere, while the
      next report carries on from the later reading - so that water is simply
-     gone from the record. Worth a word before it happens. */
+     gone from the record. Worth a word before it happens.
+
+     Not when it is this same report being made again, though - sent a second
+     time because the share screen was closed, or corrected after a mistake.
+     That covers the same period, so nothing is lost by replacing it, and the
+     warning only taught that it could be clicked through. */
   try {
     const existing = await store.get(`report-${state.date}`);
-    if (existing && existing.source !== HISTORIC_TAG && existing.values) {
-      const ok = confirm(
-        `A report for ${prettyDate(state.date)} is already saved.\n\n`
-        + 'Saving again replaces it, and the period it covered will no longer '
-        + 'be recorded anywhere.\n\n'
-        + 'If you only came to log a meter reading or a dosing switch, those '
-        + 'are already saved - you do not need to make a report.\n\n'
-        + 'Replace it?'
-      );
-      if (!ok) return;
-    }
+    const question = existing && existing.source !== HISTORIC_TAG && existing.values
+      ? makeAgainQuestion(existing, state)
+      : null;
+    if (question && !confirm(question)) return;
   } catch (err) {
     console.error('could not check for an existing report', err);
   }
@@ -804,10 +800,143 @@ async function generatePdf() {
     return;
   }
 
+  /* Made now, and not sent until the share screen says an app was picked.
+     Written to the phone before the share screen opens, because that is the
+     moment the app is most likely to be closed behind it. */
+  state.pdfMadeAt = Date.now();
+  state.sentAt = null;
+  state.sentHow = null;
   await archiveCurrent();
+  await saveDraftNow();
+  renderSendStatus();
 
   const filename = `Ops-Report-${state.date}.pdf`;
-  await deliverPdf(bytes, filename);
+  const outcome = await deliverPdf(bytes, filename);
+  await recordDelivery(outcome);
+}
+
+/* What to ask before a PDF is made over a report already saved for this date,
+   or null to go straight ahead.
+
+   - A different report (its period opens at another reading): the full
+     warning, because the period the saved one covered would be lost.
+   - This same report, made but never sent: nothing. It is being sent again
+     because the share screen was closed, and a warning there only taught that
+     warnings can be clicked through.
+   - This same report, already shared or saved to the downloads - or made by
+     an older version, which never noted either: a short check, so a visit to
+     log a dosing switch does not send the managers the same report twice. */
+const ONLY_LOGGING =
+  'If you only came to log a meter reading or a dosing switch, those are '
+  + 'already saved - you do not need to make a report.';
+
+function makeAgainQuestion(saved, current) {
+  if (!sameReport(saved, current)) {
+    return `A report for ${prettyDate(current.date)} is already saved.\n\n`
+      + 'Saving again replaces it, and the period it covered will no longer '
+      + 'be recorded anywhere.\n\n'
+      + ONLY_LOGGING + '\n\n'
+      + 'Replace it?';
+  }
+  const s = sendState(saved);
+  if (s === 'notsent') return null;
+  if (s === 'shared') {
+    return `This report was already shared ${whenText(saved.sentAt)}.\n\n`
+      + ONLY_LOGGING + '\n\n'
+      + 'Make it again and send it?';
+  }
+  if (s === 'downloaded') {
+    return `This report was already saved to your downloads ${whenText(saved.pdfMadeAt)}.\n\n`
+      + ONLY_LOGGING + '\n\n'
+      + 'Make it again?';
+  }
+  return `A report for ${prettyDate(current.date)} is already saved.\n\n`
+    + ONLY_LOGGING + '\n\n'
+    + 'Make it again?';
+}
+
+/* Whether a saved report is this same one made again - same date, and a
+   period opening at the same reading - rather than a different report about
+   to be filed over it. */
+function sameReport(saved, current) {
+  if (!saved || !current) return false;
+  const time = (r) => r.lastReadingTime || DEFAULT_READING_TIME;
+  return saved.date === current.date
+    && (saved.lastCheckDate || null) === (current.lastCheckDate || null)
+    && time(saved) === time(current);
+}
+
+/* ---------------- sent or not ----------------
+
+   Making the PDF used to be the end of it: the report was filed as submitted
+   the moment it was built, before the share screen even opened, so closing
+   that screen by accident left a report everyone believed had gone out.
+
+   What the phone can tell us is whether an app (WhatsApp, email...) was
+   picked on the share screen. It cannot see whether the message was then sent
+   from inside that app, which is why the wording is "shared", not "sent".
+   A PDF saved to the downloads instead may or may not be sent on from there,
+   so that is said as it is, without a warning.
+
+     pdfMadeAt  when the PDF was last made from this report
+     sentAt     when it was handed to another app, or null
+     sentHow    'share', 'download', or null (made, but the screen was closed) */
+function sendState(r) {
+  if (!r || !r.pdfMadeAt) return null;   // not made, or made before this was kept
+  if (r.sentAt) return 'shared';
+  if (r.sentHow === 'download') return 'downloaded';
+  return 'notsent';
+}
+
+// "at 8:42am" today, "on 14/OCT/26 at 8:42am" any other day.
+function whenText(ms) {
+  const d = new Date(ms);
+  const iso = isoOf(ms);
+  const time = clockTime(`${iso}T${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`);
+  return iso === todayISO() ? `at ${time}` : `on ${styleDate(iso)} at ${time}`;
+}
+
+// The line above the PDF button. Hidden until a PDF has been made.
+function renderSendStatus() {
+  const line = el('#sendStatus');
+  if (!line) return;
+  const s = sendState(state);
+  line.hidden = !s;
+  setClass(line, 'notsent', s === 'notsent');
+  setClass(line, 'shared', s === 'shared');
+  if (!s) return;
+  line.textContent = s === 'shared'
+    ? `Shared ${whenText(state.sentAt)}`
+    : s === 'downloaded'
+      ? `Saved to your downloads ${whenText(state.pdfMadeAt)}`
+      : 'Not sent yet - tap the button to send it';
+}
+
+async function saveDraftNow() {
+  clearTimeout(saveTimer);
+  try {
+    await store.put({ ...state, id: DRAFT_ID, savedAt: Date.now() });
+  } catch (err) {
+    console.error('could not save the draft', err);
+  }
+}
+
+/* Notes what happened on the share screen, on the report on screen and on its
+   saved copy - the copy only if it is the one this PDF was made from. */
+async function recordDelivery(outcome) {
+  state.sentAt = outcome === 'share' ? Date.now() : null;
+  state.sentHow = outcome === 'share' || outcome === 'download' ? outcome : null;
+  renderSendStatus();
+  await saveDraftNow();
+  try {
+    const id = `report-${state.date}`;
+    const saved = await store.get(id);
+    if (saved && saved.pdfMadeAt === state.pdfMadeAt) {
+      await store.put({ ...saved, sentAt: state.sentAt, sentHow: state.sentHow });
+    }
+  } catch (err) {
+    console.error('could not note whether the report was sent', err);
+  }
 }
 
 /* Clears the checklist for a fresh report, keeping the operator's name,
@@ -815,8 +944,12 @@ async function generatePdf() {
 async function startNewReport() {
   const filled = Object.keys(state.values).length > 0;
   if (filled) {
+    // The last chance to notice, before the report leaves the screen.
+    const unsent = sendState(state) === 'notsent'
+      ? 'The report on screen was made but has not been sent.\n\n'
+      : '';
     const ok = confirm(
-      'Start a new report?\n\n' +
+      'Start a new report?\n\n' + unsent +
       "This clears the checks, readings and photos on screen. Today's tank " +
       'levels are moved into the Yesterday boxes so usage still works.\n\n' +
       'Reports you have already saved are kept.'
@@ -850,12 +983,18 @@ async function startNewReport() {
   hydrateFields();
   render();
   renderThresholds();
+  renderSendStatus();
   closeSheets();
   toast('Fresh report ready - yesterday\u2019s levels carried over');
 }
 
+/* Hands the PDF on, and says what became of it:
+     'share'    an app was picked on the share screen
+     'cancel'   the share screen was closed without picking one
+     'download' saved to the phone's downloads instead */
 async function deliverPdf(bytes, filename) {
-  // 1. Wrapped in the Android app - hand it to the native share sheet.
+  // 1. Wrapped in the Android app - hand it to the native share sheet. The
+  //    wrapper does not report back, so opening it is taken as sharing.
   if (window.AndroidBridge && typeof window.AndroidBridge.sharePdf === 'function') {
     let binary = '';
     const chunk = 0x8000;
@@ -864,7 +1003,7 @@ async function deliverPdf(bytes, filename) {
     }
     window.AndroidBridge.sharePdf(btoa(binary), filename);
     toast('Opening share sheet...');
-    return;
+    return 'share';
   }
 
   const blob = new Blob([bytes], { type: 'application/pdf' });
@@ -875,9 +1014,12 @@ async function deliverPdf(bytes, filename) {
     try {
       await navigator.share({ files: [file], title: filename });
       toast('Shared');
-      return;
+      return 'share';
     } catch (err) {
-      if (err && err.name === 'AbortError') return;
+      if (err && err.name === 'AbortError') {
+        toast('Not sent yet');
+        return 'cancel';
+      }
     }
   }
 
@@ -891,6 +1033,7 @@ async function deliverPdf(bytes, filename) {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 4000);
   toast('PDF saved to your downloads');
+  return 'download';
 }
 
 /* Archives the submitted report. Photos are left out of the stored copy - they
@@ -1207,10 +1350,20 @@ async function renderHistory() {
     list.innerHTML = '<p class="muted small">No saved reports yet.</p>';
     return;
   }
+  // What became of each one. Reports made before this was kept just say
+  // "submitted", as they always did.
+  const fate = (r) => {
+    if (r.source === HISTORIC_TAG) return '<span class="muted">recorded by hand</span>';
+    const s = sendState(r);
+    if (s === 'shared') return `<span class="h-sent">shared ${esc(whenText(r.sentAt))}</span>`;
+    if (s === 'downloaded') return '<span class="muted">saved to downloads</span>';
+    if (s === 'notsent') return '<span class="h-unsent">not sent</span>';
+    return '<span class="muted">submitted</span>';
+  };
   list.innerHTML = saved.map(r => `
     <div class="history-row">
       <span>${esc(prettyDate(r.date))}
-        <span class="muted">${r.source === HISTORIC_TAG ? 'recorded by hand' : 'submitted'}</span></span>
+        ${fate(r)}</span>
       <span class="h-actions">
         <button type="button" class="tool-btn" data-load="${esc(r.id)}">Load</button>
         <button type="button" class="tool-btn" data-delete="${esc(r.id)}">Delete</button>
@@ -1227,6 +1380,7 @@ async function renderHistory() {
     hydrateFields();
     render();
     renderThresholds();
+    renderSendStatus();
     closeSheets();
     toast('Report loaded');
   }));
@@ -2470,6 +2624,7 @@ async function boot() {
     ['show the meter list', renderMeterLog],
     ['wire the backup buttons', bindBackup],
     ['show when the last backup was', renderBackupStatus],
+    ['show whether the report was sent', renderSendStatus],
     ['draw the checklist', render],
     ['show the trigger levels', renderThresholds],
     ['size the top bar', syncTopbarHeight]

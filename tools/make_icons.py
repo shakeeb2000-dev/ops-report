@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """Generate the app launcher icons with no third-party image libraries.
 
-Writes a full-bleed navy tile with three white 'checked line' rows, which
-reads clearly at small sizes and survives Android's maskable icon crop.
+Writes a full-bleed tile in the brand green with three 'checked line' rows -
+the first tick in the brand gold - which reads clearly at small sizes and
+survives Android's maskable icon crop. The colours are the printed report's.
 """
 import os
 import struct
 import zlib
 
-NAVY = (30, 58, 95)
+BRAND = (13, 105, 56)   # the PDF's green (#0d6938)
 WHITE = (255, 255, 255)
-GREEN = (111, 211, 155)
+GOLD = (240, 168, 30)    # the PDF's gold (#f0a81e)
 
 OUT_DIR = os.path.join(os.path.dirname(__file__), "..", "www", "icons")
 
@@ -46,7 +47,7 @@ def thick_line(px, x0, y0, x1, y1, width, colour):
 
 
 def draw_icon(size):
-    px = blank(size, NAVY)
+    px = blank(size, BRAND)
     u = size / 24.0  # design grid unit
 
     rows = 3
@@ -60,7 +61,7 @@ def draw_icon(size):
 
     for r in range(rows):
         cy = top + r * gap
-        colour = GREEN if r == 0 else WHITE
+        colour = GOLD if r == 0 else WHITE
         # check mark: short down-stroke then long up-stroke
         thick_line(px, tick_x - 1.5 * u, cy, tick_x - 0.3 * u, cy + 1.25 * u, stroke, colour)
         thick_line(px, tick_x - 0.3 * u, cy + 1.25 * u, tick_x + 1.9 * u, cy - 1.5 * u, stroke, colour)

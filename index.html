@@ -3,23 +3,35 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#1e3a5f">
-<meta name="build-id" content="7403c281d4c5">
+<meta name="theme-color" content="#0d6938">
+<meta name="build-id" content="9adcbc8fa5fe">
 <title>Daily Ops Report</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
 <style>
 :root {
-  --navy: #1e3a5f;
-  --navy-dark: #162d4a;
+  /* The brand: the forest green and gold of the printed report, which were
+     taken from the ATP logo. The app was navy before, so the two looked like
+     products of different companies. */
+  --brand: #0d6938;
+  --brand-dark: #094e2a;
+  --gold: #f0a81e;
   --ink: #1a202c;
   --slate: #646e7c;
   --line: #e2e6eb;
   --bg: #f4f6f8;
   --card: #ffffff;
-  --ok: #228b4f;
-  --watch: #c98a04;
+  /* A shade lighter than the brand, so a tapped OK still reads as an answer
+     rather than part of the frame. White on it: 5.4 to 1. */
+  --ok: #1d7a45;
+  /* Monitor. White writing on the old amber (#c98a04) measured 2.9 to 1 and
+     washed out in sunlight. Now: the rail, dots and edges in the printed
+     report's amber (3.3 to 1 against the white page), and anything with words
+     on it a brighter amber with near-black writing (9.2 to 1). */
+  --watch: #c18006;
+  --watch-fill: #f2b844;
+  --on-watch: #2b1d00;
   --fault: #be2c2c;
   --todo: #6e7681;
   --radius: 12px;
@@ -47,14 +59,16 @@ html, body {
   position: sticky;
   top: 0;
   z-index: 40;
-  background: var(--navy);
+  background: var(--brand);
   color: #fff;
   padding: calc(env(safe-area-inset-top, 0px) + 12px) 16px 0;
+  /* The gold rule under the green band, as across the top of the PDF. */
+  border-bottom: 3px solid var(--gold);
   box-shadow: 0 2px 10px rgba(0,0,0,.14);
 }
 .topbar-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .topbar h1 { margin: 0; font-size: 1.05rem; font-weight: 700; letter-spacing: .01em; }
-.topbar p { margin: 2px 0 0; font-size: .78rem; color: #b6c8dd; }
+.topbar p { margin: 2px 0 0; font-size: .78rem; color: #c4dece; }
 
 .icon-btn {
   background: rgba(255,255,255,.12);
@@ -70,16 +84,16 @@ html, body {
 .icon-btn:active { background: rgba(255,255,255,.24); }
 
 .progress { height: 5px; background: rgba(255,255,255,.2); border-radius: 3px; margin-top: 10px; overflow: hidden; }
-.progress-fill { height: 100%; width: 0; background: #6fd39b; transition: width .25s ease; }
-.progress-label { margin: 5px 0 8px; font-size: .72rem; color: #b6c8dd; font-variant-numeric: tabular-nums; }
+.progress-fill { height: 100%; width: 0; background: #fff; transition: width .25s ease; }
+.progress-label { margin: 5px 0 8px; font-size: .72rem; color: #c4dece; font-variant-numeric: tabular-nums; }
 /* Tinted when something needs attention, so the count is not just more grey
    text in a grey line. */
-.progress-label.has-fault { color: #ffb4b4; font-weight: 600; }
+.progress-label.has-fault { color: #ffc9c9; font-weight: 600; }
 .progress-label.has-watch { color: #ffd98a; font-weight: 600; }
 
 /* ---------------- layout ---------------- */
 main { padding: 14px 12px 0; max-width: 720px; margin: 0 auto; }
-.spacer { height: 96px; }
+.spacer { height: 124px; }
 
 .card {
   background: var(--card);
@@ -96,7 +110,7 @@ main { padding: 14px 12px 0; max-width: 720px; margin: 0 auto; }
   font-size: .8rem;
   text-transform: uppercase;
   letter-spacing: .06em;
-  color: var(--navy);
+  color: var(--brand);
   font-weight: 700;
 }
 
@@ -143,24 +157,24 @@ main { padding: 14px 12px 0; max-width: 720px; margin: 0 auto; }
    fold arrows are hidden until there is something behind them. */
 .help-btn[hidden] { display: none; }
 .help-btn[data-help][aria-expanded="true"] {
-  background: var(--navy);
-  border-color: var(--navy);
+  background: var(--brand);
+  border-color: var(--brand);
   color: #fff;
 }
 /* The arrow says open or shut by which way it points: down to open, up to
    close again. */
-.fold-btn .chev { width: 18px; height: 18px; stroke: var(--navy); stroke-width: 2.4; }
-.fold-btn[aria-expanded="true"] { border-color: #b0c6dd; background: #eef4fb; }
+.fold-btn .chev { width: 18px; height: 18px; stroke: var(--brand); stroke-width: 2.4; }
+.fold-btn[aria-expanded="true"] { border-color: #bad5c3; background: #f0f8f3; }
 .fold-btn[aria-expanded="true"] .chev { transform: rotate(180deg); }
 .help-text {
-  background: #eef4fb;
-  border: 1px solid #b0c6dd;
+  background: #f0f8f3;
+  border: 1px solid #bad5c3;
   border-radius: 10px;
   padding: 10px 12px;
   margin-bottom: 11px;
   font-size: .8rem;
   line-height: 1.45;
-  color: #17365d;
+  color: #0c4a2a;
 }
 .muted { color: var(--slate); font-weight: 400; }
 .small { font-size: .8rem; }
@@ -181,7 +195,7 @@ input[type=text], input[type=date], input[type=time], input[type=number], select
   min-height: var(--tap);
 }
 textarea { min-height: 72px; resize: vertical; }
-input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-offset: 1px; border-color: var(--navy); }
+input:focus, select:focus, textarea:focus { outline: 2px solid #8cc7a1; outline-offset: 1px; border-color: var(--brand); }
 .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
 /* ---------------- section / group ---------------- */
@@ -198,7 +212,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
   display: flex;
   align-items: center;
   gap: 10px;
-  background: var(--navy);
+  background: var(--brand-dark);
   color: #fff;
   border-radius: var(--radius) var(--radius) 0 0;
   padding: 10px 12px;
@@ -226,7 +240,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
   flex: 0 0 auto;
   font-size: .72rem;
   font-weight: 700;
-  color: #b6c8dd;
+  color: #c4dece;
   font-variant-numeric: tabular-nums;
 }
 .section-body {
@@ -252,7 +266,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
   border-bottom: 1px solid var(--line);
   padding: 10px 12px;
   font: inherit;
-  color: var(--navy);
+  color: var(--brand);
   text-align: left;
   cursor: pointer;
   min-height: var(--tap);
@@ -357,7 +371,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
 .sbtn:first-child { border-left: 0; }
 .sbtn[aria-pressed="true"] { color: #fff; }
 .sbtn[aria-pressed="true"].ok    { background: var(--ok); }
-.sbtn[aria-pressed="true"].watch { background: var(--watch); }
+.sbtn[aria-pressed="true"].watch { background: var(--watch-fill); color: var(--on-watch); }
 .sbtn[aria-pressed="true"].fault { background: var(--fault); }
 .sbtn[aria-pressed="true"].todo  { background: var(--todo); }
 
@@ -404,7 +418,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
   padding: 0 40px 0 12px;
   border: 1px solid var(--line);
   border-radius: 9px;
-  background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231e3a5f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3.5' y='5' width='17' height='15' rx='2'/%3E%3Cpath d='M3.5 10h17M8 3v4M16 3v4'/%3E%3C/svg%3E") no-repeat right 11px center / 19px;
+  background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230d6938' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3.5' y='5' width='17' height='15' rx='2'/%3E%3Cpath d='M3.5 10h17M8 3v4M16 3v4'/%3E%3C/svg%3E") no-repeat right 11px center / 19px;
   font-size: 1rem;
   font-weight: 400;
   line-height: 1.5;
@@ -428,8 +442,8 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
   cursor: pointer;
 }
 .datebox:focus-within .datebox-text {
-  border-color: var(--navy);
-  outline: 2px solid #9db8d8;
+  border-color: var(--brand);
+  outline: 2px solid #8cc7a1;
   outline-offset: 1px;
 }
 
@@ -519,7 +533,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
 .item[data-item="ph"] .inline-row .sbtn { padding: 2px 11px; }
 /* The focus ring belongs on the whole field, since overflow:hidden would
    clip a ring drawn on the input itself. */
-.numrow:focus-within { border-color: var(--navy); outline: 2px solid #9db8d8; outline-offset: 1px; }
+.numrow:focus-within { border-color: var(--brand); outline: 2px solid #8cc7a1; outline-offset: 1px; }
 .numrow input:focus { outline: none; }
 .pairgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
 .pairgrid.with-ibc { grid-template-columns: 1fr 1fr .72fr; }
@@ -561,7 +575,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
 .stockrow.yesterday input::placeholder { color: #c2c9d2; font-weight: 400; }
 .stockrow.yesterday input:focus {
   background: #fff;
-  border-color: var(--navy);
+  border-color: var(--brand);
   color: var(--ink);
 }
 .stocktag {
@@ -575,7 +589,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
   white-space: nowrap;
 }
 .stockrow.yesterday .stocktag { padding-bottom: 0; }
-.stockrow.today .stocktag { color: var(--navy); }
+.stockrow.today .stocktag { color: var(--brand); }
 
 /* company logo picker */
 .logo-row { display: flex; gap: 12px; align-items: center; margin-top: 8px; }
@@ -600,24 +614,24 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
 /* the stock sum, shown the same way it prints on the PDF */
 .usage { margin-top: 9px; }
 .sumbox {
-  background: #eef4fb;
-  border: 1px solid #b0c6dd;
+  background: #f0f8f3;
+  border: 1px solid #bad5c3;
   border-radius: 10px;
   padding: 10px 12px;
-  color: #17365d;
+  color: #0c4a2a;
 }
 .sumrow { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; padding: 3px 0; font-size: .84rem; }
-.sumrow em { font-style: normal; color: #5c7a9e; font-size: .78rem; }
+.sumrow em { font-style: normal; color: #3f6b51; font-size: .78rem; }
 .sumrow strong { font-variant-numeric: tabular-nums; }
 .sumrow.total {
-  border-top: 1px solid #b0c6dd;
+  border-top: 1px solid #bad5c3;
   margin-top: 5px;
   padding-top: 7px;
   font-size: .95rem;
   font-weight: 700;
 }
 .sumrow.total strong { font-size: 1.02rem; }
-.sumfoot { margin-top: 6px; font-size: .76rem; color: #4c6a8e; }
+.sumfoot { margin-top: 6px; font-size: .76rem; color: #3f6b51; }
 
 /* "I don't know if any were delivered" - a get-out, not a main action, so it
    no longer takes a full-width button the size of the fields above it. */
@@ -663,7 +677,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
 }
 .cbtn[aria-pressed="true"] { color: #fff; font-weight: 700; }
 .cbtn[aria-pressed="true"].ok    { background: var(--ok);    border-color: var(--ok); }
-.cbtn[aria-pressed="true"].watch { background: var(--watch); border-color: var(--watch); }
+.cbtn[aria-pressed="true"].watch { background: var(--watch-fill); border-color: var(--watch); color: var(--on-watch); }
 .cbtn[aria-pressed="true"].fault { background: var(--fault); border-color: var(--fault); }
 .cbtn[aria-pressed="true"].todo  { background: var(--todo);  border-color: var(--todo); }
 
@@ -684,7 +698,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
   text-transform: uppercase;
 }
 .pill.ok { background: var(--ok); }
-.pill.watch { background: var(--watch); }
+.pill.watch { background: var(--watch-fill); color: var(--on-watch); }
 .pill.fault { background: var(--fault); }
 .pill.todo { background: var(--todo); }
 .pill.blank { background: #b6bcc4; }
@@ -714,7 +728,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-.icon-tool.has { color: var(--navy); }
+.icon-tool.has { color: var(--brand); }
 .icon-tool.has svg { stroke-width: 2.1; }
 /* A dot marks an attachment; two or more photos show the count instead. */
 .icon-tool.has::after {
@@ -723,7 +737,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
   top: 6px; right: 1px;
   min-width: 7px; height: 7px;
   border-radius: 7px;
-  background: var(--navy);
+  background: var(--brand);
   color: #fff;
   font-size: .56rem;
   font-weight: 800;
@@ -739,7 +753,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
   padding: 8px 12px;
   font-size: .78rem;
   font-weight: 600;
-  color: var(--navy);
+  color: var(--brand);
   cursor: pointer;
   min-height: 40px;
   font-family: inherit;
@@ -763,7 +777,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
 .dosing-card.stopped { border-left-color: var(--todo); }
 .dosing-state { display: flex; gap: 11px; align-items: flex-start; margin-bottom: 11px; }
 .dosing-dot { width: 13px; height: 13px; border-radius: 50%; background: #c4cad2; margin-top: 3px; flex: 0 0 13px; }
-.dosing-card.running .dosing-dot { background: var(--ok); box-shadow: 0 0 0 3px rgba(34,139,79,.18); }
+.dosing-card.running .dosing-dot { background: var(--ok); box-shadow: 0 0 0 3px rgba(29,122,69,.18); }
 .dosing-card.stopped .dosing-dot { background: var(--todo); }
 .dosing-now { font-weight: 700; font-size: .95rem; letter-spacing: .02em; }
 .dosing-since { font-size: .78rem; }
@@ -831,20 +845,67 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
   background: rgba(255,255,255,.97);
   border-top: 1px solid var(--line);
   backdrop-filter: blur(6px);
+  flex-wrap: wrap;   /* the sent line sits on a row of its own, above */
+}
+
+/* Whether today's PDF went out, just above the button that sends it. */
+.send-status {
+  flex: 1 0 100%;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 30px;
+  font-size: .82rem;
+  font-weight: 700;
+  color: var(--slate);
+}
+/* Must stay: .send-status sets display, which beats the hidden attribute. */
+.send-status[hidden] { display: none; }
+.send-status::before {
+  content: "";
+  flex: 0 0 9px;
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: currentColor;
+}
+/* Not sent: hard to miss, in the same amber as the warning strips. */
+.send-status.notsent {
+  padding: 4px 12px;
+  border: 1px solid #f0d58a;
+  border-radius: 9px;
+  background: #fff8e6;
+  color: #7a5200;
+}
+.send-status.notsent::before { background: var(--watch); }
+/* Shared: calm, a tick and the time. */
+.send-status.shared { color: var(--ok); }
+/* The tick is drawn, not typed: a tick character comes out differently from
+   phone to phone, or as an empty box where the font lacks it. */
+.send-status.shared::before {
+  flex: 0 0 auto;
+  width: 5px; height: 10px;
+  margin: 0 3px 3px 1px;
+  border-radius: 0;
+  background: none;
+  border: solid currentColor;
+  border-width: 0 2.5px 2.5px 0;
+  transform: rotate(45deg);
 }
 .btn {
   flex: 1;
   min-height: 50px;
   border-radius: 11px;
-  border: 1.5px solid var(--navy);
+  border: 1.5px solid var(--brand);
   font-size: .95rem;
   font-weight: 700;
   font-family: inherit;
   cursor: pointer;
 }
-.btn-primary { background: var(--navy); color: #fff; }
-.btn-primary:active { background: var(--navy-dark); }
-.btn-ghost { background: #fff; color: var(--navy); }
+.btn-primary { background: var(--brand); color: #fff; }
+.btn-primary:active { background: var(--brand-dark); }
+.btn-ghost { background: #fff; color: var(--brand); }
 .btn:disabled { opacity: .55; }
 
 /* ---------------- sheets ---------------- */
@@ -887,7 +948,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
 }
 .sheet-head { display: flex; align-items: center; justify-content: space-between; position: sticky; top: -16px; background: #fff; padding: 6px 0 10px; }
 .sheet-head h2 { margin: 0; font-size: 1rem; }
-.sheet-inner h2 { font-size: .85rem; text-transform: uppercase; letter-spacing: .05em; color: var(--navy); }
+.sheet-inner h2 { font-size: .85rem; text-transform: uppercase; letter-spacing: .05em; color: var(--brand); }
 .sheet-head .icon-btn { background: #eef1f5; color: var(--ink); }
 .sheet-foot { display: flex; gap: 10px; margin-top: 14px; }
 .sheet hr { border: 0; border-top: 1px solid var(--line); margin: 20px 0 14px; }
@@ -970,7 +1031,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: .05em;
-  color: var(--navy);
+  color: var(--brand);
 }
 .advanced > summary > span { flex: 1 1 auto; }
 .advanced > summary::-webkit-details-marker { display: none; }
@@ -988,6 +1049,8 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
 .history-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; border-top: 1px solid var(--line); padding: 10px 0; font-size: .85rem; }
 .history-row:first-child { border-top: 0; }
 .history-row .h-actions { display: flex; gap: 6px; }
+.history-row .h-sent { color: var(--ok); font-weight: 600; }
+.history-row .h-unsent { color: #7a5200; font-weight: 700; }
 
 .version-line {
   margin: 2px 4px 0;
@@ -999,7 +1062,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d8; outline-
 
 .toast {
   position: fixed;
-  left: 50%; bottom: 88px;
+  left: 50%; bottom: 120px;
   transform: translateX(-50%);
   background: var(--ink);
   color: #fff;
@@ -1027,7 +1090,7 @@ button:active, .btn:active, .sbtn:active, .cbtn:active, .tool-btn:active { trans
 .sbtn, .cbtn, .tool-btn, .btn, .icon-btn { transition: background .12s ease, border-color .12s ease, transform .08s ease; }
 
 /* Keyboard focus ring, without showing it on every mouse click. */
-:focus-visible { outline: 3px solid #8fb4dd; outline-offset: 2px; }
+:focus-visible { outline: 3px solid #6fb68a; outline-offset: 2px; }
 button:focus:not(:focus-visible) { outline: none; }
 
 /* Stop iOS zooming in when a field is focused. */
@@ -1085,7 +1148,7 @@ body.no-scroll { overflow: hidden; }
 @media (hover: hover) and (pointer: fine) {
   .sbtn:hover, .cbtn:hover, .tool-btn:hover { background: #eef2f6; }
   .cbtn[aria-pressed="true"]:hover { filter: brightness(1.06); }
-  .btn-primary:hover { background: var(--navy-dark); }
+  .btn-primary:hover { background: var(--brand-dark); }
   .btn-ghost:hover { background: #eef2f6; }
   .icon-btn:hover { background: rgba(255,255,255,.24); }
   .group-head:hover { background: #f2f5f8; }
@@ -1136,6 +1199,8 @@ body.no-scroll { overflow: hidden; }
     </div>
     <div class="help-text" id="helpReport" hidden>
       The DAF meter box is the one to fill in on your morning round.
+      To correct an earlier reading or add a missed day, use Past meter
+      readings at the bottom of the page.
       Your name, the company name and the report number are kept in Settings,
       under the gear icon at the top.
     </div>
@@ -1151,46 +1216,6 @@ body.no-scroll { overflow: hidden; }
       <input type="number" inputmode="decimal" step="any" id="fMeter" placeholder="e.g. 224994.2">
     </label>
     <p class="muted small" id="prevMeterNote">&nbsp;</p>
-  </section>
-
-  <!-- ---------- DAF water meter log ---------- -->
-  <section class="card dosing-card" id="meterCard">
-    <div class="card-head">
-      <h2>Past meter readings</h2>
-      <div class="card-tools">
-        <!-- Shown by renderMeterLog() once there is more than one reading. -->
-        <button type="button" class="help-btn fold-btn" data-fold="meter" hidden
-                aria-expanded="false" aria-label="Show older readings"><svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9.5l6 6 6-6"/></svg></button>
-        <button type="button" class="help-btn" data-help="helpMeter"
-                aria-expanded="false" aria-label="What this section is for">?</button>
-      </div>
-    </div>
-    <div class="help-text" id="helpMeter" hidden>
-      This is the history, not today. Today's reading goes in the box above and
-      appears here on its own. Use this list to fix a wrong reading, or to fill
-      in a day you missed.
-    </div>
-    <p class="muted small" id="meterCount">&nbsp;</p>
-    <button type="button" id="btnMeterAdd" class="btn btn-ghost full">+ Add a reading for another day</button>
-    <div class="dosing-entry" id="meterEntry" hidden>
-      <div class="field-grid">
-        <label>Date
-          <span class="datebox"><span class="datebox-text" aria-hidden="true"></span><input type="date" id="meterDate"></span>
-        </label>
-        <label>Time
-          <input type="time" id="meterTime">
-        </label>
-      </div>
-      <label>Meter reading (m&sup3;)
-        <input type="number" inputmode="decimal" step="any" id="meterValue" placeholder="e.g. 224994.2">
-      </label>
-      <p class="muted small" id="meterHint">Pick the day the reading was taken.</p>
-      <div class="sheet-foot">
-        <button type="button" id="btnMeterCancel" class="tool-btn">Cancel</button>
-        <button type="button" id="btnMeterSave" class="btn btn-primary">Save</button>
-      </div>
-    </div>
-    <div class="dosing-list" id="meterList"></div>
   </section>
 
   <!-- ---------- DAF running log ---------- -->
@@ -1233,7 +1258,7 @@ body.no-scroll { overflow: hidden; }
         <input type="number" inputmode="decimal" step="any" id="dosingMeter"
                placeholder="leave blank if you did not note it">
       </label>
-      <p class="muted small">If you fill this in it is saved into your meter list above.</p>
+      <p class="muted small">If you fill this in it is saved into your meter list, at the bottom of the page.</p>
       <p class="muted small" id="dosingHint">&nbsp;</p>
       <div class="sheet-foot">
         <button type="button" id="btnDosingCancel" class="tool-btn">Cancel</button>
@@ -1265,6 +1290,49 @@ body.no-scroll { overflow: hidden; }
     <textarea id="fGeneralNote" rows="3" placeholder="Anything else your managers should know"></textarea>
   </section>
 
+  <!-- ---------- DAF water meter log ----------
+       History, not today's reading, so it sits below the checklist: it is
+       only needed to correct a reading or fill in a missed day, and at the
+       top it pushed the first check off the screen. -->
+  <section class="card dosing-card" id="meterCard">
+    <div class="card-head">
+      <h2>Past meter readings</h2>
+      <div class="card-tools">
+        <!-- Shown by renderMeterLog() once there is more than one reading. -->
+        <button type="button" class="help-btn fold-btn" data-fold="meter" hidden
+                aria-expanded="false" aria-label="Show older readings"><svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9.5l6 6 6-6"/></svg></button>
+        <button type="button" class="help-btn" data-help="helpMeter"
+                aria-expanded="false" aria-label="What this section is for">?</button>
+      </div>
+    </div>
+    <div class="help-text" id="helpMeter" hidden>
+      This is the history, not today. Today's reading goes in the DAF meter box
+      at the top of the page and appears here on its own. Use this list to fix
+      a wrong reading, or to fill in a day you missed.
+    </div>
+    <p class="muted small" id="meterCount">&nbsp;</p>
+    <button type="button" id="btnMeterAdd" class="btn btn-ghost full">+ Add a reading for another day</button>
+    <div class="dosing-entry" id="meterEntry" hidden>
+      <div class="field-grid">
+        <label>Date
+          <span class="datebox"><span class="datebox-text" aria-hidden="true"></span><input type="date" id="meterDate"></span>
+        </label>
+        <label>Time
+          <input type="time" id="meterTime">
+        </label>
+      </div>
+      <label>Meter reading (m&sup3;)
+        <input type="number" inputmode="decimal" step="any" id="meterValue" placeholder="e.g. 224994.2">
+      </label>
+      <p class="muted small" id="meterHint">Pick the day the reading was taken.</p>
+      <div class="sheet-foot">
+        <button type="button" id="btnMeterCancel" class="tool-btn">Cancel</button>
+        <button type="button" id="btnMeterSave" class="btn btn-primary">Save</button>
+      </div>
+    </div>
+    <div class="dosing-list" id="meterList"></div>
+  </section>
+
   <p class="version-line">Version <span class="js-build-id">dev</span></p>
 
   <div class="spacer"></div>
@@ -1272,6 +1340,9 @@ body.no-scroll { overflow: hidden; }
 
 <!-- ---------- sticky action bar ---------- -->
 <nav class="actionbar">
+  <!-- Whether today's PDF went out. Filled by renderSendStatus() once a PDF
+       has been made; hidden before that. -->
+  <p class="send-status" id="sendStatus" role="status" hidden></p>
   <button id="btnPdf" class="btn btn-primary">Save &amp; make PDF</button>
 </nav>
 
@@ -4771,35 +4842,33 @@ function showsStatusButtons(item) {
   return !NO_STATUS_BUTTONS.has(item.id);
 }
 
-/* Which buttons a check offers, where that is fewer than all four.
+/* Which buttons a check offers: OK, Fault and Not done.
 
-   At the operator's request the Monitor button is gone from the checks below,
-   and the pH row has lost OK as well, which is what leaves room for bigger pH
-   boxes. Anything not listed here keeps all four.
+   There is no Monitor button on any row. The operator asked for it to go in
+   two rounds - first the vacuum gauge, DAF pumps and paddles, saturators,
+   flocculant mixer, flow rate and pH; then Tank 1 mixer, the pit pump and the
+   six fume-ducting rows - which between them are every row that had one.
+   The pH row has lost OK as well, which is what leaves room for bigger pH
+   boxes.
 
-   Only the button you tap by hand is removed. The app still works out Monitor
+   Only the button you tap by hand is gone. The app still works out Monitor
    for itself from the typed readings and the trigger levels in Settings - a
    saturator at 600 kPa is still flagged as drifting - and OK on the pH row
-   comes the same way, from readings inside their limits. */
-const STATUS_CHOICES = {
-  bio_vacuum:  [STATUS.OK, STATUS.FAULT, STATUS.TODO],
-  daf_pumps:   [STATUS.OK, STATUS.FAULT, STATUS.TODO],
-  daf_paddles: [STATUS.OK, STATUS.FAULT, STATUS.TODO],
-  sat1:        [STATUS.OK, STATUS.FAULT, STATUS.TODO],
-  sat2:        [STATUS.OK, STATUS.FAULT, STATUS.TODO],
-  floc_mixer:  [STATUS.OK, STATUS.FAULT, STATUS.TODO],
-  flow_rate:   [STATUS.OK, STATUS.FAULT, STATUS.TODO],
-  ph:          [STATUS.FAULT, STATUS.TODO]
-};
-
-const ALL_STATUS_BUTTONS = [
-  [STATUS.OK, 'OK'], [STATUS.WATCH, 'Monitor'],
-  [STATUS.FAULT, 'Fault'], [STATUS.TODO, 'Not done']
+   comes the same way, from readings inside their limits. A row that had
+   Monitor tapped before this change still shows it in its coloured tag, and
+   tapping any of the three buttons replaces it. */
+const STATUS_BUTTONS = [
+  [STATUS.OK, 'OK'], [STATUS.FAULT, 'Fault'], [STATUS.TODO, 'Not done']
 ];
+
+// Rows offering fewer buttons than the three above.
+const STATUS_CHOICES = {
+  ph: [STATUS.FAULT, STATUS.TODO]
+};
 
 function statusButtonsFor(item) {
   const only = STATUS_CHOICES[item.id];
-  return only ? ALL_STATUS_BUTTONS.filter(([s]) => only.includes(s)) : ALL_STATUS_BUTTONS;
+  return only ? STATUS_BUTTONS.filter(([s]) => only.includes(s)) : STATUS_BUTTONS;
 }
 
 /* ---------------- dates ----------------
@@ -5308,20 +5377,18 @@ async function generatePdf() {
   /* A report is filed under its date, so saving a second one for the same day
      replaces the first. The period it covered then exists nowhere, while the
      next report carries on from the later reading - so that water is simply
-     gone from the record. Worth a word before it happens. */
+     gone from the record. Worth a word before it happens.
+
+     Not when it is this same report being made again, though - sent a second
+     time because the share screen was closed, or corrected after a mistake.
+     That covers the same period, so nothing is lost by replacing it, and the
+     warning only taught that it could be clicked through. */
   try {
     const existing = await store.get(`report-${state.date}`);
-    if (existing && existing.source !== HISTORIC_TAG && existing.values) {
-      const ok = confirm(
-        `A report for ${prettyDate(state.date)} is already saved.\n\n`
-        + 'Saving again replaces it, and the period it covered will no longer '
-        + 'be recorded anywhere.\n\n'
-        + 'If you only came to log a meter reading or a dosing switch, those '
-        + 'are already saved - you do not need to make a report.\n\n'
-        + 'Replace it?'
-      );
-      if (!ok) return;
-    }
+    const question = existing && existing.source !== HISTORIC_TAG && existing.values
+      ? makeAgainQuestion(existing, state)
+      : null;
+    if (question && !confirm(question)) return;
   } catch (err) {
     console.error('could not check for an existing report', err);
   }
@@ -5349,10 +5416,143 @@ async function generatePdf() {
     return;
   }
 
+  /* Made now, and not sent until the share screen says an app was picked.
+     Written to the phone before the share screen opens, because that is the
+     moment the app is most likely to be closed behind it. */
+  state.pdfMadeAt = Date.now();
+  state.sentAt = null;
+  state.sentHow = null;
   await archiveCurrent();
+  await saveDraftNow();
+  renderSendStatus();
 
   const filename = `Ops-Report-${state.date}.pdf`;
-  await deliverPdf(bytes, filename);
+  const outcome = await deliverPdf(bytes, filename);
+  await recordDelivery(outcome);
+}
+
+/* What to ask before a PDF is made over a report already saved for this date,
+   or null to go straight ahead.
+
+   - A different report (its period opens at another reading): the full
+     warning, because the period the saved one covered would be lost.
+   - This same report, made but never sent: nothing. It is being sent again
+     because the share screen was closed, and a warning there only taught that
+     warnings can be clicked through.
+   - This same report, already shared or saved to the downloads - or made by
+     an older version, which never noted either: a short check, so a visit to
+     log a dosing switch does not send the managers the same report twice. */
+const ONLY_LOGGING =
+  'If you only came to log a meter reading or a dosing switch, those are '
+  + 'already saved - you do not need to make a report.';
+
+function makeAgainQuestion(saved, current) {
+  if (!sameReport(saved, current)) {
+    return `A report for ${prettyDate(current.date)} is already saved.\n\n`
+      + 'Saving again replaces it, and the period it covered will no longer '
+      + 'be recorded anywhere.\n\n'
+      + ONLY_LOGGING + '\n\n'
+      + 'Replace it?';
+  }
+  const s = sendState(saved);
+  if (s === 'notsent') return null;
+  if (s === 'shared') {
+    return `This report was already shared ${whenText(saved.sentAt)}.\n\n`
+      + ONLY_LOGGING + '\n\n'
+      + 'Make it again and send it?';
+  }
+  if (s === 'downloaded') {
+    return `This report was already saved to your downloads ${whenText(saved.pdfMadeAt)}.\n\n`
+      + ONLY_LOGGING + '\n\n'
+      + 'Make it again?';
+  }
+  return `A report for ${prettyDate(current.date)} is already saved.\n\n`
+    + ONLY_LOGGING + '\n\n'
+    + 'Make it again?';
+}
+
+/* Whether a saved report is this same one made again - same date, and a
+   period opening at the same reading - rather than a different report about
+   to be filed over it. */
+function sameReport(saved, current) {
+  if (!saved || !current) return false;
+  const time = (r) => r.lastReadingTime || DEFAULT_READING_TIME;
+  return saved.date === current.date
+    && (saved.lastCheckDate || null) === (current.lastCheckDate || null)
+    && time(saved) === time(current);
+}
+
+/* ---------------- sent or not ----------------
+
+   Making the PDF used to be the end of it: the report was filed as submitted
+   the moment it was built, before the share screen even opened, so closing
+   that screen by accident left a report everyone believed had gone out.
+
+   What the phone can tell us is whether an app (WhatsApp, email...) was
+   picked on the share screen. It cannot see whether the message was then sent
+   from inside that app, which is why the wording is "shared", not "sent".
+   A PDF saved to the downloads instead may or may not be sent on from there,
+   so that is said as it is, without a warning.
+
+     pdfMadeAt  when the PDF was last made from this report
+     sentAt     when it was handed to another app, or null
+     sentHow    'share', 'download', or null (made, but the screen was closed) */
+function sendState(r) {
+  if (!r || !r.pdfMadeAt) return null;   // not made, or made before this was kept
+  if (r.sentAt) return 'shared';
+  if (r.sentHow === 'download') return 'downloaded';
+  return 'notsent';
+}
+
+// "at 8:42am" today, "on 14/OCT/26 at 8:42am" any other day.
+function whenText(ms) {
+  const d = new Date(ms);
+  const iso = isoOf(ms);
+  const time = clockTime(`${iso}T${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`);
+  return iso === todayISO() ? `at ${time}` : `on ${styleDate(iso)} at ${time}`;
+}
+
+// The line above the PDF button. Hidden until a PDF has been made.
+function renderSendStatus() {
+  const line = el('#sendStatus');
+  if (!line) return;
+  const s = sendState(state);
+  line.hidden = !s;
+  setClass(line, 'notsent', s === 'notsent');
+  setClass(line, 'shared', s === 'shared');
+  if (!s) return;
+  line.textContent = s === 'shared'
+    ? `Shared ${whenText(state.sentAt)}`
+    : s === 'downloaded'
+      ? `Saved to your downloads ${whenText(state.pdfMadeAt)}`
+      : 'Not sent yet - tap the button to send it';
+}
+
+async function saveDraftNow() {
+  clearTimeout(saveTimer);
+  try {
+    await store.put({ ...state, id: DRAFT_ID, savedAt: Date.now() });
+  } catch (err) {
+    console.error('could not save the draft', err);
+  }
+}
+
+/* Notes what happened on the share screen, on the report on screen and on its
+   saved copy - the copy only if it is the one this PDF was made from. */
+async function recordDelivery(outcome) {
+  state.sentAt = outcome === 'share' ? Date.now() : null;
+  state.sentHow = outcome === 'share' || outcome === 'download' ? outcome : null;
+  renderSendStatus();
+  await saveDraftNow();
+  try {
+    const id = `report-${state.date}`;
+    const saved = await store.get(id);
+    if (saved && saved.pdfMadeAt === state.pdfMadeAt) {
+      await store.put({ ...saved, sentAt: state.sentAt, sentHow: state.sentHow });
+    }
+  } catch (err) {
+    console.error('could not note whether the report was sent', err);
+  }
 }
 
 /* Clears the checklist for a fresh report, keeping the operator's name,
@@ -5360,8 +5560,12 @@ async function generatePdf() {
 async function startNewReport() {
   const filled = Object.keys(state.values).length > 0;
   if (filled) {
+    // The last chance to notice, before the report leaves the screen.
+    const unsent = sendState(state) === 'notsent'
+      ? 'The report on screen was made but has not been sent.\n\n'
+      : '';
     const ok = confirm(
-      'Start a new report?\n\n' +
+      'Start a new report?\n\n' + unsent +
       "This clears the checks, readings and photos on screen. Today's tank " +
       'levels are moved into the Yesterday boxes so usage still works.\n\n' +
       'Reports you have already saved are kept.'
@@ -5395,12 +5599,18 @@ async function startNewReport() {
   hydrateFields();
   render();
   renderThresholds();
+  renderSendStatus();
   closeSheets();
   toast('Fresh report ready - yesterday\u2019s levels carried over');
 }
 
+/* Hands the PDF on, and says what became of it:
+     'share'    an app was picked on the share screen
+     'cancel'   the share screen was closed without picking one
+     'download' saved to the phone's downloads instead */
 async function deliverPdf(bytes, filename) {
-  // 1. Wrapped in the Android app - hand it to the native share sheet.
+  // 1. Wrapped in the Android app - hand it to the native share sheet. The
+  //    wrapper does not report back, so opening it is taken as sharing.
   if (window.AndroidBridge && typeof window.AndroidBridge.sharePdf === 'function') {
     let binary = '';
     const chunk = 0x8000;
@@ -5409,7 +5619,7 @@ async function deliverPdf(bytes, filename) {
     }
     window.AndroidBridge.sharePdf(btoa(binary), filename);
     toast('Opening share sheet...');
-    return;
+    return 'share';
   }
 
   const blob = new Blob([bytes], { type: 'application/pdf' });
@@ -5420,9 +5630,12 @@ async function deliverPdf(bytes, filename) {
     try {
       await navigator.share({ files: [file], title: filename });
       toast('Shared');
-      return;
+      return 'share';
     } catch (err) {
-      if (err && err.name === 'AbortError') return;
+      if (err && err.name === 'AbortError') {
+        toast('Not sent yet');
+        return 'cancel';
+      }
     }
   }
 
@@ -5436,6 +5649,7 @@ async function deliverPdf(bytes, filename) {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 4000);
   toast('PDF saved to your downloads');
+  return 'download';
 }
 
 /* Archives the submitted report. Photos are left out of the stored copy - they
@@ -5752,10 +5966,20 @@ async function renderHistory() {
     list.innerHTML = '<p class="muted small">No saved reports yet.</p>';
     return;
   }
+  // What became of each one. Reports made before this was kept just say
+  // "submitted", as they always did.
+  const fate = (r) => {
+    if (r.source === HISTORIC_TAG) return '<span class="muted">recorded by hand</span>';
+    const s = sendState(r);
+    if (s === 'shared') return `<span class="h-sent">shared ${esc(whenText(r.sentAt))}</span>`;
+    if (s === 'downloaded') return '<span class="muted">saved to downloads</span>';
+    if (s === 'notsent') return '<span class="h-unsent">not sent</span>';
+    return '<span class="muted">submitted</span>';
+  };
   list.innerHTML = saved.map(r => `
     <div class="history-row">
       <span>${esc(prettyDate(r.date))}
-        <span class="muted">${r.source === HISTORIC_TAG ? 'recorded by hand' : 'submitted'}</span></span>
+        ${fate(r)}</span>
       <span class="h-actions">
         <button type="button" class="tool-btn" data-load="${esc(r.id)}">Load</button>
         <button type="button" class="tool-btn" data-delete="${esc(r.id)}">Delete</button>
@@ -5772,6 +5996,7 @@ async function renderHistory() {
     hydrateFields();
     render();
     renderThresholds();
+    renderSendStatus();
     closeSheets();
     toast('Report loaded');
   }));
@@ -7015,6 +7240,7 @@ async function boot() {
     ['show the meter list', renderMeterLog],
     ['wire the backup buttons', bindBackup],
     ['show when the last backup was', renderBackupStatus],
+    ['show whether the report was sent', renderSendStatus],
     ['draw the checklist', render],
     ['show the trigger levels', renderThresholds],
     ['size the top bar', syncTopbarHeight]

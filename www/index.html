@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#1e3a5f">
+<meta name="theme-color" content="#0d6938">
 <meta name="build-id" content="__BUILD_ID__">
 <title>Daily Ops Report</title>
 <link rel="manifest" href="manifest.webmanifest">
@@ -54,6 +54,8 @@
     </div>
     <div class="help-text" id="helpReport" hidden>
       The DAF meter box is the one to fill in on your morning round.
+      To correct an earlier reading or add a missed day, use Past meter
+      readings at the bottom of the page.
       Your name, the company name and the report number are kept in Settings,
       under the gear icon at the top.
     </div>
@@ -69,46 +71,6 @@
       <input type="number" inputmode="decimal" step="any" id="fMeter" placeholder="e.g. 224994.2">
     </label>
     <p class="muted small" id="prevMeterNote">&nbsp;</p>
-  </section>
-
-  <!-- ---------- DAF water meter log ---------- -->
-  <section class="card dosing-card" id="meterCard">
-    <div class="card-head">
-      <h2>Past meter readings</h2>
-      <div class="card-tools">
-        <!-- Shown by renderMeterLog() once there is more than one reading. -->
-        <button type="button" class="help-btn fold-btn" data-fold="meter" hidden
-                aria-expanded="false" aria-label="Show older readings"><svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9.5l6 6 6-6"/></svg></button>
-        <button type="button" class="help-btn" data-help="helpMeter"
-                aria-expanded="false" aria-label="What this section is for">?</button>
-      </div>
-    </div>
-    <div class="help-text" id="helpMeter" hidden>
-      This is the history, not today. Today's reading goes in the box above and
-      appears here on its own. Use this list to fix a wrong reading, or to fill
-      in a day you missed.
-    </div>
-    <p class="muted small" id="meterCount">&nbsp;</p>
-    <button type="button" id="btnMeterAdd" class="btn btn-ghost full">+ Add a reading for another day</button>
-    <div class="dosing-entry" id="meterEntry" hidden>
-      <div class="field-grid">
-        <label>Date
-          <span class="datebox"><span class="datebox-text" aria-hidden="true"></span><input type="date" id="meterDate"></span>
-        </label>
-        <label>Time
-          <input type="time" id="meterTime">
-        </label>
-      </div>
-      <label>Meter reading (m&sup3;)
-        <input type="number" inputmode="decimal" step="any" id="meterValue" placeholder="e.g. 224994.2">
-      </label>
-      <p class="muted small" id="meterHint">Pick the day the reading was taken.</p>
-      <div class="sheet-foot">
-        <button type="button" id="btnMeterCancel" class="tool-btn">Cancel</button>
-        <button type="button" id="btnMeterSave" class="btn btn-primary">Save</button>
-      </div>
-    </div>
-    <div class="dosing-list" id="meterList"></div>
   </section>
 
   <!-- ---------- DAF running log ---------- -->
@@ -151,7 +113,7 @@
         <input type="number" inputmode="decimal" step="any" id="dosingMeter"
                placeholder="leave blank if you did not note it">
       </label>
-      <p class="muted small">If you fill this in it is saved into your meter list above.</p>
+      <p class="muted small">If you fill this in it is saved into your meter list, at the bottom of the page.</p>
       <p class="muted small" id="dosingHint">&nbsp;</p>
       <div class="sheet-foot">
         <button type="button" id="btnDosingCancel" class="tool-btn">Cancel</button>
@@ -183,6 +145,49 @@
     <textarea id="fGeneralNote" rows="3" placeholder="Anything else your managers should know"></textarea>
   </section>
 
+  <!-- ---------- DAF water meter log ----------
+       History, not today's reading, so it sits below the checklist: it is
+       only needed to correct a reading or fill in a missed day, and at the
+       top it pushed the first check off the screen. -->
+  <section class="card dosing-card" id="meterCard">
+    <div class="card-head">
+      <h2>Past meter readings</h2>
+      <div class="card-tools">
+        <!-- Shown by renderMeterLog() once there is more than one reading. -->
+        <button type="button" class="help-btn fold-btn" data-fold="meter" hidden
+                aria-expanded="false" aria-label="Show older readings"><svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9.5l6 6 6-6"/></svg></button>
+        <button type="button" class="help-btn" data-help="helpMeter"
+                aria-expanded="false" aria-label="What this section is for">?</button>
+      </div>
+    </div>
+    <div class="help-text" id="helpMeter" hidden>
+      This is the history, not today. Today's reading goes in the DAF meter box
+      at the top of the page and appears here on its own. Use this list to fix
+      a wrong reading, or to fill in a day you missed.
+    </div>
+    <p class="muted small" id="meterCount">&nbsp;</p>
+    <button type="button" id="btnMeterAdd" class="btn btn-ghost full">+ Add a reading for another day</button>
+    <div class="dosing-entry" id="meterEntry" hidden>
+      <div class="field-grid">
+        <label>Date
+          <span class="datebox"><span class="datebox-text" aria-hidden="true"></span><input type="date" id="meterDate"></span>
+        </label>
+        <label>Time
+          <input type="time" id="meterTime">
+        </label>
+      </div>
+      <label>Meter reading (m&sup3;)
+        <input type="number" inputmode="decimal" step="any" id="meterValue" placeholder="e.g. 224994.2">
+      </label>
+      <p class="muted small" id="meterHint">Pick the day the reading was taken.</p>
+      <div class="sheet-foot">
+        <button type="button" id="btnMeterCancel" class="tool-btn">Cancel</button>
+        <button type="button" id="btnMeterSave" class="btn btn-primary">Save</button>
+      </div>
+    </div>
+    <div class="dosing-list" id="meterList"></div>
+  </section>
+
   <p class="version-line">Version <span class="js-build-id">dev</span></p>
 
   <div class="spacer"></div>
@@ -190,6 +195,9 @@
 
 <!-- ---------- sticky action bar ---------- -->
 <nav class="actionbar">
+  <!-- Whether today's PDF went out. Filled by renderSendStatus() once a PDF
+       has been made; hidden before that. -->
+  <p class="send-status" id="sendStatus" role="status" hidden></p>
   <button id="btnPdf" class="btn btn-primary">Save &amp; make PDF</button>
 </nav>
 

@@ -109,10 +109,18 @@ const buttonsOf = (id) => {
   check(`${id} offers OK, Fault and Not done - and no Monitor`, buttonsOf(id) === 'ok,fault,todo', buttonsOf(id));
 });
 check('pH offers only Fault and Not done', buttonsOf('ph') === 'fault,todo', buttonsOf('ph'));
-['tank1_mixer', 'pit_pump', 'duct_lamb_cooker', 'duct_drier3'].forEach(id => {
-  check(`${id} was not on the list, so keeps all four buttons`,
-    buttonsOf(id) === 'ok,watch,fault,todo', buttonsOf(id));
+/* The second round: Tank 1 mixer, the pit pump and all six fume-ducting rows.
+   Named one by one, for the same reason as above. */
+['tank1_mixer', 'pit_pump', 'duct_lamb_cooker', 'duct_beef_cooker', 'duct_beef_press',
+  'duct_drier1', 'duct_drier2', 'duct_drier3'].forEach(id => {
+  check(`${id} offers OK, Fault and Not done - and no Monitor`, buttonsOf(id) === 'ok,fault,todo', buttonsOf(id));
 });
+check('which leaves no Monitor button anywhere on the sheet',
+  !/data-status="[a-z0-9_]+" data-value="watch"/.test(html));
+check('while the answers that mean Monitor - "Slightly turbid", "Heavy residue" - are all still there',
+  html.includes('data-choice="daf_clarity" data-value="slight"')
+  && html.includes('data-choice="beef_pit" data-value="heavy"')
+  && html.includes('data-choice="lamb_pit" data-value="heavy"'));
 check('Monitor is still worked out automatically for a reading that drifts',
   run(`(() => { state = blankState(); state.values.sat1 = { value: 610 };
     return evaluate(state, null, [], []).items.sat1.status; })()`) === 'watch');
@@ -1631,6 +1639,55 @@ check('emoji stripped for the PDF',
   run('toWinAnsi("ok \u2705 done").length') === run('toWinAnsi("ok  done").length'));
 check('cubic metre sign survives', run('toWinAnsi("m\u00B3").includes(0xB3)'));
 check('parentheses escaped', run('pdfStringBody(toWinAnsi("a(b)c"))') === 'a\\(b\\)c');
+
+/* ---- the look: one brand across the app and the printed report ---- */
+console.log('\nLook of the app');
+{
+  const page = fs.readFileSync(path.join(WWW, 'index.html'), 'utf8');
+  const css = fs.readFileSync(path.join(WWW, 'styles.css'), 'utf8');
+  const manifest = JSON.parse(fs.readFileSync(path.join(WWW, 'manifest.webmanifest'), 'utf8'));
+  const hex = (rgb) => '#' + rgb.map(n => n.toString(16).padStart(2, '0')).join('');
+  const pdfGreen = hex(run('BRAND.green'));
+  const pdfGold = hex(run('BRAND.gold'));
+  const cssVar = (name) => ((new RegExp(`--${name}:\\s*(#[0-9a-f]{6})`, 'i').exec(css)) || [])[1];
+
+  check('the app is the printed report\'s green', cssVar('brand') === pdfGreen, `${cssVar('brand')} vs ${pdfGreen}`);
+  check('with the same gold', cssVar('gold') === pdfGold, `${cssVar('gold')} vs ${pdfGold}`);
+  check('and the phone\'s bar above the app matches it',
+    page.includes(`<meta name="theme-color" content="${pdfGreen}">`) && manifest.theme_color === pdfGreen,
+    manifest.theme_color);
+  check('no navy left in the styles', !/#1e3a5f|#162d4a|var\(--navy/i.test(css));
+
+  // Readable in sunlight: worked out the way the accessibility guidelines do.
+  const lum = (h) => {
+    const c = [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16) / 255)
+      .map(v => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  };
+  const contrast = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
+  check('Monitor answers are written dark on amber, easy to read (at least 7 to 1)',
+    contrast(cssVar('watch-fill'), cssVar('on-watch')) >= 7,
+    contrast(cssVar('watch-fill'), cssVar('on-watch')).toFixed(2));
+  check('and every amber with words on it uses that dark writing',
+    /\.pill\.watch \{[^}]*color: var\(--on-watch\)/.test(css)
+    && /\.cbtn\[aria-pressed="true"\]\.watch \{[^}]*color: var\(--on-watch\)/.test(css));
+  check('the amber edge still stands out against the white page (at least 3 to 1)',
+    contrast(cssVar('watch'), '#ffffff') >= 3, contrast(cssVar('watch'), '#ffffff').toFixed(2));
+  check('white on a tapped OK is easy to read (at least 4.5 to 1)',
+    contrast(cssVar('ok'), '#ffffff') >= 4.5, contrast(cssVar('ok'), '#ffffff').toFixed(2));
+  check('white on the green bars is easy to read', contrast(cssVar('brand'), '#ffffff') >= 4.5);
+
+  // The top of the sheet: today's details first, the history below the checks.
+  const at = (s) => page.indexOf(s);
+  check('Past meter readings sit below the checklist and the notes',
+    at('id="meterCard"') > at('id="checklist"') && at('id="meterCard"') > at('id="fGeneralNote"'));
+  check('Report details, dosing and Needs attention still come before the checklist',
+    at('id="fMeter"') < at('id="dosingCard"') && at('id="dosingCard"') < at('id="summaryCard"')
+    && at('id="summaryCard"') < at('id="checklist"'));
+  check('nothing still says the meter list is "above"', !/meter list above/i.test(page));
+  check('the sent line sits in the bottom bar, above the PDF button',
+    at('id="sendStatus"') > at('<nav class="actionbar">') && at('id="sendStatus"') < at('id="btnPdf"'));
+}
 
 console.log('\n' + '='.repeat(46));
 if (failures) {
