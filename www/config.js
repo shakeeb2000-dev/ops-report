@@ -16,7 +16,10 @@ const STATUS = {
   WATCH: 'watch',
   FAULT: 'fault',
   TODO: 'todo',
-  BLANK: 'blank'
+  BLANK: 'blank',
+  /* Left out on purpose: the check is not reported at all - not counted, not
+     flagged, and not printed. For a gauge that is known to be broken. */
+  SKIP: 'skip'
 };
 
 const STATUS_META = {
@@ -24,7 +27,8 @@ const STATUS_META = {
   watch: { label: 'Monitor',  short: 'WATCH', colour: [201, 138, 4],   wa: '\u26A0\uFE0F' },
   fault: { label: 'Fault',    short: 'FAULT', colour: [190, 44, 44],   wa: '\u274C' },
   todo:  { label: 'Not done', short: 'TODO',  colour: [110, 118, 129], wa: '\u2B1C' },
-  blank: { label: 'Not set',  short: '-',     colour: [160, 167, 175], wa: '\u2B1C' }
+  blank: { label: 'Not set',  short: '-',     colour: [160, 167, 175], wa: '\u2B1C' },
+  skip:  { label: 'Skipped',  short: 'SKIP',  colour: [160, 167, 175], wa: '\u2B1C' }
 };
 
 /* Every IBC on site holds this much. */
@@ -41,26 +45,17 @@ const DEFAULT_AVG_WINDOW = 14;
 /* The time of the morning walk, used when a report does not carry one. */
 const DEFAULT_READING_TIME = '08:00';
 
-/* A chemical's usage tank being completely empty is always a fault, whatever
-   the backup situation, so it needs no adjustable trigger. */
-const EMPTY_TANK = 0;
-
 /* Adjustable trigger levels. Readings without an entry here are not graded
    automatically and rely on the operator's own OK / Fault choice. */
 const DEFAULT_THRESHOLDS = {
   ph1:         { critLow: 4.9, warnLow: 5.0, warnHigh: 5.5, critHigh: 5.6 },
   ph2:         { critLow: 6.0, warnLow: 6.1, warnHigh: 6.5, critHigh: 6.7 },
   ph3:         { critLow: 6.0, warnLow: 6.1, warnHigh: 7.8, critHigh: 8.0 },
-  /* The four delivered chemicals are judged in days, not litres, once the app
-     has the history to know how fast each one goes - one set of litre levels
-     treated a chemical that lasts two weeks like one that lasts two days.
-     chemDays is the whole stock on site (time to order); chemTankDays is the
-     usage tank alone at the rate it empties while dosing (time to refill). */
-  chemDays:    { crit: 3,   warn: 7 },
-  chemTankDays:{ crit: 1,   warn: 2 },
-  // Litre levels: what the chemicals are judged on until that history exists.
-  chemInUse:   { crit: 300, warn: 500 },
-  chemBackup:  { crit: 0,   warn: 300 },
+  /* The four delivered chemicals are judged only on what is on site, in
+     litres - at the operator's request, Oct 2026. Days of usage are still
+     worked out and shown, but no longer decide the colour. See
+     chemicalStock() for the rule. */
+  chemStock:   { refillAt: 500, orderAt: 300 },
   boilerChem:  { crit: 50,  warn: 100 },
   saturator:   { critLow: 500, warnLow: 550, warnHigh: 600, critHigh: 650 },
   flow:        { critLow: 17, warnLow: 18, warnHigh: 20, critHigh: 21 }
@@ -72,17 +67,14 @@ const DEFAULT_THRESHOLDS = {
    older build keeps whatever that build shipped and never sees a new default.
    The stamp lets boot() tell "these are just the old shipped numbers" apart
    from "the operator typed these", and only the former gets replaced. */
-const THRESHOLD_VERSION = 2;
+const THRESHOLD_VERSION = 3;
 
 /* Plain-language names for the Settings screen. */
 const TH_LABELS = {
   ph1:         'pH reading 1',
   ph2:         'pH reading 2',
   ph3:         'pH reading 3',
-  chemDays:    'Chemical stock on site - days left (time to order)',
-  chemTankDays:'Chemical usage tank - days of dosing left (time to refill)',
-  chemInUse:   'Chemical usage tank, litres - only until there is enough history',
-  chemBackup:  'Chemical backup stock, litres - only until there is enough history',
+  chemStock:   'Chemicals - the four IBCs (L)',
   boilerChem:  'Boiler chemical (L)',
   saturator:   'Saturator pressure (kPa)',
   flow:        'Flow rate (m3/h)'
@@ -97,6 +89,15 @@ const TH_LABELS = {
 function mergeThresholds(saved) {
   const out = JSON.parse(JSON.stringify(DEFAULT_THRESHOLDS));
   if (!saved || typeof saved !== 'object') return out;
+  /* Before Oct 2026 the chemicals had separate usage-tank and backup groups.
+     Their "low" levels mean exactly what the two new ones do, so a level the
+     operator typed there is carried across rather than lost. */
+  if (!saved.chemStock || typeof saved.chemStock !== 'object') {
+    const oldRefill = Number(saved.chemInUse && saved.chemInUse.warn);
+    const oldOrder = Number(saved.chemBackup && saved.chemBackup.warn);
+    if (isFinite(oldRefill) && saved.chemInUse.warn !== undefined) out.chemStock.refillAt = oldRefill;
+    if (isFinite(oldOrder) && saved.chemBackup.warn !== undefined) out.chemStock.orderAt = oldOrder;
+  }
   Object.keys(out).forEach(group => {
     const savedGroup = saved[group];
     if (!savedGroup || typeof savedGroup !== 'object') return;
@@ -140,6 +141,14 @@ function refreshThresholds(saved) {
 const OK_FAULT_OPTIONS = [
   { value: 'ok',    label: 'OK',    status: STATUS.OK },
   { value: 'fault', label: 'Fault', status: STATUS.FAULT }
+];
+
+/* The biofilter humidity sensors have been out of action for a long time with
+   no repair date, so the rows can be skipped: left off the report entirely
+   rather than reported as a fault every single day. */
+const HUMIDITY_OPTIONS = [
+  ...OK_FAULT_OPTIONS,
+  { value: 'skip',  label: 'Skip',  status: STATUS.SKIP }
 ];
 
 // For "is it overflowing?" style questions, where No is the good answer.
@@ -215,15 +224,17 @@ const CHECKLIST = [
         id: 'biofilters',
         title: 'Biofilters',
         items: [
-          { id: 'bio_running', label: 'System running', type: 'choice', options: RUNNING_OPTIONS,
-            default: { choice: 'running' } },
+          // The biofilter is meant to be off while the plant is stopped, so
+          // "Not running" is only a problem while the plant is running.
+          { id: 'bio_running', label: 'Biofilter running', type: 'choice', options: RUNNING_OPTIONS,
+            default: { choice: 'running' }, okWhenPlantStopped: ['notrunning'] },
           { id: 'bio_target',  label: 'Within target',  type: 'choice', options: TARGET_OPTIONS,
             default: { choice: 'within' } },
           { id: 'bio_vacuum',  label: 'Vacuum gauge',   type: 'status', default: { status: STATUS.OK } },
-          { id: 'bio1_rh',     label: 'Bio 1 humidity', type: 'choice', options: OK_FAULT_OPTIONS,
-            default: { choice: 'fault' } },
-          { id: 'bio2_rh',     label: 'Bio 2 humidity', type: 'choice', options: OK_FAULT_OPTIONS,
-            default: { choice: 'fault' } }
+          { id: 'bio1_rh',     label: 'Bio 1 humidity', type: 'choice', options: HUMIDITY_OPTIONS,
+            default: { choice: 'skip' } },
+          { id: 'bio2_rh',     label: 'Bio 2 humidity', type: 'choice', options: HUMIDITY_OPTIONS,
+            default: { choice: 'skip' } }
         ]
       },
       {
@@ -258,8 +269,11 @@ const CHECKLIST = [
             decimals: 0 },
           {
             // Each reading comes off a different point, so each has its own limits.
+            // With no chemical going in, the pH drifts as a matter of course, so
+            // the readings are not judged while the plant is stopped or the DAF
+            // dosage was off at the time they were taken.
             id: 'ph', label: 'pH readings', type: 'multi',
-            decimals: 1, display: 'slash', inputWidth: 'narrow',
+            decimals: 1, display: 'slash', inputWidth: 'narrow', restsWithDosing: true,
             fields: [
               { key: 'a', label: '1', threshold: 'ph1' },
               { key: 'b', label: '2', threshold: 'ph2' },
@@ -454,19 +468,58 @@ function gradeMulti(item, values, thresholds) {
   return grades.length ? worstOf(grades) : STATUS.OK;
 }
 
-/* Chemical tanks are judged purely on their levels, using the trigger levels
-   in Settings. How many days of stock remain is reported as information but
-   never changes the status. */
-function gradeChemical(v, thresholds) {
-  const inUse = num(v.inUse);
-  const backup = num(v.backup);
-  const grades = [];
-  if (inUse !== null) grades.push(gradeNumber(inUse, 'chemInUse', thresholds));
-  if (backup !== null) grades.push(gradeNumber(backup, 'chemBackup', thresholds));
-  return grades.length ? worstOf(grades) : STATUS.BLANK;
+/* What one of the four delivered chemicals needs, judged only on what is on
+   site: the usage tank and the backup, in litres. How many days the stock
+   will last is still worked out and shown, but it no longer sets the colour.
+
+     Refill  the usage tank is at or below the refill level
+     Order   the backup is at or below the order level - counting the IBC a
+             refill is about to use. So one full IBC sitting as backup, with a
+             low usage tank, says "refill, and order backup": once it has gone
+             into the usage tank there is no backup left.
+
+   Red when a tank is empty, amber when one is only low. The badge names the
+   job and the reason is a few words, because the IBC drawings already show
+   the levels. Returns null when neither level was typed. */
+function chemicalStock(inUse, backup, levels) {
+  const t = levels || DEFAULT_THRESHOLDS.chemStock;
+  const u = inUse === null || inUse === undefined ? null : Math.max(0, inUse);
+  const b = backup === null || backup === undefined ? null : Math.max(0, backup);
+  if (u === null && b === null) return null;
+
+  const tankEmpty = u !== null && u <= 0;
+  const refill = u !== null && u <= t.refillAt;
+  const backupEmpty = b !== null && b <= 0;
+  // What the backup will be down to once a refill has taken one IBC from it.
+  const left = b === null ? null : (refill ? b - IBC_LITRES : b);
+  const order = left !== null && left <= t.orderAt;
+
+  let action;
+  let reason;
+  if (tankEmpty && backupEmpty) {
+    action = 'OUT OF STOCK';
+    reason = 'out of stock, order now';
+  } else if (refill && backupEmpty) {
+    // Nothing to refill from, so ordering is the only job.
+    action = 'ORDER';
+    reason = 'usage tank low, no backup, order now';
+  } else if (refill && order) {
+    action = 'REFILL + ORDER';
+    reason = tankEmpty ? 'usage tank empty, refill now, order backup' : 'refill usage tank, order backup';
+  } else if (refill) {
+    action = 'REFILL';
+    reason = tankEmpty ? 'usage tank empty, refill now' : 'refill usage tank';
+  } else if (order) {
+    action = 'ORDER';
+    reason = backupEmpty ? 'no backup left, order now' : 'order backup';
+  } else {
+    return { status: STATUS.OK, action: null, reason: '' };
+  }
+  return { status: tankEmpty || backupEmpty ? STATUS.FAULT : STATUS.WATCH, action, reason };
 }
 
-const SEVERITY_ORDER = [STATUS.OK, STATUS.BLANK, STATUS.TODO, STATUS.WATCH, STATUS.FAULT];
+// Skipped sits below OK, so it can never be the worst of anything.
+const SEVERITY_ORDER = [STATUS.SKIP, STATUS.OK, STATUS.BLANK, STATUS.TODO, STATUS.WATCH, STATUS.FAULT];
 
 function worstOf(list) {
   let worst = STATUS.OK;
@@ -545,18 +598,14 @@ function daysOfStock(item, usage) {
 }
 
 /* Wording for the badge. "Fault" is right for a broken pump but not for a
-   tank that simply needs topping up or reordering. */
-function stockBadge(item, status, reason) {
+   tank that simply needs topping up. The four chemicals name their own job
+   (chemicalStock), so this is for the boiler tanks and for a status that was
+   tapped by hand. */
+function stockBadge(item, status) {
   if (!needsAction(status)) return STATUS_META[status].short;
   // Boiler dose tanks are mixed and topped up in house, so they are only ever
   // a refill job - never a reorder.
   if (item && item.topUp === 'litres') return 'REFILL';
-  // For the delivered chemicals, no backup left is the more serious problem,
-  // so that is the action named.
-  if (/no backup stock|backup very low/.test(reason)) return 'REORDER';
-  if (/usage tank/.test(reason)) return 'REFILL';
-  if (status === STATUS.FAULT) return 'REORDER';
-  if (status === STATUS.WATCH) return 'LOW';
   return STATUS_META[status].short;
 }
 

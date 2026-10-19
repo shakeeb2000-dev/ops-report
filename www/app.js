@@ -97,6 +97,10 @@ function blankState() {
     meter: '',
     prevMeter: null,
     logo: null,
+    /* 'running', 'stopped', or null while it has never been set. A switch,
+       not a daily question: it stays as last set, report to report, until the
+       plant starts or stops. */
+    plant: null,
     lastCheckDate: null,
     generalNote: '',
     values: defaultValues(),
@@ -118,6 +122,7 @@ function carriedSettings() {
     reportPrefix: state.reportPrefix || DEFAULT_PREFIX,
     avgWindowDays: state.avgWindowDays || DEFAULT_AVG_WINDOW,
     logo: state.logo,
+    plant: state.plant === 'running' || state.plant === 'stopped' ? state.plant : null,
     thresholds: mergeThresholds(state.thresholds),
     thVersion: state.thVersion,
     thEdited: state.thEdited === true
@@ -408,6 +413,8 @@ function renderItem(item) {
         </div>
       </div>
       ${body}
+      ${item.okWhenPlantStopped || item.restsWithDosing
+        ? `<p class="item-info" data-info="${item.id}" hidden></p>` : ''}
       <div class="note-input" data-notewrap="${item.id}" ${v.note ? '' : 'hidden'}>
         <input type="text" data-notefield="${item.id}" value="${esc(v.note || '')}"
                placeholder="Short note for your manager">
@@ -619,9 +626,21 @@ function refresh() {
     pill.className = `pill ${s}`;
     pill.textContent = STATUS_META[s].short;
 
-    // Drives the colour rail down the left edge of the row.
+    // Drives the colour rail down the left edge of the row, and greys out a
+    // red answer that is not a problem today ("Not running", plant stopped).
     const row = document.querySelector(`[data-item="${id}"]`);
-    if (row) row.setAttribute('data-state', s);
+    if (row) {
+      row.setAttribute('data-state', s);
+      row.setAttribute('data-eased', ev.items[id].eased ? 'true' : 'false');
+    }
+
+    // Why a reading outside its limits is not flagged, said on the row itself.
+    const info = document.querySelector(`[data-info="${id}"]`);
+    if (info) {
+      const why = easedText(ev.items[id].eased, ev.readingAt);
+      info.hidden = !why;
+      info.textContent = why;
+    }
 
     // live "used since yesterday" line under the chemical inputs
     const usage = document.querySelector(`[data-usage="${id}"]`);
@@ -676,26 +695,27 @@ function refresh() {
       if (dot) dot.className = `dot ${worst}`;
 
       // "4/5" on each group header, so a half-finished group is obvious even
-      // when it is folded shut.
-      const gDone = group.items.filter(i => ev.items[i.id].status !== STATUS.BLANK).length;
+      // when it is folded shut. A skipped check is not one to do, so it is
+      // left out of both numbers.
+      const counted = group.items.filter(i => ev.items[i.id].status !== STATUS.SKIP);
+      const gDone = counted.filter(i => ev.items[i.id].status !== STATUS.BLANK).length;
       secDone += gDone;
-      secTotal += group.items.length;
+      secTotal += counted.length;
       const tally = document.querySelector(`[data-grouptally="${group.id}"]`);
       if (tally) {
-        tally.textContent = `${gDone}/${group.items.length}`;
-        setClass(tally, 'complete', gDone === group.items.length);
+        tally.textContent = `${gDone}/${counted.length}`;
+        setClass(tally, 'complete', gDone === counted.length);
       }
     });
     const secTally = document.querySelector(`[data-sectiontally="${section.id}"]`);
     if (secTally) secTally.textContent = `${secDone}/${secTotal}`;
   });
 
-  const total = Object.keys(ITEM_INDEX).length;
+  const { done, total } = checksDone(ev);
   const counts = { ok: 0, watch: 0, fault: 0, todo: 0 };
   Object.values(ev.items).forEach(i => {
     if (counts[i.status] !== undefined) counts[i.status]++;
   });
-  const done = Object.values(ev.items).filter(i => i.status !== STATUS.BLANK).length;
   el('#progressFill').style.width = `${Math.round(done / total * 100)}%`;
 
   /* The bar alone says how much is filled in but not whether anything is
@@ -712,6 +732,7 @@ function refresh() {
 
   renderSummary(ev);
   lastEv = ev;
+  renderPlant();
   renderDashboard(ev);
   // The counts above can wrap the progress line onto a second row, which
   // changes how far down the sticky headers belong.
@@ -745,6 +766,22 @@ function renderSummary(ev) {
     body.className = '';
     body.innerHTML = blocks.join('');
   }
+}
+
+/* How many checks this report has to do, and how many are done. A skipped
+   check is not one to do, so it counts towards neither. */
+function checksDone(ev) {
+  const list = Object.values(ev.items).filter(i => i.status !== STATUS.SKIP);
+  return { total: list.length, done: list.filter(i => i.status !== STATUS.BLANK).length };
+}
+
+/* The line under a reading that is outside its limits but not flagged. */
+function easedText(eased, readingAt) {
+  if (eased === 'plant stopped') return 'Not flagged: the plant is stopped.';
+  if (eased === 'DAF dosing off') {
+    return `Not flagged: the DAF dosage was off at ${clockTime(readingAt)}, when the readings were taken.`;
+  }
+  return '';
 }
 
 /* ---------------- PDF + sharing ---------------- */
@@ -1283,7 +1320,9 @@ const KEY_LABELS = {
   warnHigh: 'Monitor at/above',
   critHigh: 'Fault at/above',
   crit: 'Fault at/below',
-  warn: 'Monitor at/below'
+  warn: 'Monitor at/below',
+  refillAt: 'Refill usage tank at/below',
+  orderAt: 'Order backup at/below'
 };
 
 /* Lays a stored record over a blank state.
@@ -1477,9 +1516,22 @@ function renderDashboard(ev) {
   el('#dashDafState').textContent = running === null ? 'Not logged' : running ? 'RUNNING' : 'STOPPED';
   el('#dashDafSince').textContent = last ? sinceText(last.at) : 'record a start below';
 
+  // The plant, as set on the sheet - and a nudge when it is running with the
+  // DAF dosage stopped, which is the moment the dosage should be started.
+  const plantTile = el('#dashPlant');
+  if (plantTile) {
+    const nudge = state.plant === 'running' && !running;
+    setClass(plantTile, 'on', state.plant === 'running' && !nudge);
+    setClass(plantTile, 'warn', nudge);
+    el('#dashPlantState').textContent = state.plant === 'running' ? 'RUNNING'
+      : state.plant === 'stopped' ? 'STOPPED' : 'Not set';
+    el('#dashPlantSub').textContent = nudge ? 'start the DAF dosage'
+      : state.plant === 'stopped' ? 'pH and biofilter not flagged'
+        : state.plant === 'running' ? 'DAF dosage on' : 'set it below';
+  }
+
   // This report: made, sent, or still being filled in.
-  const total = Object.keys(ITEM_INDEX).length;
-  const done = Object.values(ev.items).filter(i => i.status !== STATUS.BLANK).length;
+  const { done, total } = checksDone(ev);
   const sent = sendState(state);
   el('#dashReportLabel').textContent = state.date === todayISO()
     ? 'Today\u2019s report' : `Report ${styleDate(state.date) || state.date}`;
@@ -1566,6 +1618,56 @@ function toast(msg) {
 }
 
 /* ---------------- wiring ---------------- */
+
+/* ---------------- plant running or stopped ----------------
+
+   A switch above the dosing card, kept from one report to the next until it
+   is changed. While the plant is stopped the pH readings, and a biofilter that
+   is not running, are not flagged. While it is running with the DAF dosage
+   stopped, the card says to start the dosage and offers the way to record it. */
+function renderPlant() {
+  const card = el('#plantCard');
+  if (!card) return;
+  const p = state.plant === 'running' || state.plant === 'stopped' ? state.plant : null;
+  card.querySelectorAll('[data-plant]').forEach(b => {
+    b.setAttribute('aria-pressed', b.dataset.plant === p ? 'true' : 'false');
+  });
+  const dosingNow = dosingEvents.length ? dosingOnNow(dosingEvents) : false;
+  const warn = el('#plantWarn');
+  if (warn) warn.hidden = !(p === 'running' && !dosingNow);
+  const note = el('#plantNote');
+  if (note) {
+    const text = p === 'stopped'
+      ? 'While the plant is stopped, pH readings and a biofilter that is not running are not flagged.'
+      : p === 'running' ? (dosingNow ? 'The DAF dosage is on.' : '')
+        : 'Is the plant running? Set it once - it stays as you set it until you change it.';
+    note.textContent = text;
+    note.hidden = !text;
+  }
+  setClass(card, 'running', p === 'running');
+  setClass(card, 'stopped', p === 'stopped');
+}
+
+function bindPlant() {
+  const card = el('#plantCard');
+  if (!card) return;
+  card.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-plant]');
+    if (!btn) return;
+    // Always select. Tapping the current choice must not clear it.
+    state.plant = btn.dataset.plant;
+    queueSave();
+    refresh();
+    if (state.plant === 'running' && !(dosingEvents.length && dosingOnNow(dosingEvents))) {
+      toast('The DAF dosage is stopped - start it, then record it');
+    }
+  });
+  el('#btnPlantDosing').addEventListener('click', () => {
+    openDosingEntry();
+    const dosing = el('#dosingCard');
+    if (dosing && dosing.scrollIntoView) dosing.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+}
 
 /* ---------------- DAF running log ---------------- */
 
@@ -2753,6 +2855,8 @@ async function boot() {
     ['show when the last backup was', renderBackupStatus],
     ['show whether the report was sent', renderSendStatus],
     ['wire the dashboard', bindDashboard],
+    ['wire the plant switch', bindPlant],
+    ['show the plant switch', renderPlant],
     ['draw the checklist', render],
     ['show the trigger levels', renderThresholds],
     ['size the top bar', syncTopbarHeight]

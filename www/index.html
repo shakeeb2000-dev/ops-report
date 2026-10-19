@@ -48,6 +48,11 @@
        from figures the sheet already works out; it adds nothing to the report. -->
   <section class="dash" id="dashboard" aria-label="The plant at a glance">
     <div class="dash-top">
+      <div class="dash-tile" id="dashPlant">
+        <span class="dash-label">Plant</span>
+        <span class="dash-state"><span class="dash-led"></span><span id="dashPlantState">Not set</span></span>
+        <span class="dash-sub" id="dashPlantSub">&nbsp;</span>
+      </div>
       <div class="dash-tile" id="dashDaf">
         <span class="dash-label">DAF dosing</span>
         <span class="dash-state"><span class="dash-led"></span><span id="dashDafState">Not logged</span></span>
@@ -94,6 +99,37 @@
       <input type="number" inputmode="decimal" step="any" id="fMeter" placeholder="e.g. 224994.2">
     </label>
     <p class="muted small" id="prevMeterNote">&nbsp;</p>
+  </section>
+
+  <!-- ---------- plant running or stopped ----------
+       Filled by renderPlant(). A switch kept from report to report until it
+       is changed, so it is only touched when the plant starts or stops. -->
+  <section class="card plant-card" id="plantCard">
+    <div class="card-head">
+      <h2>Plant</h2>
+      <div class="card-tools">
+        <button type="button" class="help-btn" data-help="helpPlant"
+                aria-expanded="false" aria-label="What this section is for">?</button>
+      </div>
+    </div>
+    <div class="help-text" id="helpPlant" hidden>
+      <p>Set this when the plant starts or stops. It stays as you set it, from one
+      report to the next, until you change it.</p>
+      <p>While the plant is stopped, the pH readings and a biofilter that is not
+      running are not flagged &mdash; they are expected then. The pH is also not
+      flagged whenever the DAF dosage was off at the time of the readings.</p>
+      <p>When the plant is running and the DAF dosage is stopped, this card asks
+      you to start the dosage.</p>
+    </div>
+    <div class="choicerow plant-choice">
+      <button type="button" class="cbtn ok" data-plant="running" aria-pressed="false">Plant running</button>
+      <button type="button" class="cbtn todo" data-plant="stopped" aria-pressed="false">Plant stopped</button>
+    </div>
+    <div class="nag plant-warn" id="plantWarn" hidden>
+      <span>The plant is running but the DAF dosage is stopped. Start the dosage, then record it.</span>
+      <button type="button" class="btn btn-primary" id="btnPlantDosing">Record start</button>
+    </div>
+    <p class="muted small plant-note" id="plantNote" hidden></p>
   </section>
 
   <!-- ---------- DAF running log ---------- -->
@@ -364,8 +400,10 @@
       The numbers that decide when a check is flagged. At or past
       <strong>Fault</strong> it is reported as a fault; at or past
       <strong>Monitor</strong>, as needing a watch. The four chemicals are judged
-      on how many days they will last. Their litre levels are only used until the
-      app has enough history to know how fast each one goes.
+      only on what is on site: <strong>Refill</strong> when the usage tank is at or
+      below its level, and <strong>Order</strong> when the backup is &mdash; counting
+      the IBC a refill will use, so one full IBC as backup with a low usage tank
+      says refill and order. An empty tank is red; a low one is amber.
     </div>
     <div id="thresholdForm"></div>
     <div class="sheet-foot">

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0d6938">
-<meta name="build-id" content="90b451120bc0">
+<meta name="build-id" content="4bed34751d83">
 <title>Daily Ops Report</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -680,6 +680,11 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #8cc7a1; outline-
 .cbtn[aria-pressed="true"].watch { background: var(--watch-fill); border-color: var(--watch); color: var(--on-watch); }
 .cbtn[aria-pressed="true"].fault { background: var(--fault); border-color: var(--fault); }
 .cbtn[aria-pressed="true"].todo  { background: var(--todo);  border-color: var(--todo); }
+/* Skip: a quiet grey, because a skipped check is simply not reported. */
+.cbtn[aria-pressed="true"].skip  { background: #8a94a1; border-color: #8a94a1; }
+/* An answer that is normally a problem but is expected today - the biofilter
+   "Not running" while the plant is stopped - is not shown in red. */
+.item[data-eased="true"] .cbtn[aria-pressed="true"] { background: #8a94a1; border-color: #8a94a1; color: #fff; }
 
 .btn.full { width: 100%; flex: none; }
 
@@ -702,6 +707,13 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #8cc7a1; outline-
 .pill.fault { background: var(--fault); }
 .pill.todo { background: var(--todo); }
 .pill.blank { background: #b6bcc4; }
+.pill.skip { background: #e3e7ec; color: #5b6573; }
+/* A skipped row stays on the sheet, so it can be brought back, but reads as
+   set aside. */
+.item[data-state="skip"] .item-label { color: var(--slate); }
+
+/* Why a reading outside its limits is not flagged, e.g. "the plant is stopped". */
+.item-info { margin: 6px 0 0; font-size: .74rem; line-height: 1.35; color: var(--slate); }
 
 /* ---------------- photos ---------------- */
 
@@ -771,7 +783,18 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #8cc7a1; outline-
 .note-input { margin-top: 8px; }
 .note-input input { margin-top: 0; }
 
+/* ---------------- plant running or stopped ---------------- */
+.plant-card { border-left: 4px solid var(--line); }
+.plant-card.running { border-left-color: var(--ok); }
+.plant-card.stopped { border-left-color: var(--todo); }
+.plant-choice { margin-top: 0; }
+.plant-choice .cbtn { flex: 1 1 0; min-width: 0; min-height: 46px; font-size: .86rem; }
+.nag.plant-warn { margin: 11px 0 0; }
+.plant-note { margin: 10px 0 0; }
+
 /* ---------------- DAF running log ---------------- */
+/* Scrolled to from the plant card, so it has to land below the sticky top bar. */
+#dosingCard { scroll-margin-top: calc(var(--topbar-h) + 10px); }
 .dosing-card { border-left: 4px solid var(--line); }
 .dosing-card.running { border-left-color: var(--ok); }
 .dosing-card.stopped { border-left-color: var(--todo); }
@@ -1166,38 +1189,42 @@ body.no-scroll { overflow: hidden; }
   background: linear-gradient(160deg, #10783f 0%, var(--brand) 42%, var(--brand-dark) 100%);
   box-shadow: 0 6px 18px rgba(9, 78, 42, .22);
 }
-.dash-top { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+/* Three tiles: the plant, the DAF dosing and today's report. */
+.dash-top { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
 .dash-tile {
   min-width: 0;
-  padding: 9px 11px 8px;
+  padding: 8px 8px 7px 9px;
   border: 1px solid rgba(255,255,255,.14);
   border-radius: 12px;
   background: rgba(255,255,255,.07);
 }
 .dash-label {
   display: block;
-  font-size: .62rem;
+  font-size: .6rem;
   font-weight: 800;
-  letter-spacing: .08em;
+  letter-spacing: .06em;
   text-transform: uppercase;
   color: #c4dece;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* A third of the panel is narrow on a phone, so a longer state ("Not made
+   yet") is allowed onto a second line rather than being cut off. */
 .dash-state {
   display: flex;
-  align-items: center;
-  gap: 7px;
+  align-items: flex-start;
+  gap: 6px;
   margin-top: 3px;
-  font-size: .95rem;
+  font-size: .84rem;
   font-weight: 800;
+  line-height: 1.2;
   letter-spacing: .02em;
-  white-space: nowrap;
 }
 .dash-led {
-  flex: 0 0 10px;
-  width: 10px; height: 10px;
+  flex: 0 0 9px;
+  width: 9px; height: 9px;
+  margin-top: 3px;
   border-radius: 50%;
   background: #9aa4b0;
 }
@@ -1213,10 +1240,16 @@ body.no-scroll { overflow: hidden; }
 .dash-tile.warn .dash-state { color: #ffd98a; }
 .dash-sub {
   display: block;
-  margin-top: 1px;
-  font-size: .7rem;
+  margin-top: 2px;
+  font-size: .66rem;
   line-height: 1.3;
   color: #c4dece;
+}
+.dash-tile.warn .dash-sub { color: #ffd98a; font-weight: 700; }
+/* On a 360px phone a third of the panel is too narrow for "TODAY'S REPORT"
+   on one line, so it goes onto two rather than being cut short. */
+@media (max-width: 374px) {
+  .dash-label { white-space: normal; }
 }
 
 /* Four IBCs. The fill is the usage tank's level; the colour is the same
@@ -1347,6 +1380,11 @@ body.no-scroll { overflow: hidden; }
        from figures the sheet already works out; it adds nothing to the report. -->
   <section class="dash" id="dashboard" aria-label="The plant at a glance">
     <div class="dash-top">
+      <div class="dash-tile" id="dashPlant">
+        <span class="dash-label">Plant</span>
+        <span class="dash-state"><span class="dash-led"></span><span id="dashPlantState">Not set</span></span>
+        <span class="dash-sub" id="dashPlantSub">&nbsp;</span>
+      </div>
       <div class="dash-tile" id="dashDaf">
         <span class="dash-label">DAF dosing</span>
         <span class="dash-state"><span class="dash-led"></span><span id="dashDafState">Not logged</span></span>
@@ -1393,6 +1431,37 @@ body.no-scroll { overflow: hidden; }
       <input type="number" inputmode="decimal" step="any" id="fMeter" placeholder="e.g. 224994.2">
     </label>
     <p class="muted small" id="prevMeterNote">&nbsp;</p>
+  </section>
+
+  <!-- ---------- plant running or stopped ----------
+       Filled by renderPlant(). A switch kept from report to report until it
+       is changed, so it is only touched when the plant starts or stops. -->
+  <section class="card plant-card" id="plantCard">
+    <div class="card-head">
+      <h2>Plant</h2>
+      <div class="card-tools">
+        <button type="button" class="help-btn" data-help="helpPlant"
+                aria-expanded="false" aria-label="What this section is for">?</button>
+      </div>
+    </div>
+    <div class="help-text" id="helpPlant" hidden>
+      <p>Set this when the plant starts or stops. It stays as you set it, from one
+      report to the next, until you change it.</p>
+      <p>While the plant is stopped, the pH readings and a biofilter that is not
+      running are not flagged &mdash; they are expected then. The pH is also not
+      flagged whenever the DAF dosage was off at the time of the readings.</p>
+      <p>When the plant is running and the DAF dosage is stopped, this card asks
+      you to start the dosage.</p>
+    </div>
+    <div class="choicerow plant-choice">
+      <button type="button" class="cbtn ok" data-plant="running" aria-pressed="false">Plant running</button>
+      <button type="button" class="cbtn todo" data-plant="stopped" aria-pressed="false">Plant stopped</button>
+    </div>
+    <div class="nag plant-warn" id="plantWarn" hidden>
+      <span>The plant is running but the DAF dosage is stopped. Start the dosage, then record it.</span>
+      <button type="button" class="btn btn-primary" id="btnPlantDosing">Record start</button>
+    </div>
+    <p class="muted small plant-note" id="plantNote" hidden></p>
   </section>
 
   <!-- ---------- DAF running log ---------- -->
@@ -1663,8 +1732,10 @@ body.no-scroll { overflow: hidden; }
       The numbers that decide when a check is flagged. At or past
       <strong>Fault</strong> it is reported as a fault; at or past
       <strong>Monitor</strong>, as needing a watch. The four chemicals are judged
-      on how many days they will last. Their litre levels are only used until the
-      app has enough history to know how fast each one goes.
+      only on what is on site: <strong>Refill</strong> when the usage tank is at or
+      below its level, and <strong>Order</strong> when the backup is &mdash; counting
+      the IBC a refill will use, so one full IBC as backup with a low usage tank
+      says refill and order. An empty tank is red; a low one is amber.
     </div>
     <div id="thresholdForm"></div>
     <div class="sheet-foot">
@@ -1780,7 +1851,10 @@ const STATUS = {
   WATCH: 'watch',
   FAULT: 'fault',
   TODO: 'todo',
-  BLANK: 'blank'
+  BLANK: 'blank',
+  /* Left out on purpose: the check is not reported at all - not counted, not
+     flagged, and not printed. For a gauge that is known to be broken. */
+  SKIP: 'skip'
 };
 
 const STATUS_META = {
@@ -1788,7 +1862,8 @@ const STATUS_META = {
   watch: { label: 'Monitor',  short: 'WATCH', colour: [201, 138, 4],   wa: '\u26A0\uFE0F' },
   fault: { label: 'Fault',    short: 'FAULT', colour: [190, 44, 44],   wa: '\u274C' },
   todo:  { label: 'Not done', short: 'TODO',  colour: [110, 118, 129], wa: '\u2B1C' },
-  blank: { label: 'Not set',  short: '-',     colour: [160, 167, 175], wa: '\u2B1C' }
+  blank: { label: 'Not set',  short: '-',     colour: [160, 167, 175], wa: '\u2B1C' },
+  skip:  { label: 'Skipped',  short: 'SKIP',  colour: [160, 167, 175], wa: '\u2B1C' }
 };
 
 /* Every IBC on site holds this much. */
@@ -1805,26 +1880,17 @@ const DEFAULT_AVG_WINDOW = 14;
 /* The time of the morning walk, used when a report does not carry one. */
 const DEFAULT_READING_TIME = '08:00';
 
-/* A chemical's usage tank being completely empty is always a fault, whatever
-   the backup situation, so it needs no adjustable trigger. */
-const EMPTY_TANK = 0;
-
 /* Adjustable trigger levels. Readings without an entry here are not graded
    automatically and rely on the operator's own OK / Fault choice. */
 const DEFAULT_THRESHOLDS = {
   ph1:         { critLow: 4.9, warnLow: 5.0, warnHigh: 5.5, critHigh: 5.6 },
   ph2:         { critLow: 6.0, warnLow: 6.1, warnHigh: 6.5, critHigh: 6.7 },
   ph3:         { critLow: 6.0, warnLow: 6.1, warnHigh: 7.8, critHigh: 8.0 },
-  /* The four delivered chemicals are judged in days, not litres, once the app
-     has the history to know how fast each one goes - one set of litre levels
-     treated a chemical that lasts two weeks like one that lasts two days.
-     chemDays is the whole stock on site (time to order); chemTankDays is the
-     usage tank alone at the rate it empties while dosing (time to refill). */
-  chemDays:    { crit: 3,   warn: 7 },
-  chemTankDays:{ crit: 1,   warn: 2 },
-  // Litre levels: what the chemicals are judged on until that history exists.
-  chemInUse:   { crit: 300, warn: 500 },
-  chemBackup:  { crit: 0,   warn: 300 },
+  /* The four delivered chemicals are judged only on what is on site, in
+     litres - at the operator's request, Oct 2026. Days of usage are still
+     worked out and shown, but no longer decide the colour. See
+     chemicalStock() for the rule. */
+  chemStock:   { refillAt: 500, orderAt: 300 },
   boilerChem:  { crit: 50,  warn: 100 },
   saturator:   { critLow: 500, warnLow: 550, warnHigh: 600, critHigh: 650 },
   flow:        { critLow: 17, warnLow: 18, warnHigh: 20, critHigh: 21 }
@@ -1836,17 +1902,14 @@ const DEFAULT_THRESHOLDS = {
    older build keeps whatever that build shipped and never sees a new default.
    The stamp lets boot() tell "these are just the old shipped numbers" apart
    from "the operator typed these", and only the former gets replaced. */
-const THRESHOLD_VERSION = 2;
+const THRESHOLD_VERSION = 3;
 
 /* Plain-language names for the Settings screen. */
 const TH_LABELS = {
   ph1:         'pH reading 1',
   ph2:         'pH reading 2',
   ph3:         'pH reading 3',
-  chemDays:    'Chemical stock on site - days left (time to order)',
-  chemTankDays:'Chemical usage tank - days of dosing left (time to refill)',
-  chemInUse:   'Chemical usage tank, litres - only until there is enough history',
-  chemBackup:  'Chemical backup stock, litres - only until there is enough history',
+  chemStock:   'Chemicals - the four IBCs (L)',
   boilerChem:  'Boiler chemical (L)',
   saturator:   'Saturator pressure (kPa)',
   flow:        'Flow rate (m3/h)'
@@ -1861,6 +1924,15 @@ const TH_LABELS = {
 function mergeThresholds(saved) {
   const out = JSON.parse(JSON.stringify(DEFAULT_THRESHOLDS));
   if (!saved || typeof saved !== 'object') return out;
+  /* Before Oct 2026 the chemicals had separate usage-tank and backup groups.
+     Their "low" levels mean exactly what the two new ones do, so a level the
+     operator typed there is carried across rather than lost. */
+  if (!saved.chemStock || typeof saved.chemStock !== 'object') {
+    const oldRefill = Number(saved.chemInUse && saved.chemInUse.warn);
+    const oldOrder = Number(saved.chemBackup && saved.chemBackup.warn);
+    if (isFinite(oldRefill) && saved.chemInUse.warn !== undefined) out.chemStock.refillAt = oldRefill;
+    if (isFinite(oldOrder) && saved.chemBackup.warn !== undefined) out.chemStock.orderAt = oldOrder;
+  }
   Object.keys(out).forEach(group => {
     const savedGroup = saved[group];
     if (!savedGroup || typeof savedGroup !== 'object') return;
@@ -1904,6 +1976,14 @@ function refreshThresholds(saved) {
 const OK_FAULT_OPTIONS = [
   { value: 'ok',    label: 'OK',    status: STATUS.OK },
   { value: 'fault', label: 'Fault', status: STATUS.FAULT }
+];
+
+/* The biofilter humidity sensors have been out of action for a long time with
+   no repair date, so the rows can be skipped: left off the report entirely
+   rather than reported as a fault every single day. */
+const HUMIDITY_OPTIONS = [
+  ...OK_FAULT_OPTIONS,
+  { value: 'skip',  label: 'Skip',  status: STATUS.SKIP }
 ];
 
 // For "is it overflowing?" style questions, where No is the good answer.
@@ -1979,15 +2059,17 @@ const CHECKLIST = [
         id: 'biofilters',
         title: 'Biofilters',
         items: [
-          { id: 'bio_running', label: 'System running', type: 'choice', options: RUNNING_OPTIONS,
-            default: { choice: 'running' } },
+          // The biofilter is meant to be off while the plant is stopped, so
+          // "Not running" is only a problem while the plant is running.
+          { id: 'bio_running', label: 'Biofilter running', type: 'choice', options: RUNNING_OPTIONS,
+            default: { choice: 'running' }, okWhenPlantStopped: ['notrunning'] },
           { id: 'bio_target',  label: 'Within target',  type: 'choice', options: TARGET_OPTIONS,
             default: { choice: 'within' } },
           { id: 'bio_vacuum',  label: 'Vacuum gauge',   type: 'status', default: { status: STATUS.OK } },
-          { id: 'bio1_rh',     label: 'Bio 1 humidity', type: 'choice', options: OK_FAULT_OPTIONS,
-            default: { choice: 'fault' } },
-          { id: 'bio2_rh',     label: 'Bio 2 humidity', type: 'choice', options: OK_FAULT_OPTIONS,
-            default: { choice: 'fault' } }
+          { id: 'bio1_rh',     label: 'Bio 1 humidity', type: 'choice', options: HUMIDITY_OPTIONS,
+            default: { choice: 'skip' } },
+          { id: 'bio2_rh',     label: 'Bio 2 humidity', type: 'choice', options: HUMIDITY_OPTIONS,
+            default: { choice: 'skip' } }
         ]
       },
       {
@@ -2022,8 +2104,11 @@ const CHECKLIST = [
             decimals: 0 },
           {
             // Each reading comes off a different point, so each has its own limits.
+            // With no chemical going in, the pH drifts as a matter of course, so
+            // the readings are not judged while the plant is stopped or the DAF
+            // dosage was off at the time they were taken.
             id: 'ph', label: 'pH readings', type: 'multi',
-            decimals: 1, display: 'slash', inputWidth: 'narrow',
+            decimals: 1, display: 'slash', inputWidth: 'narrow', restsWithDosing: true,
             fields: [
               { key: 'a', label: '1', threshold: 'ph1' },
               { key: 'b', label: '2', threshold: 'ph2' },
@@ -2218,19 +2303,58 @@ function gradeMulti(item, values, thresholds) {
   return grades.length ? worstOf(grades) : STATUS.OK;
 }
 
-/* Chemical tanks are judged purely on their levels, using the trigger levels
-   in Settings. How many days of stock remain is reported as information but
-   never changes the status. */
-function gradeChemical(v, thresholds) {
-  const inUse = num(v.inUse);
-  const backup = num(v.backup);
-  const grades = [];
-  if (inUse !== null) grades.push(gradeNumber(inUse, 'chemInUse', thresholds));
-  if (backup !== null) grades.push(gradeNumber(backup, 'chemBackup', thresholds));
-  return grades.length ? worstOf(grades) : STATUS.BLANK;
+/* What one of the four delivered chemicals needs, judged only on what is on
+   site: the usage tank and the backup, in litres. How many days the stock
+   will last is still worked out and shown, but it no longer sets the colour.
+
+     Refill  the usage tank is at or below the refill level
+     Order   the backup is at or below the order level - counting the IBC a
+             refill is about to use. So one full IBC sitting as backup, with a
+             low usage tank, says "refill, and order backup": once it has gone
+             into the usage tank there is no backup left.
+
+   Red when a tank is empty, amber when one is only low. The badge names the
+   job and the reason is a few words, because the IBC drawings already show
+   the levels. Returns null when neither level was typed. */
+function chemicalStock(inUse, backup, levels) {
+  const t = levels || DEFAULT_THRESHOLDS.chemStock;
+  const u = inUse === null || inUse === undefined ? null : Math.max(0, inUse);
+  const b = backup === null || backup === undefined ? null : Math.max(0, backup);
+  if (u === null && b === null) return null;
+
+  const tankEmpty = u !== null && u <= 0;
+  const refill = u !== null && u <= t.refillAt;
+  const backupEmpty = b !== null && b <= 0;
+  // What the backup will be down to once a refill has taken one IBC from it.
+  const left = b === null ? null : (refill ? b - IBC_LITRES : b);
+  const order = left !== null && left <= t.orderAt;
+
+  let action;
+  let reason;
+  if (tankEmpty && backupEmpty) {
+    action = 'OUT OF STOCK';
+    reason = 'out of stock, order now';
+  } else if (refill && backupEmpty) {
+    // Nothing to refill from, so ordering is the only job.
+    action = 'ORDER';
+    reason = 'usage tank low, no backup, order now';
+  } else if (refill && order) {
+    action = 'REFILL + ORDER';
+    reason = tankEmpty ? 'usage tank empty, refill now, order backup' : 'refill usage tank, order backup';
+  } else if (refill) {
+    action = 'REFILL';
+    reason = tankEmpty ? 'usage tank empty, refill now' : 'refill usage tank';
+  } else if (order) {
+    action = 'ORDER';
+    reason = backupEmpty ? 'no backup left, order now' : 'order backup';
+  } else {
+    return { status: STATUS.OK, action: null, reason: '' };
+  }
+  return { status: tankEmpty || backupEmpty ? STATUS.FAULT : STATUS.WATCH, action, reason };
 }
 
-const SEVERITY_ORDER = [STATUS.OK, STATUS.BLANK, STATUS.TODO, STATUS.WATCH, STATUS.FAULT];
+// Skipped sits below OK, so it can never be the worst of anything.
+const SEVERITY_ORDER = [STATUS.SKIP, STATUS.OK, STATUS.BLANK, STATUS.TODO, STATUS.WATCH, STATUS.FAULT];
 
 function worstOf(list) {
   let worst = STATUS.OK;
@@ -2309,18 +2433,14 @@ function daysOfStock(item, usage) {
 }
 
 /* Wording for the badge. "Fault" is right for a broken pump but not for a
-   tank that simply needs topping up or reordering. */
-function stockBadge(item, status, reason) {
+   tank that simply needs topping up. The four chemicals name their own job
+   (chemicalStock), so this is for the boiler tanks and for a status that was
+   tapped by hand. */
+function stockBadge(item, status) {
   if (!needsAction(status)) return STATUS_META[status].short;
   // Boiler dose tanks are mixed and topped up in house, so they are only ever
   // a refill job - never a reorder.
   if (item && item.topUp === 'litres') return 'REFILL';
-  // For the delivered chemicals, no backup left is the more serious problem,
-  // so that is the action named.
-  if (/no backup stock|backup very low/.test(reason)) return 'REORDER';
-  if (/usage tank/.test(reason)) return 'REFILL';
-  if (status === STATUS.FAULT) return 'REORDER';
-  if (status === STATUS.WATCH) return 'LOW';
   return STATUS_META[status].short;
 }
 
@@ -3544,8 +3664,22 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
   const waterNow = (daf.length && spanWhole)
     ? dosedWater(spanFrom, spanTo, meterFrom, meterTo, daf, flowRate, log) : null;
 
+  /* Whether the plant is running, as set on the sheet, and whether the DAF
+     dosage was on when this morning's readings were taken.
+
+     With no chemical going in the pH drifts as a matter of course, and with
+     the plant stopped the biofilter is meant to be off, so neither is a
+     problem then. The dosing is read at the time of the readings, not the
+     time the PDF is made, because that is when the pH was taken. With nothing
+     in the dosing log at all it is not known, so the pH is judged as usual. */
+  const plant = state.plant === 'running' || state.plant === 'stopped' ? state.plant : null;
+  const dosingOffAtReading = daf.length > 0 && !dosingOnNow(daf, nowStamp);
+  // Why a reading is not judged, in the words printed beside it.
+  const pausedBy = plant === 'stopped' ? 'plant stopped' : (dosingOffAtReading ? 'DAF dosing off' : null);
+
   const result = {
-    items: {}, counts: { ok: 0, watch: 0, fault: 0, todo: 0, blank: 0 },
+    items: {}, counts: { ok: 0, watch: 0, fault: 0, todo: 0, blank: 0, skip: 0 },
+    plant, dosingOffAtReading, readingAt: nowStamp,
     actions: {}, gapDays, dosingHours,
     waterNow, flowRate,
     // The two moments the water figures cover, so the report can label them.
@@ -3593,17 +3727,26 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
         let reason = '';
         const extra = [];
         let sum = null;
-        // Set for a chemical judged on days left: REORDER, ORDER SOON or REFILL.
+        // Set for one of the four chemicals: the job its stock calls for.
         let stockAction = null;
+        // Why a reading that would otherwise be flagged is not, e.g. "plant stopped".
+        let eased = null;
 
         if (item.type === 'status') {
           status = manual || STATUS.BLANK;
           display = STATUS_META[status].label;
 
         } else if (item.type === 'choice') {
-          const auto = gradeChoice(item, v.choice);
+          let auto = gradeChoice(item, v.choice);
+          // "Not running" is expected of the biofilter while the plant is stopped.
+          if (plant === 'stopped' && needsAction(auto)
+            && (item.okWhenPlantStopped || []).includes(v.choice)) {
+            auto = STATUS.OK;
+            eased = 'plant stopped';
+          }
           status = manual || auto;
           display = v.choice ? choiceLabel(item, v.choice) : (manual ? STATUS_META[status].label : '-');
+          if (status === STATUS.SKIP) display = STATUS_META.skip.label;
           if (v.choice && needsAction(status)) reason = choiceLabel(item, v.choice).toLowerCase();
 
         } else if (item.type === 'number') {
@@ -3619,7 +3762,14 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
         } else if (item.type === 'multi') {
           const readings = item.fields.map(f => num(v[f.key]));
           const any = readings.some(r => r !== null);
-          status = manual || gradeMulti(item, v, thresholds);
+          let auto = gradeMulti(item, v, thresholds);
+          // The pH is not judged while nothing is being dosed. A status tapped
+          // by hand still counts, since that is the operator's own call.
+          if (item.restsWithDosing && pausedBy && needsAction(auto)) {
+            auto = STATUS.OK;
+            eased = pausedBy;
+          }
+          status = manual || auto;
           if (!any) {
             display = manual ? 'Not recorded' : '-';
           } else if (item.display === 'labelled') {
@@ -3656,25 +3806,18 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
                 ? hoursLeft / stats.hoursPerDay
                 : daysLeftFromAverage(onHand, stats.avgPerDay));
 
-          /* The four delivered chemicals are judged on how long they will last
-             once that is known; until then, and always for the boiler tanks,
-             on their litre levels. "Known" means at least two days of usage
-             behind it - the same bar the stock sum sets before it will quote an
-             average. One day alone is too jumpy to judge on, and the colour
-             must not claim more than the sum underneath it does. */
-          const rateKnown = stats.daysCovered >= 2;
-          const byDays = hasAny && item.hasBackup && item.topUp === 'ibc' && rateKnown
-            ? chemicalByDays({
-              inUse, backup, onHand, daysLeft: left,
-              perDosingDay: stats.avgPerHour ? stats.avgPerHour * 24 : null
-            }, thresholds)
+          /* The four delivered chemicals are judged only on what is on site -
+             the usage tank and the backup - and their badge names the job:
+             refill, order, or both. The days left above are still worked out
+             for the stock sum and the dashboard, but no longer set the colour.
+             The boiler tanks keep their own litre levels. */
+          const chem = hasAny && item.hasBackup && item.topUp === 'ibc'
+            ? chemicalStock(inUse, backup, thresholds.chemStock)
             : null;
-          if (byDays) stockAction = byDays.action;
+          if (chem) stockAction = chem.action;
           const levelStatus = !hasAny ? STATUS.BLANK
-            : byDays ? byDays.status
-              : item.hasBackup
-                ? gradeChemical(v, thresholds)
-                : gradeNumber(v.inUse, item.threshold, thresholds);
+            : chem ? chem.status
+              : gradeNumber(v.inUse, item.threshold, thresholds);
 
           status = manual || levelStatus;
           display = hasAny
@@ -3688,23 +3831,25 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
               dosingHours, hoursLeft, waterNow, waterLeft);
           }
 
+          /* A chemical's reason is the job in a few words and nothing more: the
+             IBC drawings already show how much is in each tank, so the levels
+             and days repeated in the action list only crowded it. A delivery
+             that was not recorded is still said, in the stock sum below the
+             readings. The boiler tanks keep their fuller wording. */
           const bits = [];
-          if (hasAny) {
-            if (byDays) {
-              bits.push(...byDays.reasons);
-            } else if (item.hasBackup) {
-              const lvl = chemicalReason(v, thresholds);
-              if (lvl) bits.push(lvl);
-            } else {
+          if (chem) {
+            if (chem.reason) bits.push(chem.reason);
+          } else {
+            if (hasAny) {
               const lvl = numberReason(item, inUse, item.threshold, thresholds, levelStatus);
               if (lvl) bits.push(lvl);
             }
-          }
-          if (usage && usage.unconfirmed) bits.push('usage not confirmed');
-          if (usage && usage.missingLitres > 0) {
-            bits.push(usage.missingIbcs > 0
-              ? `stock rose unexpectedly - at least ${plural(usage.missingIbcs, 'IBC')} not recorded`
-              : `stock rose unexpectedly - ${fmtQty(usage.missingLitres)} ${item.unit} not accounted for`);
+            if (usage && usage.unconfirmed) bits.push('usage not confirmed');
+            if (usage && usage.missingLitres > 0) {
+              bits.push(usage.missingIbcs > 0
+                ? `stock rose unexpectedly - at least ${plural(usage.missingIbcs, 'IBC')} not recorded`
+                : `stock rose unexpectedly - ${fmtQty(usage.missingLitres)} ${item.unit} not accounted for`);
+            }
           }
           reason = bits.join(', ');
 
@@ -3717,10 +3862,7 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
             daysCovered: stats.daysCovered, hoursCovered: stats.hoursCovered,
             hoursLeft, daysLeft: left,
             unconfirmed: !!(usage && usage.unconfirmed),
-            status,
-            // How urgent the days-left figure itself is, apart from the usage
-            // tank, so the stock table colours "15 days" by the 15 days.
-            daysStatus: byDays ? byDays.daysStatus : null
+            status
           });
 
         } else if (item.type === 'date') {
@@ -3742,14 +3884,21 @@ function evaluate(state, previous, history, dosingEvents, meterLog) {
           else if (status === STATUS.TODO) reason = 'not completed';
         }
 
+        // Said beside the reading, so a value outside its limits printed with a
+        // tick is never a mystery: "7.1 / 6.3 / 6.0 (plant stopped)".
+        const isEased = !!eased && !manual;
+        if (isEased && display !== '-') display = `${display} (${eased})`;
+
         result.counts[status] = (result.counts[status] || 0) + 1;
         const photos = (v.photos || []).filter(id => state.photos && state.photos[id]);
-        const optBadge = item.type === 'choice' ? optionBadge(item, v.choice) : null;
+        // An eased "Not running" must not keep its red NOT RUNNING wording.
+        const optBadge = item.type === 'choice' && !isEased ? optionBadge(item, v.choice) : null;
         const badge = item.type === 'stock'
-          ? (stockAction && !manual && needsAction(status) ? stockAction : stockBadge(item, status, reason))
+          ? (stockAction && !manual && needsAction(status) ? stockAction : stockBadge(item, status))
           : (optBadge || STATUS_META[status].short);
         result.items[item.id] = {
           status, badge, display, reason, extra, sum,
+          eased: isEased ? eased : null,
           // A red badge should never be a mystery, so the explanation is
           // printed - unless it is generic, or just repeats the value already
           // shown on the row.
@@ -3994,100 +4143,6 @@ function multiReason(item, readings, thresholds, status) {
 function listOf(arr) {
   if (arr.length === 1) return arr[0];
   return arr.slice(0, -1).join(', ') + ' and ' + arr[arr.length - 1];
-}
-
-/* Why a chemical is flagged on its litre levels - the rule used until there is
-   enough history to know how fast it goes (see chemicalByDays).
-
-   "Empty" and "no backup" are only ever said of nothing at all. Anything at or
-   under the fault level used to be called "usage tank empty", so a tank with
-   200 L in it told the managers it was empty. */
-function chemicalReason(v, thresholds) {
-  const bits = [];
-  const inUse = num(v.inUse), backup = num(v.backup);
-  // Backup first: with nothing in reserve, refilling is not an option.
-  if (backup !== null) {
-    const tb = thresholds.chemBackup;
-    if (backup <= 0) bits.push('no backup stock');
-    else if (backup <= tb.crit) bits.push(`backup very low (${fmtQty(backup)} L)`);
-    else if (tb.warn > tb.crit && backup <= tb.warn) bits.push(`backup low (${fmtQty(backup)} L)`);
-  }
-  if (inUse !== null) {
-    const ti = thresholds.chemInUse;
-    if (inUse <= EMPTY_TANK) bits.push('usage tank empty');
-    else if (inUse <= ti.crit) bits.push(`usage tank very low (${fmtQty(inUse)} L)`);
-    else if (inUse <= ti.warn) bits.push(`usage tank low (${fmtQty(inUse)} L)`);
-  }
-  return bits.join(', ');
-}
-
-/* Judges a delivered chemical on how long it will last, not on litres.
-
-   One set of litre levels treated all four chemicals alike, but they go at
-   very different rates: in the recorded figures 400 L of flocculant lasted
-   about 13 days while 600 L of caustic lasted about 2. How long the stock
-   lasts is what decides when to order or refill, so that is what the colour
-   follows. Two questions, each with its own trigger levels in Settings:
-
-     - the stock on site (usage tank + backup): is it time to order?
-     - the usage tank on its own, at the rate it empties while dosing: is it
-       time to refill it from the backup? Judged at the dosing rate rather
-       than the calendar average, so a quiet weekend in the average cannot hide
-       a tank that will run dry tomorrow.
-
-   An empty usage tank is always a fault. Returns null while the app does not
-   yet know how fast the chemical goes; the caller then falls back to litres.
-   Only the colour and its explanation are decided here - every figure comes
-   from the existing usage and days-left working, unchanged. */
-function chemicalByDays(s, thresholds) {
-  if (s.daysLeft === null || s.daysLeft === undefined || !isFinite(s.daysLeft)) return null;
-  const td = thresholds.chemDays;
-  const tt = thresholds.chemTankDays;
-  const reasons = [];
-
-  // Stock on site: when to order.
-  let daysStatus = STATUS.OK;
-  if (s.daysLeft <= td.crit) daysStatus = STATUS.FAULT;
-  else if (s.daysLeft <= td.warn) daysStatus = STATUS.WATCH;
-  if (daysStatus !== STATUS.OK) {
-    const onSite = `${fmtQty(s.onHand)} L on site`;
-    if (s.onHand <= 0) reasons.push('none left on site');
-    else if (s.daysLeft < 1) reasons.push(`less than a day of stock left (${onSite})`);
-    else if (daysStatus === STATUS.FAULT) reasons.push(`only ${fmtDays(s.daysLeft)} of stock left (${onSite})`);
-    else reasons.push(`about ${fmtDays(s.daysLeft)} of stock left (${onSite})`);
-  }
-
-  // The usage tank: when to refill. Only asked when there is backup to refill
-  // from - with none, the tank is the whole stock and the question above has
-  // already said everything.
-  let tankStatus = STATUS.OK;
-  if (s.backup !== null && s.backup > 0 && s.inUse !== null) {
-    if (s.inUse <= EMPTY_TANK) {
-      tankStatus = STATUS.FAULT;
-      reasons.push('usage tank empty');
-    } else {
-      const tankDays = s.perDosingDay
-        ? s.inUse / s.perDosingDay
-        : (s.onHand > 0 ? s.daysLeft * s.inUse / s.onHand : 0);
-      if (tankDays <= tt.crit) tankStatus = STATUS.FAULT;
-      else if (tankDays <= tt.warn) tankStatus = STATUS.WATCH;
-      if (tankStatus !== STATUS.OK) {
-        reasons.push(`usage tank down to ${fmtQty(s.inUse)} L, `
-          + (tankDays < 1 ? 'less than a day' : `about ${fmtDays(tankDays)}`) + ' of dosing');
-      }
-    }
-  }
-
-  const status = worstOf([daysStatus, tankStatus]);
-  // When both ask for something, running out on site is the bigger problem,
-  // so ordering is the action named.
-  let action = null;
-  if (needsAction(daysStatus) && SEVERITY_ORDER.indexOf(daysStatus) >= SEVERITY_ORDER.indexOf(tankStatus)) {
-    action = daysStatus === STATUS.FAULT ? 'REORDER' : 'ORDER SOON';
-  } else if (needsAction(tankStatus)) {
-    action = 'REFILL';
-  }
-  return { status, daysStatus, reasons, action };
 }
 
 /* ------------------------------------------------------------------
@@ -4417,7 +4472,12 @@ function buildPdf(state, evaluated, previous) {
   /* ---- 6. detail sections ---- */
   const photoOrder = [];
 
+  // A skipped check is left off the report altogether, and so is a group or
+  // a section with nothing else in it.
+  const shownItems = (group) => group.items.filter(i => evaluated.items[i.id].status !== STATUS.SKIP);
+
   CHECKLIST.forEach(section => {
+    if (!section.groups.some(g => shownItems(g).length)) return;
     doc.ensure(64);
     doc.roundRect(L, doc.y, W, 22, 4, { fill: BRAND.green });
     doc.rect(L + 10, doc.y + 7, 2.4, 8, { fill: BRAND.gold });
@@ -4426,14 +4486,16 @@ function buildPdf(state, evaluated, previous) {
     doc.y += 22 + 11;
 
     section.groups.forEach(group => {
+      const items = shownItems(group);
+      if (!items.length) return;
       const heading = `${group.number}  ${group.title}` + (group.note ? `  (${group.note})` : '');
-      const compactItems = group.items.filter(i => i.compact && evaluated.items[i.id].sum);
-      const rest = group.items.filter(i => !compactItems.includes(i));
+      const compactItems = items.filter(i => i.compact && evaluated.items[i.id].sum);
+      const rest = items.filter(i => !compactItems.includes(i));
       // Plain OK checks go two to a line at the end of the group (drawOkGrid);
       // anything with something to say keeps a full row of its own.
       const okItems = rest.filter(i => squashable(i, evaluated.items[i.id]));
       const normalItems = rest.filter(i => !okItems.includes(i));
-      const allOk = group.items.every(i => evaluated.items[i.id].status === STATUS.OK);
+      const allOk = items.every(i => evaluated.items[i.id].status === STATUS.OK);
 
       // A heading must never sit alone at the foot of a page, so the space for
       // the heading plus whatever follows it first is reserved together.
@@ -4447,7 +4509,7 @@ function buildPdf(state, evaluated, previous) {
       // A whole group in order says so on its heading, so it can be passed over
       // at a glance.
       if (allOk) {
-        doc.text(`ALL ${group.items.length} OK`, R, doc.y + 9,
+        doc.text(`ALL ${items.length} OK`, R, doc.y + 9,
           { size: 7.2, bold: true, colour: BRAND.ok, align: 'right', tracking: 0.5 });
       }
       doc.y += 13;
@@ -4470,14 +4532,16 @@ function buildPdf(state, evaluated, previous) {
         if (idx % 2 === 1) doc.rect(L, doc.y, W, rowH, { fill: BRAND.zebra });
 
         doc.text(item.label, L + 7, doc.y + 13, { size: 8.8, colour: BRAND.ink });
-        doc.badge(ev.badge, STATUS_ICON[ev.status], R - 6, doc.y + 3.5, STATUS_META[ev.status].colour);
+        const badgeW = doc.badge(ev.badge, STATUS_ICON[ev.status], R - 6, doc.y + 3.5,
+          STATUS_META[ev.status].colour);
 
         // Skip the value when the badge beside it already says the same thing,
-        // e.g. an OK / Fault pick.
+        // e.g. an OK / Fault pick. A wide badge ("REFILL + ORDER") pushes the
+        // value along rather than running into it.
         const badgeSaysIt = ev.hideDisplay || String(ev.display).toLowerCase()
           === STATUS_META[ev.status].label.toLowerCase();
         if (item.type !== 'status' && !badgeSaysIt) {
-          doc.text(ev.display, R - 84, doc.y + 13,
+          doc.text(ev.display, Math.min(R - 84, R - 6 - badgeW - 10), doc.y + 13,
             { size: 9.2, colour: BRAND.value, align: 'right' });
         }
         doc.y += rowH;
@@ -5021,6 +5085,10 @@ function blankState() {
     meter: '',
     prevMeter: null,
     logo: null,
+    /* 'running', 'stopped', or null while it has never been set. A switch,
+       not a daily question: it stays as last set, report to report, until the
+       plant starts or stops. */
+    plant: null,
     lastCheckDate: null,
     generalNote: '',
     values: defaultValues(),
@@ -5042,6 +5110,7 @@ function carriedSettings() {
     reportPrefix: state.reportPrefix || DEFAULT_PREFIX,
     avgWindowDays: state.avgWindowDays || DEFAULT_AVG_WINDOW,
     logo: state.logo,
+    plant: state.plant === 'running' || state.plant === 'stopped' ? state.plant : null,
     thresholds: mergeThresholds(state.thresholds),
     thVersion: state.thVersion,
     thEdited: state.thEdited === true
@@ -5332,6 +5401,8 @@ function renderItem(item) {
         </div>
       </div>
       ${body}
+      ${item.okWhenPlantStopped || item.restsWithDosing
+        ? `<p class="item-info" data-info="${item.id}" hidden></p>` : ''}
       <div class="note-input" data-notewrap="${item.id}" ${v.note ? '' : 'hidden'}>
         <input type="text" data-notefield="${item.id}" value="${esc(v.note || '')}"
                placeholder="Short note for your manager">
@@ -5543,9 +5614,21 @@ function refresh() {
     pill.className = `pill ${s}`;
     pill.textContent = STATUS_META[s].short;
 
-    // Drives the colour rail down the left edge of the row.
+    // Drives the colour rail down the left edge of the row, and greys out a
+    // red answer that is not a problem today ("Not running", plant stopped).
     const row = document.querySelector(`[data-item="${id}"]`);
-    if (row) row.setAttribute('data-state', s);
+    if (row) {
+      row.setAttribute('data-state', s);
+      row.setAttribute('data-eased', ev.items[id].eased ? 'true' : 'false');
+    }
+
+    // Why a reading outside its limits is not flagged, said on the row itself.
+    const info = document.querySelector(`[data-info="${id}"]`);
+    if (info) {
+      const why = easedText(ev.items[id].eased, ev.readingAt);
+      info.hidden = !why;
+      info.textContent = why;
+    }
 
     // live "used since yesterday" line under the chemical inputs
     const usage = document.querySelector(`[data-usage="${id}"]`);
@@ -5600,26 +5683,27 @@ function refresh() {
       if (dot) dot.className = `dot ${worst}`;
 
       // "4/5" on each group header, so a half-finished group is obvious even
-      // when it is folded shut.
-      const gDone = group.items.filter(i => ev.items[i.id].status !== STATUS.BLANK).length;
+      // when it is folded shut. A skipped check is not one to do, so it is
+      // left out of both numbers.
+      const counted = group.items.filter(i => ev.items[i.id].status !== STATUS.SKIP);
+      const gDone = counted.filter(i => ev.items[i.id].status !== STATUS.BLANK).length;
       secDone += gDone;
-      secTotal += group.items.length;
+      secTotal += counted.length;
       const tally = document.querySelector(`[data-grouptally="${group.id}"]`);
       if (tally) {
-        tally.textContent = `${gDone}/${group.items.length}`;
-        setClass(tally, 'complete', gDone === group.items.length);
+        tally.textContent = `${gDone}/${counted.length}`;
+        setClass(tally, 'complete', gDone === counted.length);
       }
     });
     const secTally = document.querySelector(`[data-sectiontally="${section.id}"]`);
     if (secTally) secTally.textContent = `${secDone}/${secTotal}`;
   });
 
-  const total = Object.keys(ITEM_INDEX).length;
+  const { done, total } = checksDone(ev);
   const counts = { ok: 0, watch: 0, fault: 0, todo: 0 };
   Object.values(ev.items).forEach(i => {
     if (counts[i.status] !== undefined) counts[i.status]++;
   });
-  const done = Object.values(ev.items).filter(i => i.status !== STATUS.BLANK).length;
   el('#progressFill').style.width = `${Math.round(done / total * 100)}%`;
 
   /* The bar alone says how much is filled in but not whether anything is
@@ -5636,6 +5720,7 @@ function refresh() {
 
   renderSummary(ev);
   lastEv = ev;
+  renderPlant();
   renderDashboard(ev);
   // The counts above can wrap the progress line onto a second row, which
   // changes how far down the sticky headers belong.
@@ -5669,6 +5754,22 @@ function renderSummary(ev) {
     body.className = '';
     body.innerHTML = blocks.join('');
   }
+}
+
+/* How many checks this report has to do, and how many are done. A skipped
+   check is not one to do, so it counts towards neither. */
+function checksDone(ev) {
+  const list = Object.values(ev.items).filter(i => i.status !== STATUS.SKIP);
+  return { total: list.length, done: list.filter(i => i.status !== STATUS.BLANK).length };
+}
+
+/* The line under a reading that is outside its limits but not flagged. */
+function easedText(eased, readingAt) {
+  if (eased === 'plant stopped') return 'Not flagged: the plant is stopped.';
+  if (eased === 'DAF dosing off') {
+    return `Not flagged: the DAF dosage was off at ${clockTime(readingAt)}, when the readings were taken.`;
+  }
+  return '';
 }
 
 /* ---------------- PDF + sharing ---------------- */
@@ -6207,7 +6308,9 @@ const KEY_LABELS = {
   warnHigh: 'Monitor at/above',
   critHigh: 'Fault at/above',
   crit: 'Fault at/below',
-  warn: 'Monitor at/below'
+  warn: 'Monitor at/below',
+  refillAt: 'Refill usage tank at/below',
+  orderAt: 'Order backup at/below'
 };
 
 /* Lays a stored record over a blank state.
@@ -6401,9 +6504,22 @@ function renderDashboard(ev) {
   el('#dashDafState').textContent = running === null ? 'Not logged' : running ? 'RUNNING' : 'STOPPED';
   el('#dashDafSince').textContent = last ? sinceText(last.at) : 'record a start below';
 
+  // The plant, as set on the sheet - and a nudge when it is running with the
+  // DAF dosage stopped, which is the moment the dosage should be started.
+  const plantTile = el('#dashPlant');
+  if (plantTile) {
+    const nudge = state.plant === 'running' && !running;
+    setClass(plantTile, 'on', state.plant === 'running' && !nudge);
+    setClass(plantTile, 'warn', nudge);
+    el('#dashPlantState').textContent = state.plant === 'running' ? 'RUNNING'
+      : state.plant === 'stopped' ? 'STOPPED' : 'Not set';
+    el('#dashPlantSub').textContent = nudge ? 'start the DAF dosage'
+      : state.plant === 'stopped' ? 'pH and biofilter not flagged'
+        : state.plant === 'running' ? 'DAF dosage on' : 'set it below';
+  }
+
   // This report: made, sent, or still being filled in.
-  const total = Object.keys(ITEM_INDEX).length;
-  const done = Object.values(ev.items).filter(i => i.status !== STATUS.BLANK).length;
+  const { done, total } = checksDone(ev);
   const sent = sendState(state);
   el('#dashReportLabel').textContent = state.date === todayISO()
     ? 'Today\u2019s report' : `Report ${styleDate(state.date) || state.date}`;
@@ -6490,6 +6606,56 @@ function toast(msg) {
 }
 
 /* ---------------- wiring ---------------- */
+
+/* ---------------- plant running or stopped ----------------
+
+   A switch above the dosing card, kept from one report to the next until it
+   is changed. While the plant is stopped the pH readings, and a biofilter that
+   is not running, are not flagged. While it is running with the DAF dosage
+   stopped, the card says to start the dosage and offers the way to record it. */
+function renderPlant() {
+  const card = el('#plantCard');
+  if (!card) return;
+  const p = state.plant === 'running' || state.plant === 'stopped' ? state.plant : null;
+  card.querySelectorAll('[data-plant]').forEach(b => {
+    b.setAttribute('aria-pressed', b.dataset.plant === p ? 'true' : 'false');
+  });
+  const dosingNow = dosingEvents.length ? dosingOnNow(dosingEvents) : false;
+  const warn = el('#plantWarn');
+  if (warn) warn.hidden = !(p === 'running' && !dosingNow);
+  const note = el('#plantNote');
+  if (note) {
+    const text = p === 'stopped'
+      ? 'While the plant is stopped, pH readings and a biofilter that is not running are not flagged.'
+      : p === 'running' ? (dosingNow ? 'The DAF dosage is on.' : '')
+        : 'Is the plant running? Set it once - it stays as you set it until you change it.';
+    note.textContent = text;
+    note.hidden = !text;
+  }
+  setClass(card, 'running', p === 'running');
+  setClass(card, 'stopped', p === 'stopped');
+}
+
+function bindPlant() {
+  const card = el('#plantCard');
+  if (!card) return;
+  card.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-plant]');
+    if (!btn) return;
+    // Always select. Tapping the current choice must not clear it.
+    state.plant = btn.dataset.plant;
+    queueSave();
+    refresh();
+    if (state.plant === 'running' && !(dosingEvents.length && dosingOnNow(dosingEvents))) {
+      toast('The DAF dosage is stopped - start it, then record it');
+    }
+  });
+  el('#btnPlantDosing').addEventListener('click', () => {
+    openDosingEntry();
+    const dosing = el('#dosingCard');
+    if (dosing && dosing.scrollIntoView) dosing.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+}
 
 /* ---------------- DAF running log ---------------- */
 
@@ -7677,6 +7843,8 @@ async function boot() {
     ['show when the last backup was', renderBackupStatus],
     ['show whether the report was sent', renderSendStatus],
     ['wire the dashboard', bindDashboard],
+    ['wire the plant switch', bindPlant],
+    ['show the plant switch', renderPlant],
     ['draw the checklist', render],
     ['show the trigger levels', renderThresholds],
     ['size the top bar', syncTopbarHeight]

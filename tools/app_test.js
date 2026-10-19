@@ -162,14 +162,15 @@ async function main() {
       form ? `${form.children.length} rows` : 'form missing');
 
     check('limits missing from an old save are repaired',
-      run(app.ctx, 'JSON.stringify(["ph1","chemInUse","chemBackup"].every(k => !!state.thresholds[k]))') === 'true',
+      run(app.ctx, 'JSON.stringify(["ph1","chemStock"].every(k => !!state.thresholds[k]))') === 'true',
       run(app.ctx, 'JSON.stringify(Object.keys(state.thresholds))'));
 
     // The old save carries the levels that build shipped, never hand-typed
     // ones, so the update is free to replace them.
     check('a draft from an older build picks up the new shipped levels',
-      run(app.ctx, 'state.thresholds.chemInUse.crit') === 300,
-      run(app.ctx, 'JSON.stringify(state.thresholds.chemInUse)'));
+      run(app.ctx, 'state.thresholds.chemStock.refillAt') === 500
+      && run(app.ctx, 'state.thresholds.chemStock.orderAt') === 300,
+      run(app.ctx, 'JSON.stringify(state.thresholds.chemStock)'));
     check('and the new pH 1 band is in force',
       run(app.ctx, 'state.thresholds.ph1.critHigh') === 5.6,
       run(app.ctx, 'JSON.stringify(state.thresholds.ph1)'));
@@ -1450,6 +1451,96 @@ async function main() {
       /^Saved to your downloads at/.test(dlLine.textContent) && !dlLine.classList.contains('notsent'),
       dlLine.textContent);
     check('no errors logged (downloads)', dl.localErrors.length === 0, dl.localErrors.join(' | '));
+  }
+
+  /* ========= scenario 15: the plant switch, and skipped checks ========= */
+  console.log('\n15. The plant switch, and skipped checks');
+  {
+    const app = makeApp(null);
+    await sleep(320);
+    const doc = app.document;
+    check('no errors logged during boot', app.localErrors.length === 0, app.localErrors.join(' | '));
+
+    // The humidity rows: skipped by default, and left out of every count.
+    check('both humidity rows have a Skip button, pressed from the start',
+      ['bio1_rh', 'bio2_rh'].every(id => {
+        const b = doc.querySelector(`[data-choice="${id}"][data-value="skip"]`);
+        return !!b && b.getAttribute('aria-pressed') === 'true';
+      }));
+    check('their tag says SKIP', doc.querySelector('[data-pill="bio1_rh"]').textContent === 'SKIP',
+      doc.querySelector('[data-pill="bio1_rh"]').textContent);
+    const label = doc.querySelector('#progressLabel').textContent;
+    check('the count at the top leaves the skipped rows out', /of 36 checks recorded/.test(label), label);
+    check('and nothing is flagged on a normal morning', !/fault/.test(label), label);
+    check('the Biofilters group counts its three other checks',
+      doc.querySelector('[data-grouptally="biofilters"]').textContent === '3/3',
+      doc.querySelector('[data-grouptally="biofilters"]').textContent);
+    check('the row is now called Biofilter running',
+      String(doc.querySelector('#checklist').innerHTML).indexOf('>Biofilter running<') !== -1);
+
+    // The plant switch.
+    check('the plant starts not set', doc.querySelector('#dashPlantState').textContent === 'Not set');
+    doc.querySelector('[data-plant="stopped"]').dispatch('click');
+    await sleep(30);
+    check('tapping Plant stopped stores it', run(app.ctx, 'state.plant') === 'stopped');
+    check('and shows the button pressed',
+      doc.querySelector('[data-plant="stopped"]').getAttribute('aria-pressed') === 'true'
+      && doc.querySelector('[data-plant="running"]').getAttribute('aria-pressed') === 'false');
+    check('the dashboard says STOPPED', doc.querySelector('#dashPlantState').textContent === 'STOPPED');
+    check('no nudge to start the dosage while the plant is stopped', doc.querySelector('#plantWarn').hidden === true);
+
+    const phA = doc.querySelector('[data-multi="ph"][data-key="a"]');
+    phA.value = '4.5';
+    phA.dispatch('input');
+    await sleep(30);
+    check('an out-of-range pH is not flagged while the plant is stopped',
+      doc.querySelector('[data-pill="ph"]').textContent === 'OK', doc.querySelector('[data-pill="ph"]').textContent);
+    let info = doc.querySelector('[data-info="ph"]');
+    check('and the row says why', !!info && !info.hidden && /plant is stopped/.test(info.textContent),
+      info && info.textContent);
+
+    // The recorded dosing log ends switched off, so the dosage is stopped now.
+    doc.querySelector('[data-plant="running"]').dispatch('click');
+    await sleep(30);
+    check('Plant running with the dosage stopped shows the nudge', doc.querySelector('#plantWarn').hidden === false);
+    check('and says so as it is tapped', /DAF dosage is stopped/.test(doc.querySelector('#toast').textContent),
+      doc.querySelector('#toast').textContent);
+    check('the dashboard tile asks for the dosage to be started',
+      doc.querySelector('#dashPlantState').textContent === 'RUNNING'
+      && doc.querySelector('#dashPlantSub').textContent === 'start the DAF dosage'
+      && doc.querySelector('#dashPlant').classList.contains('warn'),
+      doc.querySelector('#dashPlantSub').textContent);
+    info = doc.querySelector('[data-info="ph"]');
+    check('the pH is still not flagged, because the dosage was off at the readings',
+      doc.querySelector('[data-pill="ph"]').textContent === 'OK' && /DAF dosage was off at 8:00am/.test(info.textContent),
+      info.textContent);
+
+    doc.querySelector('#btnPlantDosing').dispatch('click');
+    await sleep(30);
+    check('Record start opens the dosing entry', doc.querySelector('#dosingEntry').hidden === false);
+    doc.querySelector('#dosingDate').value = run(app.ctx, 'isoOf(Date.now() - 86400000)');
+    doc.querySelector('#dosingTime').value = '12:00';
+    doc.querySelector('#btnDosingSave').dispatch('click');
+    await sleep(80);
+    check('once the start is recorded the nudge goes', doc.querySelector('#plantWarn').hidden === true);
+    check('the dashboard says the dosage is on', doc.querySelector('#dashPlantSub').textContent === 'DAF dosage on',
+      doc.querySelector('#dashPlantSub').textContent);
+    check('and the pH is judged again - 4.5 is a fault',
+      doc.querySelector('[data-pill="ph"]').textContent === 'FAULT', doc.querySelector('[data-pill="ph"]').textContent);
+
+    // A switch, not a daily question: it carries into the next report.
+    doc.querySelector('[data-plant="stopped"]').dispatch('click');
+    await sleep(30);
+    doc.querySelector('#btnNewReport').dispatch('click');
+    await sleep(300);
+    check('the plant setting carries into a new report', run(app.ctx, 'state.plant') === 'stopped');
+    check('no errors logged', app.localErrors.length === 0, app.localErrors.join(' | '));
+
+    // Saved with the draft, so closing the app keeps it.
+    await sleep(500);
+    const saved = app.indexedDB.__stores.reports.get('draft');
+    check('the plant setting is saved with the draft', !!saved && saved.plant === 'stopped',
+      saved && String(saved.plant));
   }
 
   console.log('\n' + '='.repeat(52));

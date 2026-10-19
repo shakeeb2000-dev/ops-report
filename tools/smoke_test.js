@@ -209,8 +209,13 @@ const wantOk = ['bio_vacuum','daf_pumps','daf_paddles','tank1_mixer',
 check('the everyday OK items are pre-set',
   wantOk.every(k => defs[k] && defs[k].status === 'ok'),
   wantOk.filter(k => !defs[k] || defs[k].status !== 'ok').join(','));
-check('both biofilter humidity rows start as Fault',
-  defs.bio1_rh.choice === 'fault' && defs.bio2_rh.choice === 'fault');
+// The sensors have been broken for a long time, so both rows start skipped.
+check('both biofilter humidity rows start as Skip',
+  defs.bio1_rh.choice === 'skip' && defs.bio2_rh.choice === 'skip',
+  JSON.stringify([defs.bio1_rh, defs.bio2_rh]));
+check('humidity offers OK, Fault and Skip',
+  ['bio1_rh', 'bio2_rh'].every(id =>
+    run(`JSON.stringify(ITEM_INDEX.${id}.options.map(o => o.value))`) === '["ok","fault","skip"]'));
 check('DAF clarity starts Clear', defs.daf_clarity.choice === 'clear');
 check('both overflow questions start No',
   defs.daf_overflow.choice === 'no' && defs.waste_tanks.choice === 'no');
@@ -227,9 +232,11 @@ check('no drier starts as a fault',
   JSON.stringify(defs.duct_drier2));
 
 /* The biofilter rows name what they found instead of a bare OK / Fault. */
-check('system running starts on Running', defs.bio_running.choice === 'running');
+check('"System running" is now called "Biofilter running"',
+  run('ITEM_INDEX.bio_running.label') === 'Biofilter running', run('ITEM_INDEX.bio_running.label'));
+check('biofilter running starts on Running', defs.bio_running.choice === 'running');
 check('within target starts on Within target', defs.bio_target.choice === 'within');
-check('system running offers the four states',
+check('biofilter running offers the four states',
   run("JSON.stringify(ITEM_INDEX.bio_running.options.map(o => o.value))")
     === '["running","notrunning","fault","notchecked"]',
   run("JSON.stringify(ITEM_INDEX.bio_running.options.map(o => o.value))"));
@@ -384,13 +391,14 @@ console.log('\n4. Chemical usage');
    here. The separate check that the shipped numbers are the agreed ones lives
    in section 4a. */
 const CHEM_LIMITS = `state.thresholds = mergeThresholds({
-    chemInUse: { crit: 0, warn: 300 },
-    chemBackup: { crit: 0, warn: 0 }
+    chemStock: { refillAt: 500, orderAt: 300 }
   });`;
 
-/* The litre levels: how a chemical is judged until there is enough history to
-   know how fast it goes. Graded with no history at all, so it is this rule and
-   not the days-left one below that is being tested. */
+/* The four chemicals are judged only on what is on site - asked for by the
+   operator, Oct 2026: refill when the usage tank is low, order when the
+   backup is, counting the IBC a refill will use. Red when a tank is empty,
+   amber when one is low. Graded with no history at all; the history test
+   further down shows days of usage no longer change any of this. */
 const gradeLitres = (setup) => run(`
   (() => {
     state = blankState();
@@ -399,37 +407,60 @@ const gradeLitres = (setup) => run(`
     return evaluate(state, null, [], []);
   })()
 `);
+const stockCase = (inUse, backup) => {
+  const e = gradeLitres(`${CHEM_LIMITS} state.values.caustic = { inUse: ${inUse}, backup: ${backup} };`);
+  return { status: e.items.caustic.status, badge: e.items.caustic.badge, reason: e.items.caustic.reason };
+};
+const STOCK_CASES = [
+  // [usage tank, backup, colour, badge, reason, what it is]
+  [800, 2000, 'ok', 'OK', '', 'both healthy'],
+  [800, 1000, 'ok', 'OK', '', 'a full IBC of backup with the usage tank fine'],
+  [501, 2000, 'ok', 'OK', '', 'just above the refill level'],
+  [500, 2000, 'watch', 'REFILL', 'refill usage tank', 'usage tank low, plenty of backup'],
+  [400, 1000, 'watch', 'REFILL + ORDER', 'refill usage tank, order backup',
+    'usage tank low with one full IBC as backup - the operator\'s own example'],
+  [400, 1300, 'watch', 'REFILL + ORDER', 'refill usage tank, order backup',
+    'the refill would leave only 300 L of backup'],
+  [400, 1400, 'watch', 'REFILL', 'refill usage tank', 'the refill would still leave 400 L of backup'],
+  [800, 300, 'watch', 'ORDER', 'order backup', 'backup low, usage tank fine'],
+  [800, 301, 'ok', 'OK', '', 'backup just above the order level'],
+  [800, 0, 'fault', 'ORDER', 'no backup left, order now', 'backup empty, usage tank fine'],
+  [400, 0, 'fault', 'ORDER', 'usage tank low, no backup, order now', 'usage tank low and backup empty'],
+  [400, 200, 'watch', 'REFILL + ORDER', 'refill usage tank, order backup', 'both low'],
+  [0, 2000, 'fault', 'REFILL', 'usage tank empty, refill now', 'usage tank empty, plenty of backup'],
+  [0, 1000, 'fault', 'REFILL + ORDER', 'usage tank empty, refill now, order backup',
+    'usage tank empty, one IBC of backup'],
+  [0, 200, 'fault', 'REFILL + ORDER', 'usage tank empty, refill now, order backup', 'usage tank empty, backup low'],
+  [0, 0, 'fault', 'OUT OF STOCK', 'out of stock, order now', 'both empty']
+];
+STOCK_CASES.forEach(([inUse, backup, colour, badge, reason, what]) => {
+  const got = stockCase(inUse, backup);
+  check(`${what} (${inUse} L in use, ${backup} L backup): ${colour}, ${badge}`,
+    got.status === colour && got.badge === badge && got.reason === reason,
+    JSON.stringify(got));
+});
+ev = gradeLitres(`${CHEM_LIMITS} state.values.caustic = { inUse: 300 };`);
+check('with only the usage tank typed, it is judged on that alone',
+  ev.items.caustic.status === 'watch' && ev.items.caustic.badge === 'REFILL', JSON.stringify(ev.items.caustic.badge));
+ev = gradeLitres(`${CHEM_LIMITS} state.values.caustic = { backup: 100 };`);
+check('with only the backup typed, it is judged on that alone',
+  ev.items.caustic.status === 'watch' && ev.items.caustic.badge === 'ORDER', JSON.stringify(ev.items.caustic.badge));
+ev = gradeLitres(`${CHEM_LIMITS} state.values.caustic = {};`);
+check('with nothing typed it is not judged at all', ev.items.caustic.status === 'blank', ev.items.caustic.status);
+ev = gradeLitres(`${CHEM_LIMITS} state.values.caustic = { inUse: 400, backup: 1000 };`);
+check('the action list says the job in a few words, with no levels or days',
+  ev.actions.leighton.some(a => a.label === 'Caustic 46%' && a.reason === 'refill usage tank, order backup'),
+  JSON.stringify(ev.actions.leighton.find(a => a.label === 'Caustic 46%')));
+// The levels in Settings move the rule.
+ev = gradeLitres(`state.thresholds = mergeThresholds({ chemStock: { refillAt: 300, orderAt: 0 } });
+  state.values.caustic = { inUse: 400, backup: 1000 };`);
+check('the refill and order levels come from Settings', ev.items.caustic.status === 'ok', ev.items.caustic.status);
 
-// Yesterday's figures now live on the form itself, so no history is needed.
-// The exact example from the brief: 1000/500 yesterday, 600/500 today = 400 used
-// backup rules: none at all is red, under the monitor level is amber
-ev = gradeLitres(`${CHEM_LIMITS} state.values.caustic = { inUse: 800, backup: 0 };`);
-check('no backup stock is a fault', ev.items.caustic.status === 'fault', ev.items.caustic.status);
-check('the reason says there is no backup', /no backup stock/.test(ev.items.caustic.reason), ev.items.caustic.reason);
-ev = gradeLitres(`${CHEM_LIMITS} state.values.caustic = { inUse: 250, backup: 2000 };`);
-check('usage tank under the monitor level is a watch', ev.items.caustic.status === 'watch', ev.items.caustic.status);
-check('and it says refill', ev.items.caustic.badge === 'REFILL', ev.items.caustic.badge);
-ev = gradeLitres(`${CHEM_LIMITS} state.values.caustic = { inUse: 0, backup: 2000 };`);
-check('an empty usage tank is a fault', ev.items.caustic.status === 'fault', ev.items.caustic.status);
-check('and it still says refill', ev.items.caustic.badge === 'REFILL', ev.items.caustic.badge);
-ev = gradeLitres(`${CHEM_LIMITS} state.values.caustic = { inUse: 800, backup: 0 };`);
-check('no backup says reorder', ev.items.caustic.badge === 'REORDER', ev.items.caustic.badge);
-ev = gradeLitres(`${CHEM_LIMITS} state.values.caustic = { inUse: 301, backup: 2000 };`);
-check('just above the usage trigger is ok', ev.items.caustic.status === 'ok', ev.items.caustic.status);
-ev = gradeLitres(`${CHEM_LIMITS} state.values.caustic = { inUse: 800, backup: 1000 };`);
-check('healthy backup is ok', ev.items.caustic.status === 'ok', ev.items.caustic.status);
-// A tank at the fault level used to be called "usage tank empty" whatever was
-// in it; the managers were told 200 L was empty.
-ev = gradeLitres(`state.values.coagulant = { inUse: 200, backup: 1000 };`);
-check('a low tank says how much is in it, not "empty"',
-  /usage tank very low \(200 L\)/.test(ev.items.coagulant.reason) && !/empty/.test(ev.items.coagulant.reason),
-  ev.items.coagulant.reason);
-
-/* Days left: how a chemical is judged once the history says how fast it goes.
-   A steady ten days of exactly 200 L of caustic a day, so every expected
-   figure below is plain arithmetic. (HISTORY above runs its stock down to the
-   floor part way through, which makes its average awkward to state.) Today's
-   rows carry no last check, so today does not move the average. */
+/* A steady ten days of exactly 200 L of caustic a day. Days of usage are
+   still worked out, for the stock sum and the dashboard, but no longer decide
+   the colour. (HISTORY above runs its stock down to the floor part way
+   through, which makes its average awkward to state.) Today's rows carry no
+   last check, so today does not move the average. */
 const STEADY = `(() => {
   const iso = d => { const x = new Date('2026-09-24T00:00:00'); x.setDate(x.getDate() - d);
     return x.getFullYear() + '-' + String(x.getMonth()+1).padStart(2,'0') + '-' + String(x.getDate()).padStart(2,'0'); };
@@ -450,18 +481,22 @@ const gradeDays = (setup) => run(`
     return evaluate(state, null, ${STEADY}, []);
   })()
 `);
+// 500 L on site at 200 L a day is 2.5 days - red under the old days rule.
 ev = gradeDays(`state.values.caustic = { inUse: 300, backup: 200 };`);
-check('under three days of stock is a fault, to reorder',
-  ev.items.caustic.status === 'fault' && ev.items.caustic.badge === 'REORDER',
+check('days of usage no longer set the colour: 2.5 days left is judged on the levels',
+  ev.items.caustic.status === 'watch' && ev.items.caustic.badge === 'REFILL + ORDER',
   `${ev.items.caustic.status} ${ev.items.caustic.badge}`);
-check('and it says how long the stock will last',
-  /only 2\.5 days of stock left \(500 L on site\)/.test(ev.items.caustic.reason), ev.items.caustic.reason);
+check('and the reason carries no days or litres',
+  ev.items.caustic.reason === 'refill usage tank, order backup', ev.items.caustic.reason);
+check('the days left are still worked out for the stock sum and the dashboard',
+  Math.abs(ev.stock.find(s2 => s2.id === 'caustic').daysLeft - 2.5) < 0.01,
+  String(ev.stock.find(s2 => s2.id === 'caustic').daysLeft));
+// 1,200 L is 6 days - amber "order soon" under the old rule.
 ev = gradeDays(`state.values.caustic = { inUse: 600, backup: 600 };`);
-check('under a week of stock is a watch, to order soon',
-  ev.items.caustic.status === 'watch' && ev.items.caustic.badge === 'ORDER SOON',
-  `${ev.items.caustic.status} ${ev.items.caustic.badge} ${ev.items.caustic.reason}`);
+check('six days left with both tanks above their levels is fine',
+  ev.items.caustic.status === 'ok', `${ev.items.caustic.status} ${ev.items.caustic.badge} ${ev.items.caustic.reason}`);
 ev = gradeDays(`state.values.caustic = { inUse: 1000, backup: 2000 };`);
-check('two weeks of stock is fine, whatever the litres',
+check('plenty of stock is fine',
   ev.items.caustic.status === 'ok', `${ev.items.caustic.status} ${ev.items.caustic.reason}`);
 
 ev = grade(`state.values.caustic = { prevInUse: 1000, prevBackup: 500, inUse: 600, backup: 500 };`);
@@ -482,8 +517,10 @@ check('two IBCs are handled',
 
 // yesterday 1500, today 2500, nothing logged -> up 1000 L
 ev = grade(`state.values.caustic = { prevInUse: 1000, prevBackup: 500, inUse: 1000, backup: 1500 };`);
-check('an unlogged delivery is flagged',
-  /at least 1 IBC/.test(ev.items.caustic.reason), ev.items.caustic.reason);
+check('an unlogged delivery is flagged in the stock sum',
+  /at least 1 IBC arrived without being recorded/.test(ev.items.caustic.sum.footer), ev.items.caustic.sum.footer);
+check('but not in the short reason the action list prints',
+  !/IBC/.test(ev.items.caustic.reason), ev.items.caustic.reason);
 check('and usage is not claimed',
   ev.items.caustic.sum.total.label === 'Usage not confirmed', ev.items.caustic.sum.total.label);
 
@@ -495,28 +532,23 @@ ev = grade(`state.values.caustic = { inUse: 600, backup: 500 };`);
 check('without a last check there is no sum', ev.items.caustic.sum === null);
 
 /* HISTORY holds no sulphuric acid, so today's one day of usage is all there
-   is - not enough to judge on, and the litre levels decide. */
+   is - and the levels decide, exactly as they do with a long history. */
 ev = grade(`${CHEM_LIMITS}
   state.values.sulphuric = { prevInUse: 400, prevBackup: 2000, inUse: 200, backup: 2000 };`);
-check('with one day of usage, a low usage tank is judged on litres',
-  ev.items.sulphuric.status === 'watch', ev.items.sulphuric.status);
+check('a low usage tank with two IBCs of backup is amber, to refill',
+  ev.items.sulphuric.status === 'watch' && ev.items.sulphuric.badge === 'REFILL', ev.items.sulphuric.status);
 check('the status comes from the tank level',
-  /usage tank low/.test(ev.items.sulphuric.reason), ev.items.sulphuric.reason);
+  ev.items.sulphuric.reason === 'refill usage tank', ev.items.sulphuric.reason);
 
-/* The usage tank, once the rate is known: at 200 L a day, 150 L left is less
-   than a day of dosing, so it needs refilling from the backup. */
+/* Under the old days rule, 150 L at 200 L a day was red: less than a day of
+   dosing. On levels alone it is a low tank with plenty to refill from. */
 ev = gradeDays(`state.values.caustic = { inUse: 150, backup: 3000 };`);
-check('a usage tank that runs dry within a day is a fault, to refill',
-  ev.items.caustic.status === 'fault' && ev.items.caustic.badge === 'REFILL',
+check('a low usage tank with plenty of backup is amber, to refill, whatever the days',
+  ev.items.caustic.status === 'watch' && ev.items.caustic.badge === 'REFILL',
   `${ev.items.caustic.status} ${ev.items.caustic.badge} ${ev.items.caustic.reason}`);
-check('and it says what is left and how long it lasts',
-  /usage tank down to 150 L, less than a day of dosing/.test(ev.items.caustic.reason), ev.items.caustic.reason);
 
 /* A heavy usage day with healthy stock must stay green: a single day's use
-   is reported, but only the stock on hand - in days - decides the colour.
-   Stock here is about 13 days at the average rate. (The stock in this case
-   was raised when chemicals moved to days left: the 1,500 L it had before is
-   only about three days of caustic, which is now rightly flagged.) */
+   is reported, but only the stock on hand decides the colour. */
 ev = grade(`${CHEM_LIMITS}
   state.values.caustic = { prevInUse: 1000, prevBackup: 6000, inUse: 1500, backup: 5000, ibc: 1 };`);
 check('heavy usage alone does not flag anything',
@@ -582,11 +614,8 @@ const AGREED = {
   ph1:        { critLow: 4.9, warnLow: 5.0, warnHigh: 5.5, critHigh: 5.6 },
   ph2:        { critLow: 6.0, warnLow: 6.1, warnHigh: 6.5, critHigh: 6.7 },
   ph3:        { critLow: 6.0, warnLow: 6.1, warnHigh: 7.8, critHigh: 8.0 },
-  // Chemicals judged on days left - asked for by the operator, Oct 2026.
-  chemDays:   { crit: 3, warn: 7 },
-  chemTankDays: { crit: 1, warn: 2 },
-  chemInUse:  { crit: 300, warn: 500 },
-  chemBackup: { crit: 0, warn: 300 },
+  // Chemicals judged on what is on site, not on days - the operator, Oct 2026.
+  chemStock:  { refillAt: 500, orderAt: 300 },
   boilerChem: { crit: 50, warn: 100 },
   saturator:  { critLow: 500, warnLow: 550, warnHigh: 600, critHigh: 650 },
   flow:       { critLow: 17, warnLow: 18, warnHigh: 20, critHigh: 21 }
@@ -637,10 +666,10 @@ const patched = run(`
     const partial = { ph1: { critLow: 5.5 } };   // everything else missing
     const merged = mergeThresholds(partial);
     return { keys: Object.keys(merged).sort(), ph: merged.ph1.critLow,
-             chemWarn: merged.chemInUse && merged.chemInUse.warn,
+             chemWarn: merged.chemStock && merged.chemStock.refillAt,
              warnHigh: merged.ph1.warnHigh,
              wantWarnHigh: DEFAULT_THRESHOLDS.ph1.warnHigh,
-             wantChemWarn: DEFAULT_THRESHOLDS.chemInUse.warn };
+             wantChemWarn: DEFAULT_THRESHOLDS.chemStock.refillAt };
   })()
 `);
 check('missing threshold groups are filled in',
@@ -652,6 +681,21 @@ check('every trigger level has a plain-language name',
   run('Object.keys(DEFAULT_THRESHOLDS).every(k => !!TH_LABELS[k])'));
 check('a limit added later is filled in',
   patched.chemWarn === patched.wantChemWarn, String(patched.chemWarn));
+
+/* Levels typed by hand under the old usage-tank and backup groups mean the
+   same as the two new ones, so they come across instead of being lost. */
+const carriedLevels = run(`mergeThresholds({
+  chemInUse: { crit: 200, warn: 450 }, chemBackup: { crit: 0, warn: 250 } }).chemStock`);
+check('a hand-typed usage-tank level becomes the refill level',
+  carriedLevels.refillAt === 450, JSON.stringify(carriedLevels));
+check('a hand-typed backup level becomes the order level',
+  carriedLevels.orderAt === 250, JSON.stringify(carriedLevels));
+check('the days-left levels are gone from Settings',
+  run('!DEFAULT_THRESHOLDS.chemDays && !DEFAULT_THRESHOLDS.chemTankDays && !DEFAULT_THRESHOLDS.chemInUse && !DEFAULT_THRESHOLDS.chemBackup'));
+th = run(`refreshThresholds({ thresholds: { chemDays: { crit: 3, warn: 7 } }, thVersion: 2, thEdited: false })`);
+check('a phone on the last build\'s shipped levels takes the new ones',
+  th.replaced === true && th.thresholds.chemStock.refillAt === 500 && !th.thresholds.chemDays,
+  JSON.stringify(th.thresholds.chemStock));
 
 ev = run(`
   (() => {
@@ -1558,6 +1602,106 @@ check('a blank date is not carried as a blank',
 check('nothing recorded carries nothing',
   Object.keys(run('carryDatesForward(null)')).length === 0);
 
+/* ---------------- 4h. plant running or stopped ---------------- */
+console.log('\n4h. Plant running or stopped');
+
+// Dosing off since Friday afternoon / switched on before the 8am round.
+const OFF_LOG = `[{ at: '2026-10-16T16:00', on: false }]`;
+const ON_LOG = `[{ at: '2026-10-19T06:00', on: true }]`;
+const plantCase = (setup, events) => run(`(() => {
+  state = blankState(); state.date = '2026-10-19'; state.readingTime = '08:00';
+  ${setup}
+  return evaluate(state, null, [], ${events || '[]'});
+})()`);
+const BAD_PH = `state.values.ph = { a: 4.5, b: 7.1, c: 6.3 };`;
+
+ev = plantCase(BAD_PH);
+check('with the plant not set and no dosing log, an out-of-range pH is flagged as before',
+  ev.items.ph.status === 'fault', ev.items.ph.status);
+ev = plantCase(`state.plant = 'running'; ${BAD_PH}`, ON_LOG);
+check('with the plant running and the dosage on, the pH is flagged as before',
+  ev.items.ph.status === 'fault' && /reading 1/.test(ev.items.ph.reason), ev.items.ph.status);
+ev = plantCase(`state.plant = 'stopped'; ${BAD_PH}`, ON_LOG);
+check('with the plant stopped, the pH is not flagged',
+  ev.items.ph.status === 'ok' && !ev.actions.leighton.some(a => a.label === 'pH readings'), ev.items.ph.status);
+check('and the report says why, beside the readings',
+  ev.items.ph.display === '4.5 / 7.1 / 6.3 (plant stopped)' && ev.items.ph.eased === 'plant stopped',
+  ev.items.ph.display);
+ev = plantCase(`state.plant = 'running'; ${BAD_PH}`, OFF_LOG);
+check('with the DAF dosage off when the readings were taken, the pH is not flagged - even with the plant running',
+  ev.items.ph.status === 'ok' && ev.items.ph.display === '4.5 / 7.1 / 6.3 (DAF dosing off)', ev.items.ph.display);
+ev = plantCase(BAD_PH, OFF_LOG);
+check('the same with the plant not set', ev.items.ph.status === 'ok', ev.items.ph.status);
+// Switched on at 10am, after the 8am round: the readings were taken with it off.
+ev = plantCase(BAD_PH, `[{ at: '2026-10-16T16:00', on: false }, { at: '2026-10-19T10:00', on: true }]`);
+check('the dosage is read at the time of the readings, not when the PDF is made',
+  ev.items.ph.status === 'ok' && ev.dosingOffAtReading === true, ev.items.ph.status);
+ev = plantCase(`state.plant = 'stopped'; state.values.ph = { a: 5.2, b: 6.3, c: 7.0 };`, ON_LOG);
+check('readings inside their limits are left as they are, with nothing added',
+  ev.items.ph.status === 'ok' && ev.items.ph.display === '5.2 / 6.3 / 7.0' && !ev.items.ph.eased, ev.items.ph.display);
+ev = plantCase(`state.plant = 'stopped'; state.values.ph = { a: 4.5, b: 7.1, c: 6.3, status: 'fault' };`);
+check('a Fault tapped by hand on the pH still counts', ev.items.ph.status === 'fault', ev.items.ph.status);
+
+ev = plantCase(`state.values.bio_running = { choice: 'notrunning' };`);
+check('a biofilter not running is still a fault while the plant is not set',
+  ev.items.bio_running.status === 'fault' && ev.items.bio_running.badge === 'NOT RUNNING', ev.items.bio_running.status);
+ev = plantCase(`state.plant = 'running'; state.values.bio_running = { choice: 'notrunning' };`);
+check('and while the plant is running', ev.items.bio_running.status === 'fault', ev.items.bio_running.status);
+ev = plantCase(`state.plant = 'stopped'; state.values.bio_running = { choice: 'notrunning' };`);
+check('with the plant stopped, a biofilter not running is not flagged',
+  ev.items.bio_running.status === 'ok' && !ev.actions.leighton.some(a => a.label === 'Biofilter running'),
+  ev.items.bio_running.status);
+check('it loses its red NOT RUNNING badge and says why instead',
+  ev.items.bio_running.badge === 'OK' && ev.items.bio_running.display === 'Not running (plant stopped)',
+  `${ev.items.bio_running.badge} / ${ev.items.bio_running.display}`);
+ev = plantCase(`state.plant = 'stopped'; state.values.bio_running = { choice: 'fault' };`);
+check('a biofilter Fault is still a fault with the plant stopped', ev.items.bio_running.status === 'fault');
+ev = plantCase(`state.plant = 'stopped'; state.values.daf_clarity = { choice: 'turbid' };`);
+check('the plant switch touches nothing else', ev.items.daf_clarity.status === 'fault', ev.items.daf_clarity.status);
+
+const stoppedPrinted = run(`(() => {
+  state = blankState(); state.date = '2026-10-19'; state.plant = 'stopped';
+  state.values.ph = { a: 4.5, b: 7.1, c: 6.3 };
+  state.values.bio_running = { choice: 'notrunning' };
+  return String.fromCharCode(...buildPdf(state, evaluate(state, null, [], []), null));
+})()`).replace(/\\([()])/g, '$1');
+check('the PDF prints the pH with "(plant stopped)"',
+  stoppedPrinted.indexOf('4.5 / 7.1 / 6.3 (plant stopped)') !== -1);
+check('and the biofilter as "Not running (plant stopped)"',
+  stoppedPrinted.indexOf('Not running (plant stopped)') !== -1);
+check('with neither in the action boxes', !/pH readings - |Biofilter running - /.test(stoppedPrinted));
+
+check('the plant setting is kept from one report to the next',
+  run(`(() => { state = blankState(); state.plant = 'stopped'; return carriedSettings().plant; })()`) === 'stopped');
+check('a phone that never set it starts with it not set', run('blankState().plant') === null);
+
+/* ---------------- 4i. skipping a check ---------------- */
+console.log('\n4i. Skipping a check');
+
+const skipped = run('(() => { state = blankState(); return evaluate(state, null, [], []); })()');
+check('the humidity rows start skipped', skipped.items.bio1_rh.status === 'skip'
+  && skipped.items.bio2_rh.status === 'skip', `${skipped.items.bio1_rh.status} ${skipped.items.bio2_rh.status}`);
+check('a skipped check raises no action', !skipped.actions.leighton.some(a => /humidity/.test(a.label)));
+check('and is counted as skipped - not as OK, a fault, or not done',
+  skipped.counts.skip === 2 && skipped.counts.fault === 0, JSON.stringify(skipped.counts));
+check('so a normal morning no longer opens with two faults',
+  /^Nothing needs action today/.test(skipped.verdict.text), skipped.verdict.text);
+const skippedPdf = run(`(() => { state = blankState();
+  return String.fromCharCode(...buildPdf(state, evaluate(state, null, [], []), null)); })()`);
+check('a skipped check is left out of the PDF', skippedPdf.indexOf('humidity') === -1);
+check('and the biofilter group counts only what is left', skippedPdf.indexOf('(ALL 3 OK)') !== -1);
+ev = run(`(() => { state = blankState(); state.values.bio1_rh = { choice: 'fault' };
+  return evaluate(state, null, [], []); })()`);
+check('choosing Fault brings the row back, as a fault',
+  ev.items.bio1_rh.status === 'fault' && ev.actions.leighton.some(a => a.label === 'Bio 1 humidity'),
+  ev.items.bio1_rh.status);
+const backPdf = run(`(() => { state = blankState(); state.values.bio2_rh = { choice: 'ok' };
+  return String.fromCharCode(...buildPdf(state, evaluate(state, null, [], []), null)); })()`);
+check('and choosing OK prints it again', backPdf.indexOf('Bio 2 humidity') !== -1
+  && backPdf.indexOf('Bio 1 humidity') === -1);
+check('a skipped check never decides a group\'s colour', run("worstOf(['skip', 'ok'])") === 'ok'
+  && run("worstOf(['skip'])") === 'ok');
+
 /* ---------------- 5. empty and awkward ---------------- */
 console.log('\n5. Empty and awkward input');
 
@@ -1685,6 +1829,10 @@ console.log('\nLook of the app');
     at('id="fMeter"') < at('id="dosingCard"') && at('id="dosingCard"') < at('id="summaryCard"')
     && at('id="summaryCard"') < at('id="checklist"'));
   check('nothing still says the meter list is "above"', !/meter list above/i.test(page));
+  check('the Plant card sits between Report details and Chemical dosing',
+    at('id="plantCard"') > at('id="fMeter"') && at('id="plantCard"') < at('id="dosingCard"'));
+  check('and the plant comes first on the dashboard',
+    at('id="dashPlant"') !== -1 && at('id="dashPlant"') < at('id="dashDaf"') && at('id="dashDaf"') < at('id="dashReport"'));
   check('the sent line sits in the bottom bar, above the PDF button',
     at('id="sendStatus"') > at('<nav class="actionbar">') && at('id="sendStatus"') < at('id="btnPdf"'));
 }
