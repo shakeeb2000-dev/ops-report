@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0d6938">
-<meta name="build-id" content="4bed34751d83">
+<meta name="build-id" content="73826c6890c9">
 <title>Daily Ops Report</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -1729,13 +1729,17 @@ body.no-scroll { overflow: hidden; }
       </div>
     </div>
     <div class="help-text" id="helpLevels" hidden>
-      The numbers that decide when a check is flagged. At or past
-      <strong>Fault</strong> it is reported as a fault; at or past
-      <strong>Monitor</strong>, as needing a watch. The four chemicals are judged
-      only on what is on site: <strong>Refill</strong> when the usage tank is at or
-      below its level, and <strong>Order</strong> when the backup is &mdash; counting
-      the IBC a refill will use, so one full IBC as backup with a low usage tank
-      says refill and order. An empty tank is red; a low one is amber.
+      The numbers that decide when a check is flagged. Past
+      <strong>Fault</strong> it is reported as a fault; past
+      <strong>Monitor</strong>, as needing a watch. A reading sitting exactly on
+      a number is not flagged &mdash; only one below it, or above the high one.
+      The four chemicals are judged only on what is on site:
+      <strong>Refill</strong> when the usage tank is below its level, and
+      <strong>Order</strong> when the backup is &mdash; counting the IBC a refill
+      will use, so one full IBC as backup with a low usage tank says refill and
+      order. An empty tank is red; a low one is amber.
+      <br><br>Separator testing: set a sample count and a reading below it is
+      flagged. Leave both at 0 to record the counts without flagging.
     </div>
     <div id="thresholdForm"></div>
     <div class="sheet-foot">
@@ -1893,7 +1897,12 @@ const DEFAULT_THRESHOLDS = {
   chemStock:   { refillAt: 500, orderAt: 300 },
   boilerChem:  { crit: 50,  warn: 100 },
   saturator:   { critLow: 500, warnLow: 550, warnHigh: 600, critHigh: 650 },
-  flow:        { critLow: 17, warnLow: 18, warnHigh: 20, critHigh: 21 }
+  flow:        { critLow: 17, warnLow: 18, warnHigh: 20, critHigh: 21 },
+  /* Separator sample counts (Tallow and Stick water share these). Only a low
+     limit: fewer samples than expected is the concern, never too many. Below
+     the fault number is red, below the monitor number is amber. 0 for both
+     means the readings are recorded but not graded, as they were before. */
+  sampleCount: { crit: 0, warn: 0 }
 };
 
 /* Bumped whenever the numbers above change.
@@ -1902,7 +1911,7 @@ const DEFAULT_THRESHOLDS = {
    older build keeps whatever that build shipped and never sees a new default.
    The stamp lets boot() tell "these are just the old shipped numbers" apart
    from "the operator typed these", and only the former gets replaced. */
-const THRESHOLD_VERSION = 3;
+const THRESHOLD_VERSION = 4;
 
 /* Plain-language names for the Settings screen. */
 const TH_LABELS = {
@@ -1912,7 +1921,8 @@ const TH_LABELS = {
   chemStock:   'Chemicals - the four IBCs (L)',
   boilerChem:  'Boiler chemical (L)',
   saturator:   'Saturator pressure (kPa)',
-  flow:        'Flow rate (m3/h)'
+  flow:        'Flow rate (m3/h)',
+  sampleCount: 'Separator testing (samples)'
 };
 
 /* Takes whatever thresholds were saved previously and returns a complete set.
@@ -2184,6 +2194,9 @@ const CHECKLIST = [
           {
             id: 'separators', label: 'Separator testing', type: 'multi',
             decimals: 0, display: 'labelled', unit: 'samples',
+            // Both readings are judged against the one sampleCount limit, set
+            // in Settings. A count below the limit is flagged; 0 means off.
+            threshold: 'sampleCount',
             fields: [
               { key: 'tallow', label: 'Tallow' },
               { key: 'stick',  label: 'Stick water' }
@@ -2258,14 +2271,20 @@ function gradeNumber(value, thresholdKey, thresholds) {
   const t = thresholds[thresholdKey];
   if (!t) return STATUS.OK;
 
+  // Strict comparison: only a reading past the limit flags, never one sitting
+  // exactly on it. Below the low limit, or above the high limit. (Oct 2026,
+  // at the operator's request - the boundary number itself no longer flags.)
   if (t.critLow !== undefined) {
-    if (n <= t.critLow || n >= t.critHigh) return STATUS.FAULT;
-    if (n <= t.warnLow || n >= t.warnHigh) return STATUS.WATCH;
+    if (n < t.critLow || n > t.critHigh) return STATUS.FAULT;
+    if (n < t.warnLow || n > t.warnHigh) return STATUS.WATCH;
     return STATUS.OK;
   }
   if (t.crit !== undefined) {
-    if (n <= t.crit) return STATUS.FAULT;
-    if (n <= t.warn) return STATUS.WATCH;
+    // Both limits at 0 means "not graded" - the reading is recorded only.
+    // Used by the separator counts until the operator sets a limit.
+    if (t.crit === 0 && t.warn === 0) return STATUS.OK;
+    if (n < t.crit) return STATUS.FAULT;
+    if (n < t.warn) return STATUS.WATCH;
     return STATUS.OK;
   }
   return STATUS.OK;
@@ -2322,12 +2341,14 @@ function chemicalStock(inUse, backup, levels) {
   const b = backup === null || backup === undefined ? null : Math.max(0, backup);
   if (u === null && b === null) return null;
 
+  // Strict "below", to match every other level (Oct 2026): the level itself
+  // is still fine, only a tank under it needs the action. Empty stays <= 0.
   const tankEmpty = u !== null && u <= 0;
-  const refill = u !== null && u <= t.refillAt;
+  const refill = u !== null && u < t.refillAt;
   const backupEmpty = b !== null && b <= 0;
   // What the backup will be down to once a refill has taken one IBC from it.
   const left = b === null ? null : (refill ? b - IBC_LITRES : b);
-  const order = left !== null && left <= t.orderAt;
+  const order = left !== null && left < t.orderAt;
 
   let action;
   let reason;
@@ -4125,16 +4146,18 @@ function multiReason(item, readings, thresholds, status) {
 
   const phrases = [];
   if (faults.length) {
+    const names = listOf(faults.map(f => f.tag));
     // Limits can differ per reading, so only quote one when they all share it.
     const keys = new Set(faults.map(f => f.key));
-    let limit = ' the limit';
-    if (keys.size === 1) {
-      const t = thresholds[faults[0].key];
-      if (t && t.critLow !== undefined) {
-        limit = ` the ${fmtQty(t.critLow, d)}-${fmtQty(t.critHigh, d)} limit`;
-      }
+    const t = keys.size === 1 ? thresholds[faults[0].key] : null;
+    if (t && t.critLow !== undefined) {
+      phrases.push(`${names} outside the ${fmtQty(t.critLow, d)}-${fmtQty(t.critHigh, d)} limit`);
+    } else if (t && t.crit !== undefined) {
+      // A low-only limit, like the separator sample count: "below N".
+      phrases.push(`${names} below ${fmtQty(t.crit, d)}`);
+    } else {
+      phrases.push(`${names} outside the limit`);
     }
-    phrases.push(`${listOf(faults.map(f => f.tag))} outside${limit}`);
   }
   if (warns.length) phrases.push(`${listOf(warns.map(w => w.tag))} drifting`);
   return phrases.length ? phrases.join('; ') : 'out of range';
@@ -4184,18 +4207,12 @@ function buildPdf(state, evaluated, previous) {
     { size: 7.8, colour: [196, 222, 206], align: 'right' });
   doc.y = bandH + 19;
 
-  /* ---- 2. one-line verdict ---- */
-  const v = evaluated.verdict;
-  const vColour = v.tone === 'fault' ? BRAND.fault : v.tone === 'watch' ? BRAND.watch : BRAND.ok;
-  const vLines = wrapText(v.text, 10, true, W - 40);
-  const vH = 14 + vLines.length * 13;
-  const vBg = v.tone === 'fault' ? BRAND.redBg : v.tone === 'watch' ? BRAND.amberBg : BRAND.okBg;
-  doc.roundRect(L, doc.y, W, vH, 7, { fill: vBg, stroke: vColour, lineWidth: 0.8 });
-  doc.icon(STATUS_ICON[v.tone === 'ok' ? 'ok' : v.tone], L + 16, doc.y + vH / 2, 11, vColour);
-  vLines.forEach((line, i) => {
-    doc.text(line, L + 30, doc.y + 17 + i * 13, { size: 10, bold: true, colour: vColour });
-  });
-  doc.y += vH + 13;
+  /* ---- 2. (removed) the one-line verdict banner ----
+     The coloured "N things need attention" line was taken off the top of the
+     report at the operator's request (Oct 2026). The counter cards below still
+     give the totals, and the Action Required boxes still list each item. The
+     verdict is still worked out in evaluate() in case it is wanted elsewhere;
+     it is just no longer drawn here. */
 
   /* ---- 3. counters ---- */
   const cards = [
@@ -6303,14 +6320,14 @@ async function findPreviousReport() {
 /* ---------------- settings ---------------- */
 
 const KEY_LABELS = {
-  critLow: 'Fault at/below',
-  warnLow: 'Monitor at/below',
-  warnHigh: 'Monitor at/above',
-  critHigh: 'Fault at/above',
-  crit: 'Fault at/below',
-  warn: 'Monitor at/below',
-  refillAt: 'Refill usage tank at/below',
-  orderAt: 'Order backup at/below'
+  critLow: 'Fault below',
+  warnLow: 'Monitor below',
+  warnHigh: 'Monitor above',
+  critHigh: 'Fault above',
+  crit: 'Fault below',
+  warn: 'Monitor below',
+  refillAt: 'Refill usage tank below',
+  orderAt: 'Order backup below'
 };
 
 /* Lays a stored record over a blank state.
