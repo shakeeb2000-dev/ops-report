@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0d6938">
-<meta name="build-id" content="73826c6890c9">
+<meta name="build-id" content="649668a2bd25">
 <title>Daily Ops Report</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -1163,7 +1163,9 @@ body.no-scroll { overflow: hidden; }
     padding-left: 0;
     padding-right: 0;
   }
-  .actionbar .btn { max-width: 260px; flex: 0 1 260px; }
+  /* Two buttons share the bottom row: a slim Test PDF and the wider main one. */
+  .actionbar .btn { max-width: 260px; flex: 1 1 auto; }
+  #btnTestPdf { flex: 0 1 120px; }
   main { padding-bottom: 0; }
 }
 
@@ -1589,6 +1591,7 @@ body.no-scroll { overflow: hidden; }
   <!-- Whether today's PDF went out. Filled by renderSendStatus() once a PDF
        has been made; hidden before that. -->
   <p class="send-status" id="sendStatus" role="status" hidden></p>
+  <button id="btnTestPdf" class="btn btn-ghost">Test PDF</button>
   <button id="btnPdf" class="btn btn-primary">Save &amp; make PDF</button>
 </nav>
 
@@ -4207,6 +4210,15 @@ function buildPdf(state, evaluated, previous) {
     { size: 7.8, colour: [196, 222, 206], align: 'right' });
   doc.y = bandH + 19;
 
+  /* A test copy is marked plainly, so it is never mistaken for the real
+     report. A gold strip under the header band says so in words. */
+  if (state.isTest) {
+    doc.rect(0, bandH + 3.2, PT.pageW, 16, { fill: BRAND.gold });
+    doc.text('TEST COPY - NOT A SAVED REPORT', PT.pageW / 2, bandH + 14,
+      { size: 8.5, bold: true, colour: [60, 42, 6], align: 'center', tracking: 1.2 });
+    doc.y += 18;
+  }
+
   /* ---- 2. (removed) the one-line verdict banner ----
      The coloured "N things need attention" line was taken off the top of the
      report at the operator's request (Oct 2026). The counter cards below still
@@ -4639,7 +4651,8 @@ function buildPdf(state, evaluated, previous) {
     });
   }
 
-  const footer = `${state.site || DEFAULT_SITE} \u00B7 ${reportNumber(state)} \u00B7 ${reportDate(state.date)}`;
+  const footer = (state.isTest ? 'TEST COPY \u00B7 ' : '')
+    + `${state.site || DEFAULT_SITE} \u00B7 ${reportNumber(state)} \u00B7 ${reportDate(state.date)}`;
   return doc.build(footer);
 }
 
@@ -5791,7 +5804,11 @@ function easedText(eased, readingAt) {
 
 /* ---------------- PDF + sharing ---------------- */
 
-async function generatePdf() {
+/* Builds the PDF bytes from whatever is on screen right now. Shared by the
+   real "Save & make PDF" and the "Test PDF" button, so the two can never
+   drift apart in what they produce. Returns the bytes, or null if the name
+   is missing or the build failed (a toast has already been shown). */
+function buildPdfBytes(opts) {
   if (!state.reporter.trim()) {
     /* The name lives in Settings now, so pointing at the box is not enough -
        the sheet it sits in has to be opened too, or the toast sends the
@@ -5799,26 +5816,7 @@ async function generatePdf() {
     toast('Add your name in Settings first');
     openSheet('#settingsSheet');
     el('#fReporter').focus();
-    return;
-  }
-
-  /* A report is filed under its date, so saving a second one for the same day
-     replaces the first. The period it covered then exists nowhere, while the
-     next report carries on from the later reading - so that water is simply
-     gone from the record. Worth a word before it happens.
-
-     Not when it is this same report being made again, though - sent a second
-     time because the share screen was closed, or corrected after a mistake.
-     That covers the same period, so nothing is lost by replacing it, and the
-     warning only taught that it could be clicked through. */
-  try {
-    const existing = await store.get(`report-${state.date}`);
-    const question = existing && existing.source !== HISTORIC_TAG && existing.values
-      ? makeAgainQuestion(existing, state)
-      : null;
-    if (question && !confirm(question)) return;
-  } catch (err) {
-    console.error('could not check for an existing report', err);
+    return null;
   }
 
   const ev = refresh();
@@ -5834,15 +5832,50 @@ async function generatePdf() {
   if (state.logo && state.logo.dataUrl) {
     forPdf.logo = { ...state.logo, bytes: dataUrlToBytes(state.logo.dataUrl) };
   }
+  // A test build carries a TEST mark in the PDF itself, so a copy shared for
+  // checking can never be mistaken for the real report.
+  if (opts && opts.test) forPdf.isTest = true;
 
-  let bytes;
   try {
-    bytes = buildPdf(forPdf, ev, previousReport);
+    return buildPdf(forPdf, ev, previousReport);
   } catch (err) {
     console.error(err);
     toast('PDF failed to build');
+    return null;
+  }
+}
+
+async function generatePdf() {
+  /* A report is filed under its date, so saving a second one for the same day
+     replaces the first. The period it covered then exists nowhere, while the
+     next report carries on from the later reading - so that water is simply
+     gone from the record. Worth a word before it happens.
+
+     Not when it is this same report being made again, though - sent a second
+     time because the share screen was closed, or corrected after a mistake.
+     That covers the same period, so nothing is lost by replacing it, and the
+     warning only taught that it could be clicked through.
+
+     To only check a PDF without disturbing the saved report, use the Test PDF
+     button instead - it builds and shares the same PDF but saves nothing. */
+  if (!state.reporter.trim()) {
+    toast('Add your name in Settings first');
+    openSheet('#settingsSheet');
+    el('#fReporter').focus();
     return;
   }
+  try {
+    const existing = await store.get(`report-${state.date}`);
+    const question = existing && existing.source !== HISTORIC_TAG && existing.values
+      ? makeAgainQuestion(existing, state)
+      : null;
+    if (question && !confirm(question)) return;
+  } catch (err) {
+    console.error('could not check for an existing report', err);
+  }
+
+  const bytes = buildPdfBytes();
+  if (!bytes) return;
 
   /* Made now, and not sent until the share screen says an app was picked.
      Written to the phone before the share screen opens, because that is the
@@ -5857,6 +5890,21 @@ async function generatePdf() {
   const filename = `Ops-Report-${state.date}.pdf`;
   const outcome = await deliverPdf(bytes, filename);
   await recordDelivery(outcome);
+}
+
+/* Makes a PDF to look at and share, but changes nothing.
+
+   The morning's saved report is left exactly as it was: this never archives,
+   never writes to storage, and never marks the report as made or sent. So an
+   operator can build an evening copy to check, send it if they like, and the
+   real report in the history is untouched. The filename and the footer carry
+   a TEST mark so a test copy is never mistaken for the real one. */
+async function testPdf() {
+  const bytes = buildPdfBytes({ test: true });
+  if (!bytes) return;
+  const filename = `Ops-Report-${state.date}-TEST.pdf`;
+  await deliverPdf(bytes, filename);
+  toast('Test PDF made - nothing was saved');
 }
 
 /* What to ask before a PDF is made over a report already saved for this date,
@@ -7600,6 +7648,7 @@ function bindShell() {
   el('#fGeneralNote').addEventListener('input', e => { state.generalNote = e.target.value; queueSave(); });
 
   el('#btnPdf').addEventListener('click', generatePdf);
+  el('#btnTestPdf').addEventListener('click', testPdf);
   el('#btnSettings').addEventListener('click', () => {
     renderBackupStatus();
     renderOfflineStatus();
